@@ -6067,7 +6067,8 @@ def application_detail(category):
         if sort == key:
             next_dir = "asc" if direction == "desc" else "desc"
             marker = " ↓" if direction == "desc" else " ↑"
-        href = f"/applications/{quote(category, safe='')}?range={range_key()}&sort={h(key)}&dir={next_dir}"
+        href_raw = f"/applications/{quote(category, safe='')}?range={quote(range_key(), safe='')}&sort={quote(key, safe='')}&dir={quote(next_dir, safe='')}"
+        href = h(href_raw)
         return f'<a class="sort-link" href="{href}">{h(label)}{marker}</a>'
 
     estimated_header = f"<th>{sort_link('Est. Download / Total', 'estimated')}</th>" if monitoring_enabled else ""
