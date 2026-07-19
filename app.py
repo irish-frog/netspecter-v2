@@ -5052,7 +5052,13 @@ def device(ip):
 @app.route("/api/history")
 def api_history():
     period = request.args.get("period", "1h").strip().lower()
-    ip = request.args.get("ip", "").strip()
+    ip_raw = request.args.get("ip", "").strip()
+    ip = ""
+    if ip_raw:
+        try:
+            ip = str(ipaddress.ip_address(ip_raw))
+        except ValueError:
+            ip = ""
 
     if period not in ["1h", "24h", "7d", "30d", "60d", "90d"]:
         period = "1h"
