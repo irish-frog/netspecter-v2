@@ -26,6 +26,7 @@ HOP_BY_HOP_HEADERS = {
 HTTP_METHOD_PREFIXES = (b"GET ", b"POST ", b"HEAD ", b"PUT ", b"PATCH ", b"DELETE ", b"OPTIONS ")
 COOKIE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,80}$")
 COOKIE_VALUE_PATTERN = re.compile(r'^[A-Za-z0-9!#$%&\'()*+\-./:<=>?@\[\]^_`{|}~%]*$')
+SAFE_REDIRECT_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9\-._~%!$&'()*+,;=:@/?]*$")
 SAFE_COOKIE_FLAGS = {"httponly", "secure"}
 SAFE_COOKIE_ATTRS = {"path", "samesite", "max-age", "expires"}
 
@@ -45,7 +46,10 @@ def safe_redirect_path(path):
     parsed = urlsplit(text)
     if parsed.scheme or parsed.netloc or not text.startswith("/") or text.startswith("//"):
         return "/"
-    return safe_header_value(text) or "/"
+    text = safe_header_value(text)
+    if not text or not SAFE_REDIRECT_PATH_PATTERN.fullmatch(text):
+        return "/"
+    return text
 
 
 def safe_set_cookie_headers(upstream_headers):
