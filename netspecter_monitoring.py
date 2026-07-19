@@ -613,9 +613,10 @@ def check_http_service(url, label, timeout=2, brief=False, verify_tls=True):
             return True, f"Online at {url}"
         return False, f"HTTP {res.status_code} from {url}"
     except Exception as error:
+        print(f"{label} check failed: {error}")
         if brief:
             return False, f"{label} unreachable"
-        return False, f"{label} check failed: {error}"
+        return False, f"{label} check failed"
 
 
 def check_telegram_config(config):
