@@ -45,7 +45,7 @@ def safe_redirect_path(path):
     parsed = urlsplit(text)
     if parsed.scheme or parsed.netloc or not text.startswith("/") or text.startswith("//"):
         return "/"
-    return text
+    return safe_header_value(text) or "/"
 
 
 def safe_set_cookie_headers(upstream_headers):
