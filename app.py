@@ -7066,9 +7066,6 @@ def incident_investigation(incident_id):
             )
         return local_redirect(f"/incidents/{incident_id}")
 
-    window = request.args.get("window", "15")
-    if window not in ("15", "30", "60"):
-        window = "15"
     incident, events, notes, audit_rows, related = incident_detail(connect_db, incident_id)
     if not incident:
         return shell("Incident Not Found", f"{topbar('Security Incidents')}<div class=\"panel\">Incident not found.</div>", "Incidents"), 404
@@ -7120,9 +7117,9 @@ def incident_investigation(incident_id):
 <div class="panel">
   <h2>Investigation Window</h2>
   <div class="tabs">
-    <a class="btn small" href="/incidents/{incident_id}?window=15">15 min</a>
-    <a class="btn small" href="/incidents/{incident_id}?window=30">30 min</a>
-    <a class="btn small" href="/incidents/{incident_id}?window=60">60 min</a>
+    <a class="btn small" href="{h(f'/incidents/{incident_id}?window=15')}">15 min</a>
+    <a class="btn small" href="{h(f'/incidents/{incident_id}?window=30')}">30 min</a>
+    <a class="btn small" href="{h(f'/incidents/{incident_id}?window=60')}">60 min</a>
   </div>
   <p class="sub">Default correlation uses 15 minutes before/after. Wider views are available for analyst review; source links degrade gracefully if raw records have expired.</p>
 </div>
