@@ -96,7 +96,9 @@ install_suricata_optional() {
     else
       echo "Suricata rules are present and less than 14 days old; skipping rule refresh."
     fi
-    if suricata -T -c /etc/suricata/suricata.yaml >/dev/null 2>&1; then
+    if [ "$SURICATA_REFRESH_RULES" -eq 0 ] && systemctl is-active --quiet suricata; then
+      echo "Suricata is already running with fresh rules; skipping validation restart."
+    elif suricata -T -c /etc/suricata/suricata.yaml >/dev/null 2>&1; then
       systemctl enable --now suricata || true
     else
       echo "WARNING: Suricata installed but configuration validation failed; not restarting Suricata." >&2
