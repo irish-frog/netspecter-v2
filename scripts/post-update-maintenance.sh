@@ -36,12 +36,22 @@ refresh_suricata_rules() {
 
   mkdir -p /var/lib/suricata/rules /var/log/suricata
 
-  if command -v suricata-update >/dev/null 2>&1; then
+  local rules_file="/var/lib/suricata/rules/suricata.rules"
+  local refresh_rules=0
+  if [ ! -s "$rules_file" ]; then
+    refresh_rules=1
+  elif [ "$(find "$rules_file" -mtime +14 -print -quit 2>/dev/null)" ]; then
+    refresh_rules=1
+  fi
+
+  if [ "$refresh_rules" -eq 1 ] && command -v suricata-update >/dev/null 2>&1; then
     if ! suricata-update; then
       echo "WARNING: suricata-update failed; leaving existing IDS rules in place." >&2
     fi
-  else
+  elif [ "$refresh_rules" -eq 1 ]; then
     echo "suricata-update is not installed; skipping IDS rule refresh."
+  else
+    echo "Suricata rules are present and less than 14 days old; skipping rule refresh."
   fi
 
   if suricata -T -c /etc/suricata/suricata.yaml >/dev/null 2>&1; then
