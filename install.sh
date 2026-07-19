@@ -82,8 +82,19 @@ install_speedtest_optional() {
 install_suricata_optional() {
   if apt install -y suricata suricata-update; then
     mkdir -p /var/lib/suricata/rules /var/log/suricata
-    if ! suricata-update; then
-      echo "WARNING: Suricata rule update failed; IDS may have no active rules until suricata-update succeeds." >&2
+    SURICATA_RULES_FILE="/var/lib/suricata/rules/suricata.rules"
+    SURICATA_REFRESH_RULES=0
+    if [ ! -s "$SURICATA_RULES_FILE" ]; then
+      SURICATA_REFRESH_RULES=1
+    elif [ "$(find "$SURICATA_RULES_FILE" -mtime +14 -print -quit 2>/dev/null)" ]; then
+      SURICATA_REFRESH_RULES=1
+    fi
+    if [ "$SURICATA_REFRESH_RULES" -eq 1 ]; then
+      if ! suricata-update; then
+        echo "WARNING: Suricata rule update failed; IDS may have no active rules until suricata-update succeeds." >&2
+      fi
+    else
+      echo "Suricata rules are present and less than 14 days old; skipping rule refresh."
     fi
     if suricata -T -c /etc/suricata/suricata.yaml >/dev/null 2>&1; then
       systemctl enable --now suricata || true
