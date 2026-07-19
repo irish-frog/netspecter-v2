@@ -1715,7 +1715,7 @@ td time {
 .ns-tools-menu button:disabled,
 .ns-tools-menu a[aria-disabled="true"] {
   opacity: .48;
-  cursor: not-allowed;
+  cursor: default;
 }
 
 .ns-tools-menu .divider {

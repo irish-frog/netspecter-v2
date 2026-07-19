@@ -292,7 +292,7 @@
 .ns-button:disabled,
 .ns-button[aria-disabled="true"] {
   opacity: .48;
-  cursor: not-allowed;
+  cursor: default;
 }
 
 .ns-input,

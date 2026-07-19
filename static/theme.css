@@ -613,7 +613,7 @@ body {
 }
 
 .monitor-menu button:disabled {
-  cursor: not-allowed;
+  cursor: default;
   opacity: .45;
 }
 
