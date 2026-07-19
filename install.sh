@@ -344,6 +344,7 @@ chmod +x "$INSTALL_DIR/monitor_sweeper.py"
 chmod +x "$INSTALL_DIR/collector_watchdog.sh"
 chmod +x "$INSTALL_DIR/scripts/render-adguard-template.sh"
 chmod +x "$INSTALL_DIR/scripts/reset-history.sh"
+chmod +x "$INSTALL_DIR/scripts/post-update-maintenance.sh"
 chmod +x /usr/local/bin/netspecter-vault
 
 echo "[8/10] Preparing AdGuard template..."
@@ -372,6 +373,7 @@ systemctl enable --now vnstat || true
 systemctl enable AdGuardHome || true
 install_gatus_optional
 install_beszel_optional
+"$INSTALL_DIR/scripts/post-update-maintenance.sh" || true
 
 echo "[10/10] IDS setup complete."
 
