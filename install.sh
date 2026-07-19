@@ -226,6 +226,21 @@ install_beszel_optional() {
     return 0
   fi
 
+  if [ -x /opt/beszel/beszel ] && systemctl list-unit-files beszel-hub.service >/dev/null 2>&1; then
+    echo "Beszel hub already installed; skipping reinstall."
+    mkdir -p "$SERVICE_DIR/beszel-hub.service.d"
+    cat > "$SERVICE_DIR/beszel-hub.service.d/netspecter-localhost.conf" <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/opt/beszel/beszel serve --http 127.0.0.1:8090
+EOF
+    systemctl daemon-reload
+    systemctl enable --now beszel-hub || true
+    systemctl restart beszel-hub || true
+    set_config_value "beszel_url" "http://127.0.0.1:8090"
+    return 0
+  fi
+
   echo "Installing Beszel hub..."
   if curl -fsSL https://raw.githubusercontent.com/henrygd/beszel/main/supplemental/scripts/install-hub.sh | sh -s -- -p 8090; then
     mkdir -p "$SERVICE_DIR/beszel-hub.service.d"
