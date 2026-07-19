@@ -54,8 +54,11 @@ refresh_suricata_rules() {
     echo "Suricata rules are present and less than 14 days old; skipping rule refresh."
   fi
 
-  if [ "$refresh_rules" -eq 0 ] && systemctl is-active --quiet suricata; then
-    echo "Suricata is already running with fresh rules; skipping validation restart."
+  if [ "$refresh_rules" -eq 0 ]; then
+    echo "Suricata rules are fresh; skipping validation restart."
+    if ! systemctl is-active --quiet suricata; then
+      timeout 20s systemctl enable --now suricata >/dev/null 2>&1 || true
+    fi
   elif suricata -T -c /etc/suricata/suricata.yaml >/dev/null 2>&1; then
     systemctl reset-failed suricata >/dev/null 2>&1 || true
     systemctl restart suricata >/dev/null 2>&1 || true
