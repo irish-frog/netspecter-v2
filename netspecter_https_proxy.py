@@ -205,9 +205,9 @@ class NetSpecterHttpsProxy(BaseHTTPRequestHandler):
             self.send_header("Content-Type", proxy_content_type(self.path, response.getheader("Content-Type")))
             if 300 <= response.status < 400:
                 redirect_location = safe_redirect_path(response.getheader("Location") or "/")
-                location_header = safe_header_value(redirect_location) or "/"
-                if "\r" in location_header or "\n" in location_header:
-                    location_header = "/"
+                location_header = "/"
+                if SAFE_REDIRECT_PATH_PATTERN.fullmatch(redirect_location):
+                    location_header = redirect_location
                 self.send_header("Location", location_header)
             for cookie_header in safe_set_cookie_headers(response.getheaders()):
                 self.send_header("Set-Cookie", cookie_header)
