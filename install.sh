@@ -81,6 +81,10 @@ install_speedtest_optional() {
 
 install_suricata_optional() {
   if apt install -y suricata suricata-update; then
+    mkdir -p /var/lib/suricata/rules /var/log/suricata
+    if ! suricata-update; then
+      echo "WARNING: Suricata rule update failed; IDS may have no active rules until suricata-update succeeds." >&2
+    fi
     if suricata -T -c /etc/suricata/suricata.yaml >/dev/null 2>&1; then
       systemctl enable --now suricata || true
     else
@@ -95,6 +99,23 @@ install_suricata_optional() {
     chgrp adm /var/log/suricata 2>/dev/null || true
     chmod 750 /var/log/suricata 2>/dev/null || true
   fi
+
+  cat >/etc/logrotate.d/suricata <<'EOF'
+/var/log/suricata/*.log
+/var/log/suricata/*.json
+{
+        rotate 14
+        missingok
+        compress
+        copytruncate
+        sharedscripts
+        postrotate
+                if [ -s /var/run/suricata.pid ]; then
+                        /bin/kill -HUP "$(cat /var/run/suricata.pid)" 2>/dev/null || true
+                fi
+        endscript
+}
+EOF
 }
 
 set_config_value() {
