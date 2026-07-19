@@ -33,9 +33,9 @@ SAFE_COOKIE_ATTRS = {"path", "samesite", "max-age", "expires"}
 
 def safe_header_value(value):
     text = str(value or "")
-    if "\r" in text or "\n" in text:
-        return ""
-    return text
+    # Remove CR/LF and other HTTP control characters before header writes.
+    text = "".join(ch for ch in text if ch >= " " and ch != "\x7f")
+    return text.strip()
 
 
 def safe_redirect_path(path):
