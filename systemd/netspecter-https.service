@@ -1,0 +1,16 @@
+[Unit]
+Description=NetSpecter HTTPS Proxy
+After=network-online.target netspecter-web.service
+Wants=network-online.target
+Requires=netspecter-web.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/netspecter
+ExecStart=/opt/netspecter/venv/bin/python /opt/netspecter/netspecter_https_proxy.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

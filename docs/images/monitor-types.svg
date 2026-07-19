@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" role="img" aria-labelledby="title desc">
+  <title id="title">NetSpecter monitor types</title>
+  <desc id="desc">Generic monitor type reference for HTTP, TCP, DNS, Ping, TLS, STARTTLS, WebSocket, and SSH checks.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#101d31"/>
+      <stop offset="1" stop-color="#060b14"/>
+    </linearGradient>
+    <linearGradient id="ok" x1="0" x2="1">
+      <stop offset="0" stop-color="#00ddc7"/>
+      <stop offset="1" stop-color="#38f07b"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="640" fill="#050b14"/>
+  <rect x="34" y="34" width="1132" height="572" rx="24" fill="url(#bg)" stroke="#263a58"/>
+  <text x="70" y="90" fill="#f5f8ff" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="900">Monitor Types</text>
+  <text x="70" y="124" fill="#9fb1cc" font-family="Inter, Arial, sans-serif" font-size="18">Pick the type, then enter only the target. NetSpecter writes the correct Gatus check.</text>
+  <g font-family="Inter, Arial, sans-serif" font-size="18">
+    <rect x="70" y="170" width="1060" height="58" rx="12" fill="#0d1c30" stroke="#2c4a70"/>
+    <text x="96" y="207" fill="#f5f8ff" font-weight="900">Type</text>
+    <text x="300" y="207" fill="#f5f8ff" font-weight="900">Use for</text>
+    <text x="760" y="207" fill="#f5f8ff" font-weight="900">Target example</text>
+    <g fill="#9fb1cc">
+      <rect x="70" y="242" width="1060" height="42" rx="8" fill="#0b1728"/>
+      <text x="96" y="270">HTTP/HTTPS</text><text x="300" y="270">Websites, APIs, dashboards</text><text x="760" y="270">example.com/health</text>
+      <rect x="70" y="294" width="1060" height="42" rx="8" fill="#0d1c30"/>
+      <text x="96" y="322">TCP</text><text x="300" y="322">Ports, NVRs, VPN listeners</text><text x="760" y="322">example.com:443</text>
+      <rect x="70" y="346" width="1060" height="42" rx="8" fill="#0b1728"/>
+      <text x="96" y="374">Ping</text><text x="300" y="374">Basic host reachability</text><text x="760" y="374">192.168.1.1</text>
+      <rect x="70" y="398" width="1060" height="42" rx="8" fill="#0d1c30"/>
+      <text x="96" y="426">DNS</text><text x="300" y="426">DNS server answers</text><text x="760" y="426">server + query + record</text>
+      <rect x="70" y="450" width="1060" height="42" rx="8" fill="#0b1728"/>
+      <text x="96" y="478">TLS/STARTTLS</text><text x="300" y="478">Mail and encrypted services</text><text x="760" y="478">mail.example.com:993</text>
+      <rect x="70" y="502" width="1060" height="42" rx="8" fill="#0d1c30"/>
+      <text x="96" y="530">WebSocket/SSH</text><text x="300" y="530">Socket apps and SSH servers</text><text x="760" y="530">server.example.com:22</text>
+    </g>
+  </g>
+  <rect x="70" y="565" width="1060" height="28" rx="14" fill="url(#ok)" opacity="0.85"/>
+</svg>

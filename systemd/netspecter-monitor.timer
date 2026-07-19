@@ -1,0 +1,11 @@
+[Unit]
+Description=Run NetSpecter Monitor Alert Sweeper
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=netspecter-monitor.service
+
+[Install]
+WantedBy=timers.target

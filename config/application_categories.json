@@ -1,0 +1,257 @@
+{
+  "categories": [
+    {
+      "name": "File Sharing & Storage",
+      "usage_group": "Business or Personal",
+      "description": "Cloud storage, file sharing, document sync and ad-hoc file transfer services.",
+      "icon": "cloud-arrow-up",
+      "display_order": 10,
+      "color": "#4cc9f0",
+      "applications": ["OneDrive", "Microsoft OneDrive", "Google Drive", "Dropbox", "Box", "Nextcloud", "ownCloud", "MEGA", "ShareFile", "iCloud Drive", "Synology Drive", "SharePoint Documents", "SharePoint", "WeTransfer"],
+      "domains": ["*.onedrive.com", "*.onedrive.live.com", "*.storage.live.com", "*.1drv.com", "*.sharepoint.com", "*.sharepoint-df.com", "drive.google.com", "*.drive.google.com", "*.dropbox.com", "*.dropboxapi.com", "*.box.com", "*.nextcloud.com", "nextcloud.com", "*.owncloud.com", "*.mega.nz", "*.sharefile.com", "*.icloud.com", "*.synology.com", "*.wetransfer.com"],
+      "destination_ips": ["192.168.99.4"]
+    },
+    {
+      "name": "Email",
+      "usage_group": "Business or Personal",
+      "description": "Email platforms, mail protocols and email security services.",
+      "icon": "envelope",
+      "display_order": 20,
+      "color": "#00ddc7",
+      "applications": ["Outlook", "Exchange Online", "Exchange", "Gmail", "Google Mail", "Proton Mail", "ProtonMail", "Yahoo Mail", "SMTP", "IMAP", "POP", "Email Security Gateway", "Email Security"],
+      "domains": ["outlook.office.com", "outlook.office365.com", "outlook.live.com", "*.outlook.com", "*.protection.outlook.com", "*.exchange.microsoft.com", "*.gmail.com", "*.mail.google.com", "*.proton.me", "*.protonmail.com", "*.yahoomail.com", "*.yahoo.com"]
+    },
+    {
+      "name": "Communication & Collaboration",
+      "usage_group": "Business or Personal",
+      "description": "Messaging, chat, video meetings, collaboration rooms and remote meeting tools.",
+      "icon": "users",
+      "display_order": 30,
+      "color": "#5ba8ff",
+      "applications": ["WhatsApp", "Discord", "Slack", "Telegram", "Signal", "Microsoft Teams", "Teams", "Zoom", "Google Meet", "Meet", "Webex", "Cisco Webex", "TeamViewer Meeting"],
+      "domains": ["*.whatsapp.com", "*.whatsapp.net", "*.discord.com", "*.discordapp.com", "*.discordcdn.com", "*.slack.com", "*.telegram.org", "*.signal.org", "*.teams.microsoft.com", "*.teams.live.com", "*.trouter.io", "*.skype.com", "*.lync.com", "*.zoom.us", "*.meet.google.com", "*.webex.com", "*.teamviewer.com"]
+    },
+    {
+      "name": "Office & Productivity",
+      "usage_group": "Business or Personal",
+      "description": "Office suites, productivity tools, design tools and general work platforms.",
+      "icon": "briefcase",
+      "display_order": 40,
+      "color": "#20df9f",
+      "applications": ["Microsoft 365", "Office 365", "Microsoft Office", "Google Workspace", "Google Docs", "Google Sheets", "Google Slides", "LibreOffice Online", "Canva", "Notion", "Adobe Creative Cloud", "Adobe"],
+      "domains": ["*.microsoft365.com", "*.office.com", "*.office365.com", "*.office.net", "*.officeapps.live.com", "*.googleworkspace.com", "docs.google.com", "sheets.google.com", "slides.google.com", "*.canva.com", "*.notion.so", "*.adobe.com", "*.adobe.io"]
+    },
+    {
+      "name": "Business Systems",
+      "usage_group": "Business",
+      "description": "Accounting, ERP, CRM, payroll, HR, e-commerce and line-of-business systems.",
+      "icon": "building",
+      "display_order": 50,
+      "color": "#14b8a6",
+      "applications": ["Sage", "Pastel", "Xero", "QuickBooks", "SAP", "Shopify", "Salesforce", "HubSpot", "CRM", "ERP", "Payroll", "HR Systems", "HR System"],
+      "domains": ["*.sage.com", "*.sageone.com", "*.xero.com", "*.quickbooks.com", "*.intuit.com", "*.sap.com", "*.shopify.com", "*.salesforce.com", "*.hubspot.com"]
+    },
+    {
+      "name": "AI Services",
+      "usage_group": "Business or Personal",
+      "description": "AI assistants, generative AI, AI APIs, coding assistants, search AI and enterprise AI services.",
+      "icon": "sparkles",
+      "display_order": 60,
+      "color": "#a68bff",
+      "applications": ["ChatGPT", "OpenAI", "OpenAI API", "OpenAI Authentication", "OpenAI Static Assets", "OpenAI Uploaded Content", "Sora", "Codex", "DALL-E", "Microsoft Copilot", "Microsoft 365 Copilot", "Copilot", "GitHub Copilot", "Azure OpenAI", "Claude", "Claude API", "Anthropic", "Gemini", "Gemini Advanced", "Google Gemini", "Google AI Studio", "Vertex AI", "Grok", "Perplexity", "Perplexity AI", "DeepSeek", "DeepSeek API", "Meta AI", "Mistral", "Le Chat", "Mistral API", "Qwen", "Kimi AI", "Character.AI", "Poe", "YouChat", "You.com", "Hugging Face", "Hugging Face Inference API", "Replit AI", "Cursor AI", "Windsurf", "Continue", "Continue.dev", "Tabnine", "Codeium", "Amazon Q", "Watsonx", "IBM Watsonx"],
+      "domains": ["chatgpt.com", "*.chatgpt.com", "chat.openai.com", "api.openai.com", "platform.openai.com", "auth.openai.com", "*.oaistatic.com", "*.oaiusercontent.com", "*.sora.com", "*.copilot.microsoft.com", "copilot.microsoft.com", "*.githubcopilot.com", "*.services.ai.azure.com", "*.openai.azure.com", "*.anthropic.com", "*.claude.ai", "*.gemini.google.com", "gemini.google.com", "aistudio.google.com", "*.aistudio.google.com", "*.generativelanguage.googleapis.com", "*.vertexai.googleapis.com", "*.perplexity.ai", "*.x.ai", "*.grok.com", "*.deepseek.com", "*.meta.ai", "*.mistral.ai", "*.chat.mistral.ai", "*.dashscope.aliyuncs.com", "*.qwen.ai", "*.kimi.com", "*.moonshot.cn", "*.character.ai", "*.poe.com", "*.you.com", "*.huggingface.co", "*.hf.co", "*.api-inference.huggingface.co", "*.replit.com", "*.cursor.com", "*.cursor.sh", "*.windsurf.com", "*.codeium.com", "*.continue.dev", "*.tabnine.com", "*.amazonq.aws", "*.qbusiness.aws.dev", "*.watsonx.ai", "*.ibm.com"],
+      "services": [
+        {"vendor": "OpenAI", "service": "ChatGPT", "policy": "Approved", "tags": ["Generative AI", "Assistant"]},
+        {"vendor": "OpenAI", "service": "OpenAI API", "policy": "Approved", "tags": ["Generative AI", "API"]},
+        {"vendor": "OpenAI", "service": "Sora", "policy": "Monitor", "tags": ["Video Generation", "Generative AI"]},
+        {"vendor": "OpenAI", "service": "Codex", "policy": "Approved", "tags": ["Coding", "Assistant"]},
+        {"vendor": "Microsoft", "service": "Microsoft Copilot", "policy": "Business Approved", "tags": ["Office AI", "Enterprise AI", "Assistant"]},
+        {"vendor": "Microsoft", "service": "GitHub Copilot", "policy": "Business Approved", "tags": ["Coding", "Enterprise AI"]},
+        {"vendor": "Microsoft", "service": "Azure OpenAI", "policy": "Business Approved", "tags": ["Enterprise AI", "API"]},
+        {"vendor": "Anthropic", "service": "Claude", "policy": "Approved", "tags": ["Generative AI", "Assistant"]},
+        {"vendor": "Google", "service": "Gemini", "policy": "Approved", "tags": ["Generative AI", "Assistant"]},
+        {"vendor": "Google", "service": "Vertex AI", "policy": "Business Approved", "tags": ["Enterprise AI", "API"]},
+        {"vendor": "xAI", "service": "Grok", "policy": "Monitor", "tags": ["Generative AI", "Assistant"]},
+        {"vendor": "Perplexity", "service": "Perplexity AI", "policy": "Approved", "tags": ["Search AI", "Assistant"]},
+        {"vendor": "DeepSeek", "service": "DeepSeek", "policy": "Monitor", "tags": ["Generative AI", "API"]},
+        {"vendor": "Meta", "service": "Meta AI", "policy": "Monitor", "tags": ["Generative AI", "Assistant"]},
+        {"vendor": "Mistral", "service": "Le Chat", "policy": "Monitor", "tags": ["Generative AI", "Assistant"]},
+        {"vendor": "Alibaba", "service": "Qwen", "policy": "Monitor", "tags": ["Generative AI", "Assistant"]},
+        {"vendor": "Moonshot", "service": "Kimi AI", "policy": "Monitor", "tags": ["Generative AI", "Assistant"]},
+        {"vendor": "Character AI", "service": "Character.AI", "policy": "Monitor", "tags": ["Generative AI", "Assistant"]},
+        {"vendor": "Poe", "service": "Poe", "policy": "Monitor", "tags": ["Generative AI", "Assistant"]},
+        {"vendor": "You.com", "service": "YouChat", "policy": "Monitor", "tags": ["Search AI", "Assistant"]},
+        {"vendor": "Hugging Face", "service": "Hugging Face", "policy": "Approved", "tags": ["Enterprise AI", "API"]},
+        {"vendor": "Replit", "service": "Replit AI", "policy": "Monitor", "tags": ["Coding", "Assistant"]},
+        {"vendor": "Cursor", "service": "Cursor AI", "policy": "Monitor", "tags": ["Coding", "Assistant"]},
+        {"vendor": "Windsurf", "service": "Windsurf", "policy": "Monitor", "tags": ["Coding", "Assistant"]},
+        {"vendor": "Continue.dev", "service": "Continue", "policy": "Monitor", "tags": ["Coding", "Assistant"]},
+        {"vendor": "Tabnine", "service": "Tabnine", "policy": "Monitor", "tags": ["Coding", "Assistant"]},
+        {"vendor": "Codeium", "service": "Codeium", "policy": "Monitor", "tags": ["Coding", "Assistant"]},
+        {"vendor": "Amazon", "service": "Amazon Q", "policy": "Business Approved", "tags": ["Coding", "Enterprise AI", "Assistant"]},
+        {"vendor": "IBM", "service": "Watsonx", "policy": "Business Approved", "tags": ["Enterprise AI", "API"]}
+      ],
+      "tags": ["Generative AI", "Coding", "Image Generation", "Video Generation", "Search AI", "Office AI", "Enterprise AI", "API", "Assistant"]
+    },
+    {
+      "name": "Social Media",
+      "usage_group": "Recreational or Marketing",
+      "description": "Social networks, feeds and community platforms.",
+      "icon": "share-nodes",
+      "display_order": 70,
+      "color": "#f97316",
+      "applications": ["Facebook", "Instagram", "TikTok", "X", "Twitter / X", "Twitter", "Reddit", "Pinterest", "Threads", "LinkedIn", "Snapchat"],
+      "domains": ["*.facebook.com", "*.fbcdn.net", "*.instagram.com", "*.cdninstagram.com", "*.tiktok.com", "*.tiktokcdn.com", "*.x.com", "*.twitter.com", "*.reddit.com", "*.pinterest.com", "*.threads.net", "*.linkedin.com", "*.snapchat.com"]
+    },
+    {
+      "name": "Video Streaming",
+      "usage_group": "Recreational or Media",
+      "description": "Video streaming, live streaming and video entertainment services.",
+      "icon": "film",
+      "display_order": 80,
+      "color": "#ef4444",
+      "applications": ["Netflix", "YouTube", "Plex", "Disney+", "Disney Plus", "Prime Video", "Amazon Prime Video", "Twitch", "Vimeo", "Showmax", "Apple TV+"],
+      "domains": ["*.netflix.com", "*.nflxvideo.net", "*.youtube.com", "*.googlevideo.com", "*.ytimg.com", "*.plex.tv", "*.disneyplus.com", "*.primevideo.com", "*.twitch.tv", "*.ttvnw.net", "*.vimeo.com", "*.showmax.com", "*.tv.apple.com"]
+    },
+    {
+      "name": "Music Streaming",
+      "usage_group": "Recreational or Media",
+      "description": "Music, audio and podcast streaming services.",
+      "icon": "music",
+      "display_order": 90,
+      "color": "#22c55e",
+      "applications": ["Spotify", "Apple Music", "Deezer", "Tidal", "YouTube Music", "SoundCloud"],
+      "domains": ["*.spotify.com", "*.scdn.co", "*.music.apple.com", "*.deezer.com", "*.tidal.com", "*.music.youtube.com", "*.soundcloud.com"]
+    },
+    {
+      "name": "Remote Access",
+      "usage_group": "Business or Support",
+      "description": "Remote control, support and remote desktop tools.",
+      "icon": "headset",
+      "display_order": 100,
+      "color": "#38bdf8",
+      "applications": ["AnyDesk", "TeamViewer", "RustDesk", "Remote Desktop", "RDP", "Splashtop", "ConnectWise Control", "ScreenConnect", "VNC", "LogMeIn"],
+      "domains": ["*.anydesk.com", "*.teamviewer.com", "*.rustdesk.com", "*.splashtop.com", "*.screenconnect.com", "*.connectwise.com", "*.logmein.com"]
+    },
+    {
+      "name": "Security Services",
+      "usage_group": "System and Security",
+      "description": "Endpoint protection, DNS protection, EDR and security tooling.",
+      "icon": "shield-halved",
+      "display_order": 110,
+      "color": "#10b981",
+      "applications": ["SentinelOne", "Sophos", "Microsoft Defender", "Defender", "CrowdStrike", "Bitdefender", "Malwarebytes", "ESET", "Cisco Umbrella", "Umbrella"],
+      "domains": ["*.sentinelone.net", "*.sophos.com", "*.crowdstrike.com", "*.bitdefender.com", "*.malwarebytes.com", "*.eset.com", "*.umbrella.com", "*.wdcp.microsoft.com", "*.wd.microsoft.com", "*.wdcpalt.microsoft.com", "*.defender.microsoft.com", "*.security.microsoft.com", "*.smartscreen.microsoft.com"]
+    },
+    {
+      "name": "Cloud Infrastructure",
+      "usage_group": "Infrastructure",
+      "description": "Cloud platforms, hosting, CDN and infrastructure providers.",
+      "icon": "cloud",
+      "display_order": 120,
+      "color": "#06b6d4",
+      "applications": ["Microsoft Azure", "Azure", "AWS", "Amazon Web Services", "Google Cloud", "GCP", "Oracle Cloud", "DigitalOcean", "Cloudflare", "Akamai", "Fastly"],
+      "domains": ["*.azure.com", "*.azurewebsites.net", "*.azureedge.net", "*.blob.core.windows.net", "*.queue.core.windows.net", "*.table.core.windows.net", "*.file.core.windows.net", "*.amazonaws.com", "*.aws.amazon.com", "cloud.google.com", "*.cloud.google.com", "*.googleapis.com", "*.oraclecloud.com", "*.digitalocean.com", "*.cloudflare.com", "*.akamai.net", "*.fastly.net"]
+    },
+    {
+      "name": "Hardware Vendor Services",
+      "usage_group": "System and Background",
+      "description": "Hardware vendor update, firmware, driver, telemetry and support services.",
+      "icon": "microchip",
+      "display_order": 118,
+      "color": "#38bdf8",
+      "applications": ["Dell", "Lenovo", "HP", "HPE", "ASUS", "Acer", "MSI", "Gigabyte", "Intel", "AMD", "NVIDIA", "Realtek", "Broadcom", "Qualcomm"],
+      "domains": ["*.dell.com", "*.downloads.dell.com", "*.dellcdn.com", "*.dellsupport.com", "*.delltechnologies.com", "*.lenovo.com", "*.download.lenovo.com", "*.support.lenovo.com", "*.pcsupport.lenovo.com", "*.thinkbios.com", "*.hp.com", "*.hpe.com", "*.hpcloud.hp.com", "*.support.hp.com", "*.asus.com", "*.asuscomm.com", "*.support.asus.com", "*.acer.com", "*.global.acer.com", "*.support.acer.com", "*.msi.com", "*.download.msi.com", "*.gigabyte.com", "*.intel.com", "*.downloadcenter.intel.com", "*.downloadmirror.intel.com", "*.amd.com", "*.nvidia.com", "*.geforce.com", "*.download.nvidia.com", "*.realtek.com", "*.broadcom.com", "*.qualcomm.com"]
+    },
+    {
+      "name": "Content Delivery Networks",
+      "usage_group": "Infrastructure",
+      "description": "CDN and edge delivery networks where the specific application is unresolved.",
+      "icon": "server",
+      "display_order": 125,
+      "color": "#60a5fa",
+      "applications": ["Microsoft CDN", "Cloudflare CDN", "Akamai CDN", "Fastly CDN", "CDN"],
+      "domains": ["*.msedge.net", "*.azureedge.net", "*.akamaized.net", "*.cloudfront.net", "*.akamaihd.net", "*.fastly.net"]
+    },
+    {
+      "name": "Microsoft Cloud Services",
+      "usage_group": "Business or Personal",
+      "description": "General Microsoft cloud and platform traffic where the specific service is not shown in the client overview.",
+      "icon": "cloud",
+      "display_order": 127,
+      "color": "#64748b",
+      "applications": ["Microsoft Cloud Services", "Microsoft Services (General)", "Microsoft Services - Unresolved", "Microsoft", "Microsoft Authentication", "Azure AD", "Microsoft Entra", "Entra ID", "Authentication"],
+      "domains": ["*.microsoft.com", "*.msftconnecttest.com", "login.microsoftonline.com", "*.login.microsoftonline.com", "login.live.com", "*.microsoftonline.com", "*.msauth.net", "*.msauthimages.net", "*.msftauth.net", "*.aadcdn.microsoftonline-p.com"]
+    },
+    {
+      "name": "Software Updates",
+      "usage_group": "System and Background",
+      "description": "Operating system, browser, driver and firmware update traffic.",
+      "icon": "rotate",
+      "display_order": 130,
+      "color": "#64748b",
+      "applications": ["Windows Update", "Apple Update", "Android Update", "Linux Repositories", "Browser Updates", "Driver Downloads", "Firmware Updates", "Software Updates"],
+      "domains": ["*.windowsupdate.com", "*.windowsupdate.microsoft.com", "*.update.microsoft.com", "*.download.windowsupdate.com", "*.delivery.mp.microsoft.com", "*.dl.delivery.mp.microsoft.com", "*.emdl.ws.microsoft.com", "*.do.dsp.mp.microsoft.com", "*.tsfe.trafficshaping.dsp.mp.microsoft.com", "*.download.microsoft.com", "*.officecdn.microsoft.com", "*.apple.com", "*.mzstatic.com", "*.android.com", "*.ubuntu.com", "*.debian.org", "*.centos.org", "*.redhat.com", "*.mozilla.org", "*.googlechromelabs.github.io"]
+    },
+    {
+      "name": "Downloads",
+      "usage_group": "Business or Personal",
+      "description": "General downloads, installers, ISO downloads and package managers.",
+      "icon": "download",
+      "display_order": 140,
+      "color": "#f8c84e",
+      "applications": ["Software Downloads", "ISO Downloads", "Package Managers", "Downloads", "npm", "PyPI", "NuGet", "Docker Hub", "GitHub Releases"],
+      "domains": ["*.download.com", "*.sourceforge.net", "*.npmjs.com", "*.pypi.org", "*.nuget.org", "*.docker.com", "*.github.com", "*.githubusercontent.com"]
+    },
+    {
+      "name": "Gaming",
+      "usage_group": "Recreational",
+      "description": "Gaming platforms, launchers, game updates and game networks.",
+      "icon": "gamepad",
+      "display_order": 150,
+      "color": "#fb7185",
+      "applications": ["Steam", "Epic Games", "Xbox Live", "PlayStation Network", "Battle.net", "Riot Games", "Nintendo", "Roblox", "Minecraft", "Gaming"],
+      "domains": ["*.steampowered.com", "*.steamcontent.com", "*.epicgames.com", "*.xboxlive.com", "*.playstation.net", "*.battle.net", "*.riotgames.com", "*.nintendo.com", "*.roblox.com", "*.minecraft.net"]
+    },
+    {
+      "name": "Shopping",
+      "usage_group": "Business or Personal",
+      "description": "Online shopping, marketplaces and retail browsing.",
+      "icon": "cart-shopping",
+      "display_order": 160,
+      "color": "#e879f9",
+      "applications": ["Amazon", "Takealot", "Temu", "eBay", "AliExpress", "Shein"],
+      "domains": ["*.amazon.com", "*.amazon.co.za", "*.takealot.com", "*.temu.com", "*.ebay.com", "*.aliexpress.com", "*.shein.com"]
+    },
+    {
+      "name": "Network Infrastructure",
+      "usage_group": "Infrastructure",
+      "description": "DNS, DHCP, NTP, certificates, directory services, monitoring and network control traffic.",
+      "icon": "network-wired",
+      "display_order": 170,
+      "color": "#94a3b8",
+      "applications": ["DNS", "DHCP", "NTP", "Certificate Validation", "OCSP", "Active Directory", "LDAP", "Kerberos", "SNMP", "Monitoring", "Time Services"],
+      "domains": ["*.pool.ntp.org", "*.ntp.org", "*.digicert.com", "*.sectigo.com", "*.globalsign.com", "*.letsencrypt.org", "*.ocsp.*"]
+    },
+    {
+      "name": "Backup & Synchronisation",
+      "usage_group": "Business or System",
+      "description": "Backup platforms, backup agents and synchronisation services.",
+      "icon": "database",
+      "display_order": 180,
+      "color": "#8b5cf6",
+      "applications": ["Veeam", "Acronis", "Synology Backup", "Windows Backup", "Nextcloud Sync", "OneDrive Sync", "Google Drive Sync"],
+      "domains": ["*.veeam.com", "*.acronis.com", "*.synology.com"]
+    },
+    {
+      "name": "Unknown",
+      "usage_group": "Unknown",
+      "description": "Traffic that cannot yet be classified.",
+      "icon": "circle-question",
+      "display_order": 999,
+      "color": "#94a3b8",
+      "applications": ["Other", "Unknown", "Unclassified"],
+      "domains": []
+    }
+  ]
+}

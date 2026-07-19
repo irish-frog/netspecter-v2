@@ -1,0 +1,67 @@
+/* Local SVG icon helpers. SVGs should use currentColor and 2px strokes. */
+
+.ui-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-block;
+  flex: 0 0 auto;
+  color: currentColor;
+  vertical-align: -0.18em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ui-icon--button {
+  width: 18px;
+  height: 18px;
+}
+
+.ui-icon--monitor {
+  width: 24px;
+  height: 24px;
+}
+
+.ui-icon--nav {
+  width: 20px;
+  height: 20px;
+}
+
+.ui-icon use,
+.ui-icon path,
+.ui-icon rect,
+.ui-icon circle,
+.ui-icon line,
+.ui-icon polyline,
+.ui-icon polygon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ns-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.ns-icon--action {
+  width: 18px;
+  height: 18px;
+}
+
+.ns-icon--card {
+  width: 24px;
+  height: 24px;
+}
+
+.ns-icon--feature {
+  width: 32px;
+  height: 32px;
+}

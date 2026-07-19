@@ -1,0 +1,11 @@
+[Unit]
+Description=NetSpecter Vault Scheduled Backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/netspecter
+Environment=NETSPECTER_APP_ROOT=/opt/netspecter
+ExecStart=/usr/local/bin/netspecter-vault schedule
+

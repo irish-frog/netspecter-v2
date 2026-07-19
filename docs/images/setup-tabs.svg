@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">NetSpecter setup sections</title>
+  <desc id="desc">Generic visual guide showing NetSpecter settings areas for AdGuard, Telegram, UniFi, Monitor, and IDS.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#101d31"/>
+      <stop offset="1" stop-color="#060b14"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" x2="1">
+      <stop offset="0" stop-color="#00ddc7"/>
+      <stop offset="1" stop-color="#5ba8ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="620" fill="#050b14"/>
+  <rect x="34" y="34" width="1132" height="552" rx="24" fill="url(#bg)" stroke="#263a58"/>
+  <text x="70" y="90" fill="#f5f8ff" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="900">Setup Flow</text>
+  <text x="70" y="124" fill="#9fb1cc" font-family="Inter, Arial, sans-serif" font-size="18">Work left to right: DNS first, then alerts, discovery, monitors, and IDS.</text>
+  <g font-family="Inter, Arial, sans-serif">
+    <g transform="translate(70 180)">
+      <rect width="204" height="300" rx="18" fill="#0d1c30" stroke="#2c4a70"/>
+      <circle cx="102" cy="58" r="30" fill="#082236" stroke="#00ddc7" stroke-width="2"/>
+      <text x="102" y="68" text-anchor="middle" fill="#00ddc7" font-size="32" font-weight="900">1</text>
+      <text x="102" y="120" text-anchor="middle" fill="#f5f8ff" font-size="23" font-weight="900">AdGuard</text>
+      <text x="28" y="162" fill="#9fb1cc" font-size="15">Set web port 80</text>
+      <text x="28" y="190" fill="#9fb1cc" font-size="15">Set DNS port 53</text>
+      <text x="28" y="218" fill="#9fb1cc" font-size="15">Add blocklists</text>
+      <text x="28" y="246" fill="#9fb1cc" font-size="15">Point router DNS</text>
+    </g>
+    <g transform="translate(292 180)">
+      <rect width="204" height="300" rx="18" fill="#0d1c30" stroke="#2c4a70"/>
+      <circle cx="102" cy="58" r="30" fill="#082236" stroke="#5ba8ff" stroke-width="2"/>
+      <text x="102" y="68" text-anchor="middle" fill="#5ba8ff" font-size="32" font-weight="900">2</text>
+      <text x="102" y="120" text-anchor="middle" fill="#f5f8ff" font-size="23" font-weight="900">Telegram</text>
+      <text x="28" y="162" fill="#9fb1cc" font-size="15">Create bot</text>
+      <text x="28" y="190" fill="#9fb1cc" font-size="15">Get chat ID</text>
+      <text x="28" y="218" fill="#9fb1cc" font-size="15">Save token</text>
+      <text x="28" y="246" fill="#9fb1cc" font-size="15">Send test</text>
+    </g>
+    <g transform="translate(514 180)">
+      <rect width="204" height="300" rx="18" fill="#0d1c30" stroke="#2c4a70"/>
+      <circle cx="102" cy="58" r="30" fill="#082236" stroke="#f8c84e" stroke-width="2"/>
+      <text x="102" y="68" text-anchor="middle" fill="#f8c84e" font-size="32" font-weight="900">3</text>
+      <text x="102" y="120" text-anchor="middle" fill="#f5f8ff" font-size="23" font-weight="900">UniFi</text>
+      <text x="28" y="162" fill="#9fb1cc" font-size="15">Create local user</text>
+      <text x="28" y="190" fill="#9fb1cc" font-size="15">Add API URL</text>
+      <text x="28" y="218" fill="#9fb1cc" font-size="15">Find site</text>
+      <text x="28" y="246" fill="#9fb1cc" font-size="15">Import clients</text>
+    </g>
+    <g transform="translate(736 180)">
+      <rect width="204" height="300" rx="18" fill="#0d1c30" stroke="#2c4a70"/>
+      <circle cx="102" cy="58" r="30" fill="#082236" stroke="#38f07b" stroke-width="2"/>
+      <text x="102" y="68" text-anchor="middle" fill="#38f07b" font-size="32" font-weight="900">4</text>
+      <text x="102" y="120" text-anchor="middle" fill="#f5f8ff" font-size="23" font-weight="900">Monitor</text>
+      <text x="28" y="162" fill="#9fb1cc" font-size="15">HTTP / TCP</text>
+      <text x="28" y="190" fill="#9fb1cc" font-size="15">Ping / DNS</text>
+      <text x="28" y="218" fill="#9fb1cc" font-size="15">Email ticks</text>
+      <text x="28" y="246" fill="#9fb1cc" font-size="15">Telegram ticks</text>
+    </g>
+    <g transform="translate(958 180)">
+      <rect width="154" height="300" rx="18" fill="#0d1c30" stroke="#2c4a70"/>
+      <circle cx="77" cy="58" r="30" fill="#082236" stroke="#ff526c" stroke-width="2"/>
+      <text x="77" y="68" text-anchor="middle" fill="#ff526c" font-size="32" font-weight="900">5</text>
+      <text x="77" y="120" text-anchor="middle" fill="#f5f8ff" font-size="23" font-weight="900">IDS</text>
+      <text x="24" y="162" fill="#9fb1cc" font-size="15">Suricata</text>
+      <text x="24" y="190" fill="#9fb1cc" font-size="15">P1/P2</text>
+      <text x="24" y="218" fill="#9fb1cc" font-size="15">Ignore noisy</text>
+      <text x="24" y="246" fill="#9fb1cc" font-size="15">Ban IPs</text>
+    </g>
+  </g>
+  <rect x="70" y="520" width="1060" height="34" rx="17" fill="#0d1c30" stroke="#243a5a"/>
+  <rect x="82" y="531" width="320" height="12" rx="6" fill="url(#accent)"/>
+  <text x="430" y="544" fill="#9fb1cc" font-family="Inter, Arial, sans-serif" font-size="15">Use example values in the guide. Replace them with your own network details.</text>
+</svg>

@@ -1,0 +1,17 @@
+[Unit]
+Description=NetSpecter Web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/netspecter
+ExecStart=/opt/netspecter/venv/bin/gunicorn --config /opt/netspecter/gunicorn_config.py wsgi:application
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=NETSPECTER_SESSION_COOKIE_SECURE=0
+Environment=NETSPECTER_SESSION_IDLE_MINUTES=30
+
+[Install]
+WantedBy=multi-user.target

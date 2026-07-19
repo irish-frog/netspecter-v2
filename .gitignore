@@ -1,0 +1,40 @@
+# Runtime data
+netspecter.db
+*.db
+*.sqlite
+cache.json
+session.key
+secret.key
+*.key
+
+# Local deployment config
+config.json
+AdGuardHome.yaml
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Node / local visual QA tooling
+node_modules/
+package-lock.json
+package.json
+test-results/
+playwright-report/
+tests/netspecter-*.spec.js
+
+# Backups and logs
+*.backup
+*.bak
+*.bak-*
+*.log
+*.pid
+ui-screenshots/
+docs/images/* render.png
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

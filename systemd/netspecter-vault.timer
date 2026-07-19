@@ -1,0 +1,10 @@
+[Unit]
+Description=Check NetSpecter Vault Backup Schedule
+
+[Timer]
+OnCalendar=*:37:00
+Persistent=true
+Unit=netspecter-vault.service
+
+[Install]
+WantedBy=timers.target

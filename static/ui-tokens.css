@@ -1,0 +1,102 @@
+/* NetSpecter UI tokens
+   Phase 1 foundation for the refreshed dark interface.
+   These variables are additive and keep existing pages functional.
+*/
+
+:root {
+  color-scheme: dark;
+
+  --ns-bg-main: #080F17;
+  --ns-bg-sidebar: #07101B;
+  --ns-bg-card: #0D1827;
+  --ns-bg-card-hover: #111F31;
+  --ns-bg-input: #0A1421;
+
+  --ns-border: #1D2D43;
+  --ns-border-hover: #2B4668;
+
+  --ns-text-primary: #F2F6FC;
+  --ns-text-secondary: #A4B1C6;
+  --ns-text-muted: #68778C;
+
+  --ns-brand-cyan: #00D6FF;
+  --ns-brand-blue: #1688FF;
+  --ns-brand-purple: #6A5CFF;
+
+  --ns-status-healthy: #22D67A;
+  --ns-status-warning: #FFB020;
+  --ns-status-critical: #FF4D5E;
+  --ns-status-offline: #586472;
+  --ns-status-unknown: #3078FF;
+
+  --ns-space-1: 4px;
+  --ns-space-2: 8px;
+  --ns-space-3: 12px;
+  --ns-space-4: 16px;
+  --ns-space-5: 24px;
+  --ns-space-6: 32px;
+
+  --ns-radius-sm: 8px;
+  --ns-radius-md: 12px;
+  --ns-radius-lg: 16px;
+
+  --bg-main: #080f17;
+  --bg-sidebar: #07101b;
+  --bg-card: #0d1827;
+  --bg-card-hover: #111f31;
+  --bg-input: #0a1421;
+
+  --border: #1d2d43;
+  --border-hover: #2b4668;
+  --border-subtle: rgba(164, 177, 198, 0.14);
+
+  --text-primary: #f2f6fc;
+  --text-secondary: #a4b1c6;
+  --text-muted: #68778c;
+
+  --brand-cyan: #00d6ff;
+  --brand-blue: #1688ff;
+  --brand-purple: #6a5cff;
+
+  --status-healthy: #22d67a;
+  --status-warning: #ffb020;
+  --status-critical: #ff4d5e;
+  --status-offline: #586472;
+  --status-unknown: #3078ff;
+
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: var(--ns-radius-md);
+  --radius-lg: var(--ns-radius-lg);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: var(--ns-space-5);
+  --space-6: var(--ns-space-6);
+
+  --shadow-card: 0 14px 34px rgba(0, 0, 0, 0.28);
+  --shadow-glow-blue: 0 0 28px rgba(22, 136, 255, 0.16);
+
+  /* Compatibility aliases for the current theme. */
+  --bg: var(--bg-main);
+  --bg2: #050d1e;
+  --sidebar: var(--bg-sidebar);
+  --panel: var(--bg-card);
+  --panel2: #0b1624;
+  --panel3: var(--bg-card-hover);
+  --border-strong: rgba(22, 136, 255, 0.56);
+  --text: var(--text-primary);
+  --muted: var(--text-secondary);
+  --blue: #5ba8ff;
+  --teal: var(--brand-cyan);
+  --green: var(--status-healthy);
+  --purple: var(--brand-purple);
+  --red: var(--status-critical);
+  --yellow: var(--status-warning);
+  --shadow: var(--shadow-card);
+}

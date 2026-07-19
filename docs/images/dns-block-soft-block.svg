@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">DNS block is not a firewall kill switch</title>
+  <desc id="desc">Diagram explaining that DNS blocking stops normal name resolution but does not replace router or firewall blocking.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#101d31"/>
+      <stop offset="1" stop-color="#060b14"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="620" fill="#050b14"/>
+  <rect x="34" y="34" width="1132" height="552" rx="24" fill="url(#bg)" stroke="#263a58"/>
+  <text x="70" y="90" fill="#f5f8ff" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="900">DNS Block Is A Soft Block</text>
+  <text x="70" y="124" fill="#9fb1cc" font-family="Inter, Arial, sans-serif" font-size="18">It stops normal DNS lookups. It is not the same as a firewall kill switch.</text>
+  <g font-family="Inter, Arial, sans-serif">
+    <rect x="74" y="184" width="310" height="286" rx="20" fill="#0d1c30" stroke="#2c4a70"/>
+    <text x="106" y="236" fill="#f5f8ff" font-size="25" font-weight="900">Normal browsing</text>
+    <text x="106" y="278" fill="#9fb1cc" font-size="17">Device asks:</text>
+    <text x="106" y="314" fill="#f5f8ff" font-size="20" font-weight="800">example.com?</text>
+    <text x="106" y="360" fill="#9fb1cc" font-size="17">AdGuard blocks DNS reply.</text>
+    <text x="106" y="404" fill="#38f07b" font-size="18" font-weight="900">Good for web/app blocking</text>
+
+    <rect x="445" y="184" width="310" height="286" rx="20" fill="#0d1c30" stroke="#2c4a70"/>
+    <text x="477" y="236" fill="#f5f8ff" font-size="25" font-weight="900">Still possible</text>
+    <text x="477" y="278" fill="#9fb1cc" font-size="17">Cached IPs</text>
+    <text x="477" y="316" fill="#9fb1cc" font-size="17">DNS-over-HTTPS</text>
+    <text x="477" y="354" fill="#9fb1cc" font-size="17">VPNs</text>
+    <text x="477" y="392" fill="#9fb1cc" font-size="17">Direct IP connections</text>
+    <text x="477" y="436" fill="#f8c84e" font-size="18" font-weight="900">Not a hard isolation method</text>
+
+    <rect x="816" y="184" width="310" height="286" rx="20" fill="#0d1c30" stroke="#2c4a70"/>
+    <text x="848" y="236" fill="#f5f8ff" font-size="25" font-weight="900">Hard block</text>
+    <text x="848" y="278" fill="#9fb1cc" font-size="17">Use router firewall rules</text>
+    <text x="848" y="316" fill="#9fb1cc" font-size="17">Block switch port</text>
+    <text x="848" y="354" fill="#9fb1cc" font-size="17">Disable Wi-Fi client</text>
+    <text x="848" y="392" fill="#9fb1cc" font-size="17">VLAN isolation</text>
+    <text x="848" y="436" fill="#ff526c" font-size="18" font-weight="900">True kill switch lives here</text>
+  </g>
+  <g stroke-width="5" fill="none" stroke-linecap="round">
+    <path d="M384 328h61" stroke="#00ddc7"/>
+    <path d="M755 328h61" stroke="#ff526c"/>
+  </g>
+</svg>
