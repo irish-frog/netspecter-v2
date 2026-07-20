@@ -351,6 +351,8 @@ def recent_structured_alerts(connect_db, limit=300, filters=None):
     if alert_status:
         where.append("COALESCE(alert_status, 'open')=?")
         params.append(alert_status)
+    else:
+        where.append("COALESCE(alert_status, 'open') NOT IN ('ignored', 'suppressed')")
     sort = str(filters.get("sort") or "newest").strip().lower()
     order_by = {
         "newest": "ts DESC, id DESC",
@@ -486,12 +488,32 @@ def insert_events(con, rows):
 
 def prune_ids_history(connect_db, config):
     alert_days = max(1, int(config.get("ids_alert_retention_days", 60) or 60))
+    ignored_days = max(1, int(config.get("ids_ignored_retention_days", 3) or 3))
+    low_priority_days = max(1, int(config.get("ids_low_priority_retention_days", 7) or 7))
     detail_days = max(1, int(config.get("ids_detail_retention_days", 14) or 14))
     file_days = max(1, int(config.get("ids_file_retention_days", 30) or 30))
     max_rows = max(1000, int(config.get("ids_structured_max_records", 200000) or 200000))
     min_free_mb = max(0, int(config.get("ids_min_free_mb", 512) or 512))
     con = connect_db()
     con.execute("DELETE FROM ids_events WHERE event_type='alert' AND day < date('now', 'localtime', ?)", (f"-{alert_days - 1} days",))
+    con.execute(
+        """
+        DELETE FROM ids_events
+        WHERE event_type='alert'
+          AND COALESCE(alert_status, 'open') IN ('ignored', 'suppressed')
+          AND day < date('now', 'localtime', ?)
+        """,
+        (f"-{ignored_days - 1} days",),
+    )
+    con.execute(
+        """
+        DELETE FROM ids_events
+        WHERE event_type='alert'
+          AND CAST(COALESCE(severity, 3) AS INTEGER) >= 3
+          AND day < date('now', 'localtime', ?)
+        """,
+        (f"-{low_priority_days - 1} days",),
+    )
     con.execute("DELETE FROM ids_events WHERE event_type IN ('dns','http','tls','anomaly') AND day < date('now', 'localtime', ?)", (f"-{detail_days - 1} days",))
     con.execute("DELETE FROM ids_events WHERE event_type='fileinfo' AND day < date('now', 'localtime', ?)", (f"-{file_days - 1} days",))
     total = con.execute("SELECT COUNT(*) FROM ids_events").fetchone()[0]

@@ -2,6 +2,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from netspecter_ids import (
@@ -58,7 +59,8 @@ CREATE TABLE ids_events (
     mime_type TEXT,
     hashes TEXT,
     stored INTEGER DEFAULT 0,
-    anomaly_event TEXT
+    anomaly_event TEXT,
+    alert_status TEXT DEFAULT 'open'
 );
 CREATE INDEX idx_ids_events_ts ON ids_events(ts);
 CREATE INDEX idx_ids_events_src_ip ON ids_events(src_ip);
@@ -183,6 +185,37 @@ class EveJsonTests(unittest.TestCase):
         self.assertIn("idx_ids_events_type", indexes)
         self.assertIn("idx_ids_events_signature", indexes)
 
+    def test_daily_prune_removes_old_ignored_and_medium_alerts_first(self):
+        old_day = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
+        recent_day = datetime.now().strftime("%Y-%m-%d")
+        self.write_events(
+            alert_event(ts=f"{old_day}T10:00:00.000000+0200", flow_id=1, signature="Old ignored"),
+            alert_event(ts=f"{old_day}T10:01:00.000000+0200", flow_id=2, signature="Old medium"),
+            alert_event(ts=f"{recent_day}T10:02:00.000000+0200", flow_id=3, signature="Recent critical"),
+        )
+        ingest_eve_incremental(self.connect_db, self.eve_path)
+        con = self.connect_db()
+        con.execute("UPDATE ids_events SET alert_status='ignored' WHERE signature='Old ignored'")
+        con.execute("UPDATE ids_events SET severity=3 WHERE signature='Old medium'")
+        con.commit()
+        con.close()
+
+        prune_ids_history(
+            self.connect_db,
+            {
+                "ids_alert_retention_days": 365,
+                "ids_ignored_retention_days": 1,
+                "ids_low_priority_retention_days": 1,
+                "ids_structured_max_records": 1000,
+                "ids_min_free_mb": 0,
+            },
+        )
+
+        con = self.connect_db()
+        remaining = [row[0] for row in con.execute("SELECT signature FROM ids_events ORDER BY id").fetchall()]
+        con.close()
+        self.assertEqual(["Recent critical"], remaining)
+
     def test_fast_log_fallback_parser_still_parses_existing_alerts(self):
         text = "07/10/2026-23:01:00.000000 [**] [1:999001:1] NETSPECTER TEST P1 IDS ALERT [**] [Classification: A Network Trojan was Detected] [Priority: 1] {TCP} 192.168.1.50:4444 -> 8.8.8.8:443"
         alerts = fast_log_alerts_from_text(text)
@@ -225,6 +258,25 @@ class EveJsonTests(unittest.TestCase):
 
         self.assertEqual(["High", "Critical"], [alert["signature"] for alert in normal_alerts])
         self.assertEqual(["Medium", "High", "Critical"], [alert["signature"] for alert in expanded_alerts])
+
+    def test_ignored_and_suppressed_alerts_do_not_show_by_default(self):
+        self.write_events(
+            alert_event(flow_id=1, signature="Visible"),
+            alert_event(flow_id=2, signature="Ignored"),
+            alert_event(flow_id=3, signature="Suppressed"),
+        )
+        ingest_eve_incremental(self.connect_db, self.eve_path)
+        con = self.connect_db()
+        con.execute("UPDATE ids_events SET alert_status='ignored' WHERE signature='Ignored'")
+        con.execute("UPDATE ids_events SET alert_status='suppressed' WHERE signature='Suppressed'")
+        con.commit()
+        con.close()
+
+        normal_alerts = recent_structured_alerts(self.connect_db, filters={"show_noise": True})
+        ignored_alerts = recent_structured_alerts(self.connect_db, filters={"status": "ignored", "show_noise": True})
+
+        self.assertEqual(["Visible"], [alert["signature"] for alert in normal_alerts])
+        self.assertEqual(["Ignored"], [alert["signature"] for alert in ignored_alerts])
 
     def test_default_truncated_packet_noise_is_hidden_but_raw_view_can_show_it(self):
         self.write_events(

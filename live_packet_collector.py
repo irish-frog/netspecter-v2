@@ -185,6 +185,8 @@ DEFAULT_CONFIG = {
     "smtp_to": "",
     "ids_email_cooldown_minutes": 480,
     "ids_alert_retention_days": 45,
+    "ids_ignored_retention_days": 3,
+    "ids_low_priority_retention_days": 7,
     "ids_detail_retention_days": 45,
     "ids_file_retention_days": 45,
     "ids_raw_flow_retention_hours": 0,
