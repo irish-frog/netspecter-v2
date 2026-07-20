@@ -331,6 +331,8 @@ def recent_structured_alerts(connect_db, limit=300, filters=None):
     for signature in hidden_signatures:
         where.append("signature<>?")
         params.append(signature)
+    if not show_default_noise and not str(filters.get("severity", "") or "").strip():
+        where.append("CAST(COALESCE(severity, 3) AS INTEGER) IN (1, 2)")
     mapping = {
         "severity": "severity=?",
         "event_type": "event_type=?",

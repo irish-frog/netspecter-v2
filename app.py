@@ -6701,6 +6701,11 @@ def ids_alerts():
         visible_alerts.append(alert)
 
     hidden_count = len(alerts) - len(visible_alerts)
+    default_mode_note = (
+        "Showing all selected diagnostic severities."
+        if ids_filters["show_noise"] or ids_filters["severity"]
+        else "Showing Critical and High alerts only. Medium, Low and diagnostic noise are stored but hidden."
+    )
     priority_counts = Counter(alert["priority"] for alert in visible_alerts)
     pcount = lambda value: priority_counts.get(value, 0) + priority_counts.get(str(value), 0)
     signature_counts = Counter(alert["signature"] for alert in visible_alerts)
@@ -7034,24 +7039,24 @@ def ids_alerts():
 </style>
 <div class="ids-page">
   <div class="ns-polish-panel ids-score-strip">
-    <div><b>Alerts (24h)</b><small>Structured IDS events</small></div>
+    <div><b>Actionable IDS</b><small>Critical and High by default</small></div>
     <div><span class="ns-dot red"></span><strong class="red">{pcount(1):,}</strong><small>Critical</small></div>
     <div><span class="ns-dot orange"></span><strong>{pcount(2):,}</strong><small>High</small></div>
-    <div><span class="ns-dot yellow"></span><strong>{pcount(3):,}</strong><small>Medium</small></div>
-    <div><span class="ns-dot blue"></span><strong>{max(0, len(visible_alerts) - pcount(1) - pcount(2) - pcount(3)):,}</strong><small>Low</small></div>
+    <div><span class="ns-dot yellow"></span><strong>{pcount(3):,}</strong><small>Medium shown</small></div>
+    <div><span class="ns-dot blue"></span><strong>View</strong><small>Medium / Low via filter</small></div>
     <a class="ns-compact-button" href="#allAlerts">View all alerts <i class="fa-solid fa-chevron-right"></i></a>
   </div>
 
   <section class="ids-panel ids-panel-pad">
     <div class="ids-section-head">
-      <div><div class="ids-section-title"><h2>Open Incidents</h2><span class="ids-count-pill">{open_incident_total:,}</span></div><div class="ids-panel-subtitle">Active security incidents requiring attention</div></div>
+      <div><div class="ids-section-title"><h2>Actionable IDS Alerts</h2><span class="ids-count-pill">{open_incident_total:,}</span></div><div class="ids-panel-subtitle">{h(default_mode_note)}</div></div>
     </div>
     <div class="ids-open-shell">
       <div class="ids-summary-grid">
-        <div class="ids-summary-card"><strong>{open_incident_total:,}</strong><b>Total open</b><small>Currently actionable IDS alerts</small></div>
+        <div class="ids-summary-card"><strong>{open_incident_total:,}</strong><b>Shown open</b><small>Current actionable IDS alerts</small></div>
         <div class="ids-summary-card"><strong class="red">{pcount(1):,}</strong><b>Critical</b><small>Requires immediate attention</small></div>
         <div class="ids-summary-card"><strong>{pcount(2):,}</strong><b>High</b><small>High priority incidents</small></div>
-        <div class="ids-summary-card"><strong>{max(0, len(visible_alerts) - pcount(1) - pcount(2)):,}</strong><b>Medium / Low</b><small>Lower priority incidents</small></div>
+        <div class="ids-summary-card"><strong>Off</strong><b>Medium / Low</b><small>Enable diagnostic view to show them</small></div>
         <div class="ids-summary-card"><strong>{new_24h_count:,}</strong><b>New in 24h</b><small>Seen during the last day</small></div>
         <div class="ids-summary-card"><strong>{affected_devices_count:,}</strong><b>Affected devices</b><small>Most recent: {h(most_recent_incident)}</small></div>
       </div>
@@ -7084,7 +7089,7 @@ def ids_alerts():
         <label>Protocol<input name="protocol" value="{h(ids_filters['protocol'])}" placeholder="TCP, UDP, TLS"></label>
         <label>Signature Contains<input name="signature" value="{h(ids_filters['signature'])}" placeholder="Enter signature or keyword"></label>
         <label>Sort<select name="sort">{sort_options}</select></label>
-        <label><input type="checkbox" name="show_noise" value="1" style="width:auto"{show_noise_checked}> Show diagnostic/noise alerts</label>
+        <label><input type="checkbox" name="show_noise" value="1" style="width:auto"{show_noise_checked}> Show Medium, Low and diagnostic alerts</label>
         <div class="ids-filter-actions"><button type="submit"><i class="fa-solid fa-filter"></i> Apply Filters</button><span class="ns-polish-subtle">{hidden_count:,} hidden by display filters</span></div>
       </div></form>
     </section>

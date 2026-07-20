@@ -203,9 +203,28 @@ class EveJsonTests(unittest.TestCase):
         con.commit()
         con.close()
 
-        alerts = recent_structured_alerts(self.connect_db, filters={"sort": "severity_high"})
+        alerts = recent_structured_alerts(self.connect_db, filters={"sort": "severity_high", "show_noise": True})
 
         self.assertEqual(["Critical", "High", "Low"], [alert["signature"] for alert in alerts])
+
+    def test_default_alert_list_only_shows_critical_and_high(self):
+        self.write_events(
+            alert_event(flow_id=1, signature="Critical"),
+            alert_event(flow_id=2, signature="High"),
+            alert_event(flow_id=3, signature="Medium"),
+        )
+        ingest_eve_incremental(self.connect_db, self.eve_path)
+        con = self.connect_db()
+        con.execute("UPDATE ids_events SET severity=2 WHERE signature='High'")
+        con.execute("UPDATE ids_events SET severity=3 WHERE signature='Medium'")
+        con.commit()
+        con.close()
+
+        normal_alerts = recent_structured_alerts(self.connect_db)
+        expanded_alerts = recent_structured_alerts(self.connect_db, filters={"show_noise": True})
+
+        self.assertEqual(["High", "Critical"], [alert["signature"] for alert in normal_alerts])
+        self.assertEqual(["Medium", "High", "Critical"], [alert["signature"] for alert in expanded_alerts])
 
     def test_default_truncated_packet_noise_is_hidden_but_raw_view_can_show_it(self):
         self.write_events(
@@ -232,7 +251,7 @@ class EveJsonTests(unittest.TestCase):
         )
         ingest_eve_incremental(self.connect_db, self.eve_path)
 
-        alerts = recent_structured_alerts(self.connect_db)
+        alerts = recent_structured_alerts(self.connect_db, filters={"show_noise": True})
 
         self.assertEqual(1, len(alerts))
         self.assertEqual("4", alerts[0]["priority"])
