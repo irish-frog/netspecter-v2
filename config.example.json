@@ -56,6 +56,7 @@
   "ids_unknown_only": false,
   "ids_excluded_ips": [],
   "ids_banned_ips": [],
+  "ids_auto_ban_enabled": false,
   "ids_email_enabled": false,
   "ids_telegram_enabled": false,
   "smtp_host": "",

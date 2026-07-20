@@ -59,6 +59,13 @@ port_3000_in_use() {
   ss -H -ltn 'sport = :3000' 2>/dev/null | grep -q LISTEN
 }
 
+disable_suricata_safely() {
+  timeout 20s systemctl stop suricata >/dev/null 2>&1 || true
+  timeout 10s systemctl disable suricata >/dev/null 2>&1 || true
+  systemctl kill suricata >/dev/null 2>&1 || true
+  systemctl reset-failed suricata >/dev/null 2>&1 || true
+}
+
 install_speedtest_optional() {
   if dpkg-query -W -f='${Status}' speedtest 2>/dev/null | grep -q "install ok installed" || \
      dpkg-query -W -f='${Status}' speedtest-cli 2>/dev/null | grep -q "install ok installed"; then
@@ -107,7 +114,7 @@ install_suricata_optional() {
         timeout 20s systemctl enable --now suricata >/dev/null 2>&1 || true
       fi
     elif suricata_interface_available && suricata -T -c /etc/suricata/suricata.yaml >/dev/null 2>&1; then
-      systemctl enable --now suricata || true
+      timeout 20s systemctl enable --now suricata >/dev/null 2>&1 || true
       guard_suricata_restart_loop
     else
       echo "WARNING: Suricata installed but configuration validation failed; not restarting Suricata." >&2
@@ -232,8 +239,7 @@ suricata_interface_available() {
     return 0
   fi
   echo "WARNING: Suricata interface '$iface' does not exist. Disabling Suricata until the capture interface is corrected." >&2
-  systemctl disable --now suricata >/dev/null 2>&1 || true
-  systemctl reset-failed suricata >/dev/null 2>&1 || true
+  disable_suricata_safely
   return 1
 }
 
@@ -247,8 +253,7 @@ guard_suricata_restart_loop() {
   restarts="${restarts:-0}"
   if [ "$restarts" -ge 5 ]; then
     echo "WARNING: Suricata restart loop detected ($restarts restarts). Disabling Suricata to protect appliance CPU." >&2
-    systemctl disable --now suricata >/dev/null 2>&1 || true
-    systemctl reset-failed suricata >/dev/null 2>&1 || true
+    disable_suricata_safely
   fi
 }
 

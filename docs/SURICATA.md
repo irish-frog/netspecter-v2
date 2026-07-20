@@ -42,6 +42,8 @@ P3 alerts are ignored for Telegram by default.
 
 Closed, acknowledged, investigating, ignored, or banned alerts should not repeatedly notify as open alerts.
 
+NetSpecter does not automatically ban P1/P2 endpoints by default. Manual Ban Source IP and Ban Destination IP actions remain available on the IDS Alerts page. Automatic banning only runs when `ids_auto_ban_enabled` is explicitly set to `true` in configuration.
+
 ## Incident Deduplication
 
 At a high level, NetSpecter groups related IDS alerts into incidents using normalized alert details such as signature and source context. Repeated matching events can update the same active incident instead of creating a new separate incident every time.

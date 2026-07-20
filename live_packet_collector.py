@@ -172,6 +172,7 @@ DEFAULT_CONFIG = {
     "ids_unknown_only": False,
     "ids_excluded_ips": [],
     "ids_banned_ips": [],
+    "ids_auto_ban_enabled": False,
     "ids_email_enabled": False,
     "smtp_host": "",
     "smtp_port": 587,
@@ -1706,6 +1707,8 @@ def send_ids_telegram_message(config, text):
 
 def process_ids_auto_blocks(config):
     """Automatically block P1/P2 IDS endpoints and notify Telegram once."""
+    if not config.get("ids_auto_ban_enabled", False):
+        return 0
     con = None
     try:
         con = connect_db(timeout=2, busy_timeout_ms=1000)
