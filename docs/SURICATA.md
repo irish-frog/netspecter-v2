@@ -96,6 +96,36 @@ journalctl -u netspecter-monitor.service -n 120 --no-pager
 ls -l /var/log/suricata/eve.json /var/log/suricata/fast.log
 ```
 
+If CPU is high and `top` shows `Suricata-Main` at or near 100% on one core, check for a restart loop:
+
+```bash
+systemctl status suricata --no-pager -l
+systemctl show suricata -p NRestarts -p RestartUSec -p CPUQuotaPerSecUSec
+journalctl -u suricata -n 120 --no-pager
+```
+
+A common cause is Suricata still listening on Debian's default interface, `eth0`, while the appliance uses the NetSpecter bridge interface such as `br0`. The Suricata log will show:
+
+```text
+af-packet: eth0: failed to find interface: No such device
+```
+
+NetSpecter installer and post-update maintenance sync Suricata's AF_PACKET interface from `/etc/netspecter/config.json` `packet_iface`, or from `NETSPECTER_SURICATA_IFACE` when that environment variable is set.
+
+NetSpecter installs a Suricata systemd safety override at:
+
+```text
+/etc/systemd/system/suricata.service.d/netspecter-safety.conf
+```
+
+It slows restarts, limits restart bursts, and caps Suricata CPU so a broken IDS service does not keep the appliance busy. If Suricata is repeatedly exiting with `status=1`, NetSpecter post-update maintenance disables it to protect the appliance. The web UI and collector still run, but new IDS alerts will not be captured until Suricata is repaired and started again:
+
+```bash
+suricata -T -c /etc/suricata/suricata.yaml
+systemctl reset-failed suricata
+systemctl enable --now suricata
+```
+
 Expected result:
 
 - EVE JSON imports appear in collector logs when new structured rows are inserted.
@@ -109,4 +139,3 @@ Next:
 - [Understand incidents](INCIDENTS.md)
 - [Configure Telegram](TELEGRAM.md)
 - [Return to README](../README.md)
-

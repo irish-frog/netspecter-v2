@@ -28,6 +28,132 @@ install_safe_suricata_logrotate() {
 EOF
 }
 
+install_suricata_safety_override() {
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "Skipping Suricata systemd safety override; root privileges are required." >&2
+    return 0
+  fi
+
+  mkdir -p /etc/systemd/system/suricata.service.d
+  cat >/etc/systemd/system/suricata.service.d/netspecter-safety.conf <<'EOF'
+[Unit]
+StartLimitIntervalSec=10min
+StartLimitBurst=3
+
+[Service]
+RestartSec=60
+CPUQuota=50%
+EOF
+  systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+detect_suricata_interface() {
+  if [ -n "${NETSPECTER_SURICATA_IFACE:-}" ]; then
+    echo "$NETSPECTER_SURICATA_IFACE"
+    return 0
+  fi
+
+  local config_path="${NETSPECTER_CONFIG_ROOT:-/etc/netspecter}/config.json"
+  if [ -r "$config_path" ]; then
+    python3 - "$config_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text())
+    iface = str(data.get("packet_iface") or "").strip()
+    if iface:
+        print(iface)
+except Exception:
+    pass
+PY
+    return 0
+  fi
+
+  if ip link show br0 >/dev/null 2>&1; then
+    echo "br0"
+    return 0
+  fi
+
+  ip route show default 2>/dev/null | awk '/ default / {for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}'
+}
+
+configure_suricata_interface() {
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "Skipping Suricata interface maintenance; root privileges are required." >&2
+    return 0
+  fi
+  if [ ! -r /etc/suricata/suricata.yaml ]; then
+    return 0
+  fi
+
+  local iface
+  iface="$(detect_suricata_interface)"
+  iface="${iface:-br0}"
+  echo "Configuring Suricata AF_PACKET interface: $iface"
+
+  python3 - "/etc/suricata/suricata.yaml" "$iface" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+iface = sys.argv[2]
+lines = path.read_text().splitlines()
+out = []
+in_af_packet = False
+changed = False
+
+for line in lines:
+    if re.match(r"^af-packet:\s*$", line):
+        in_af_packet = True
+        out.append(line)
+        continue
+    if in_af_packet and line and not line.startswith((" ", "\t", "-")):
+        in_af_packet = False
+    if in_af_packet and re.match(r"^\s*-\s*interface:\s*", line):
+        indent = line[:len(line) - len(line.lstrip())]
+        out.append(f"{indent}- interface: {iface}")
+        changed = True
+        continue
+    out.append(line)
+
+if not changed:
+    out.extend(["", "af-packet:", f"  - interface: {iface}"])
+
+path.write_text("\n".join(out) + "\n")
+PY
+}
+
+suricata_interface_available() {
+  local iface
+  iface="$(detect_suricata_interface)"
+  iface="${iface:-br0}"
+  if ip link show "$iface" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "WARNING: Suricata interface '$iface' does not exist. Disabling Suricata until the capture interface is corrected." >&2
+  systemctl disable --now suricata >/dev/null 2>&1 || true
+  systemctl reset-failed suricata >/dev/null 2>&1 || true
+  return 1
+}
+
+guard_suricata_restart_loop() {
+  if ! systemctl list-unit-files suricata.service >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local restarts
+  restarts="$(systemctl show suricata -p NRestarts --value 2>/dev/null || echo 0)"
+  restarts="${restarts:-0}"
+  if [ "$restarts" -ge 5 ]; then
+    echo "WARNING: Suricata restart loop detected ($restarts restarts). Disabling Suricata to protect appliance CPU." >&2
+    systemctl disable --now suricata >/dev/null 2>&1 || true
+    systemctl reset-failed suricata >/dev/null 2>&1 || true
+  fi
+}
+
 refresh_suricata_rules() {
   if ! command -v suricata >/dev/null 2>&1; then
     echo "Suricata is not installed; skipping IDS rule maintenance."
@@ -56,18 +182,21 @@ refresh_suricata_rules() {
 
   if [ "$refresh_rules" -eq 0 ]; then
     echo "Suricata rules are fresh; skipping validation restart."
-    if ! systemctl is-active --quiet suricata; then
+    if suricata_interface_available && ! systemctl is-active --quiet suricata; then
       timeout 20s systemctl enable --now suricata >/dev/null 2>&1 || true
     fi
-  elif suricata -T -c /etc/suricata/suricata.yaml >/dev/null 2>&1; then
+  elif suricata_interface_available && suricata -T -c /etc/suricata/suricata.yaml >/dev/null 2>&1; then
     systemctl reset-failed suricata >/dev/null 2>&1 || true
     systemctl restart suricata >/dev/null 2>&1 || true
   else
     echo "WARNING: Suricata configuration validation failed; not restarting Suricata." >&2
   fi
+  guard_suricata_restart_loop
 }
 
 install_safe_suricata_logrotate
+install_suricata_safety_override
+configure_suricata_interface
 refresh_suricata_rules
 systemctl reset-failed logrotate >/dev/null 2>&1 || true
 
