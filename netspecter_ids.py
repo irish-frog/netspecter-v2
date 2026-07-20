@@ -308,7 +308,14 @@ def recent_structured_alerts(connect_db, limit=300, filters=None):
     if alert_status:
         where.append("COALESCE(alert_status, 'open')=?")
         params.append(alert_status)
-    sql = f"SELECT * FROM ids_events WHERE {' AND '.join(where)} ORDER BY ts DESC, id DESC LIMIT ?"
+    sort = str(filters.get("sort") or "newest").strip().lower()
+    order_by = {
+        "newest": "ts DESC, id DESC",
+        "oldest": "ts ASC, id ASC",
+        "severity_high": "COALESCE(severity, 99) ASC, ts DESC, id DESC",
+        "severity_low": "COALESCE(severity, 99) DESC, ts DESC, id DESC",
+    }.get(sort, "ts DESC, id DESC")
+    sql = f"SELECT * FROM ids_events WHERE {' AND '.join(where)} ORDER BY {order_by} LIMIT ?"
     params.append(int(limit))
     con = connect_db()
     con.row_factory = sqlite3.Row

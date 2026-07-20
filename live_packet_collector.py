@@ -171,6 +171,7 @@ DEFAULT_CONFIG = {
     "unifi_skip_tls_verify": False,
     "ids_unknown_only": False,
     "ids_excluded_ips": [],
+    "ids_exceptions": [],
     "ids_banned_ips": [],
     "ids_auto_ban_enabled": False,
     "ids_email_enabled": False,
@@ -1610,6 +1611,8 @@ def process_ids_email_alerts(config):
         source_ip = ids_endpoint_ip(alert.get("source"))
         if not ids_alert_is_fresh(alert, now_dt):
             continue
+        if ids_alert_is_excepted(config, alert):
+            continue
         if source_ip in excluded_ips or (config.get("ids_unknown_only") and source_ip in known_ips):
             continue
         try:
@@ -1651,6 +1654,27 @@ def valid_ids_block_ip(value):
         return True
     except Exception:
         return False
+
+
+def ids_alert_matches_exception(alert, exception):
+    if not isinstance(exception, dict):
+        return False
+    source_ip = str(exception.get("source_ip") or "").strip()
+    signature = str(exception.get("signature") or "").strip().lower()
+    alert_source = ids_endpoint_ip(alert.get("source") or alert.get("src_ip") or "")
+    alert_signature = str(alert.get("signature") or "").strip().lower()
+    if source_ip and source_ip != alert_source:
+        return False
+    if signature and signature != alert_signature:
+        return False
+    return bool(source_ip or signature)
+
+
+def ids_alert_is_excepted(config, alert):
+    exceptions = config.get("ids_exceptions", [])
+    if not isinstance(exceptions, list):
+        return False
+    return any(ids_alert_matches_exception(alert, exception) for exception in exceptions)
 
 
 def ids_device_name(con, ip):

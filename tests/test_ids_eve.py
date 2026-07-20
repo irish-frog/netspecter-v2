@@ -9,6 +9,7 @@ from netspecter_ids import (
     ingest_eve_incremental,
     normalize_eve_event,
     prune_ids_history,
+    recent_structured_alerts,
 )
 
 
@@ -188,6 +189,23 @@ class EveJsonTests(unittest.TestCase):
         self.assertEqual(1, len(alerts))
         self.assertEqual("1", alerts[0]["priority"])
         self.assertEqual("NETSPECTER TEST P1 IDS ALERT", alerts[0]["signature"])
+
+    def test_recent_alerts_can_sort_highest_severity_first(self):
+        self.write_events(
+            alert_event(ts="2026-07-12T10:00:00.000000+0200", flow_id=1, signature="Low"),
+            alert_event(ts="2026-07-12T10:02:00.000000+0200", flow_id=2, signature="Critical"),
+            alert_event(ts="2026-07-12T10:01:00.000000+0200", flow_id=3, signature="High"),
+        )
+        ingest_eve_incremental(self.connect_db, self.eve_path)
+        con = self.connect_db()
+        con.execute("UPDATE ids_events SET severity=3 WHERE signature='Low'")
+        con.execute("UPDATE ids_events SET severity=2 WHERE signature='High'")
+        con.commit()
+        con.close()
+
+        alerts = recent_structured_alerts(self.connect_db, filters={"sort": "severity_high"})
+
+        self.assertEqual(["Critical", "High", "Low"], [alert["signature"] for alert in alerts])
 
 
 if __name__ == "__main__":
