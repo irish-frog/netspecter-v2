@@ -5,4 +5,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+User=netspecter
+Group=netspecter
 ExecStart=/opt/netspecter/venv/bin/python /opt/netspecter/scheduled_speedtest.py

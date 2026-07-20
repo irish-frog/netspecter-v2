@@ -2,6 +2,8 @@
 set -euo pipefail
 
 DATA_DIR="${NETSPECTER_DATA_ROOT:-/var/lib/netspecter}"
+RUNTIME_USER="${NETSPECTER_RUNTIME_USER:-netspecter}"
+RUNTIME_GROUP="${NETSPECTER_RUNTIME_GROUP:-netspecter}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$DATA_DIR/reset-history-$STAMP"
 
@@ -39,7 +41,11 @@ touch "$DATA_DIR/netspecter.db" \
   "$DATA_DIR/netspecter_traffic.db" \
   "$DATA_DIR/netspecter_security.db"
 echo "{}" > "$DATA_DIR/cache.json"
-chmod 600 "$DATA_DIR"/netspecter*.db "$DATA_DIR/cache.json"
+if id -u "$RUNTIME_USER" >/dev/null 2>&1 && getent group "$RUNTIME_GROUP" >/dev/null 2>&1; then
+  chown "$RUNTIME_USER":"$RUNTIME_GROUP" "$DATA_DIR"/netspecter*.db "$DATA_DIR/cache.json"
+fi
+chmod 660 "$DATA_DIR"/netspecter*.db "$DATA_DIR/cache.json"
+chmod 750 "$DATA_DIR"
 
 echo "History reset complete. Run:"
 echo "  bash ./install.sh"

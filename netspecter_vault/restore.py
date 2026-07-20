@@ -121,8 +121,32 @@ def _restore_file_from_tar(tar, source, target):
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("wb") as out:
         shutil.copyfileobj(handle, out)
+    _apply_restored_permissions(target)
+
+
+def _apply_restored_permissions(target):
+    target = Path(target)
+    runtime_uid = -1
+    runtime_gid = -1
     try:
-        target.chmod(0o600 if target.name.endswith(".key") or target.name == "config.json" else 0o644)
+        import grp
+        import pwd
+
+        runtime_uid = pwd.getpwnam(os.environ.get("NETSPECTER_RUNTIME_USER", "netspecter")).pw_uid
+        runtime_gid = grp.getgrnam(os.environ.get("NETSPECTER_RUNTIME_GROUP", "netspecter")).gr_gid
+    except (ImportError, KeyError):
+        pass
+    try:
+        if str(target).startswith("/var/lib/netspecter/"):
+            if runtime_uid != -1 and runtime_gid != -1:
+                os.chown(target, runtime_uid, runtime_gid)
+            target.chmod(0o660 if target.suffix == ".db" else 0o640)
+        elif str(target).startswith("/etc/netspecter/"):
+            if runtime_gid != -1:
+                os.chown(target, 0, runtime_gid)
+            target.chmod(0o640)
+        else:
+            target.chmod(0o644)
     except Exception:
         pass
 

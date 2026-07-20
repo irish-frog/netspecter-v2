@@ -5,6 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+User=netspecter
+Group=netspecter
 WorkingDirectory=/opt/netspecter
 Environment=NETSPECTER_APP_ROOT=/opt/netspecter
 ExecStart=/opt/netspecter/venv/bin/python /opt/netspecter/monitor_sweeper.py

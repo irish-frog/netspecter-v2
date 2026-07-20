@@ -5,6 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=netspecter
+Group=netspecter
 WorkingDirectory=/opt/netspecter
 ExecStart=/opt/netspecter/venv/bin/python /opt/netspecter/live_packet_collector.py
 Restart=always

@@ -6,6 +6,8 @@ Requires=netspecter-web.service
 
 [Service]
 Type=simple
+User=netspecter
+Group=netspecter
 WorkingDirectory=/opt/netspecter
 ExecStart=/opt/netspecter/venv/bin/python /opt/netspecter/netspecter_https_proxy.py
 Restart=always

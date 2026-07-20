@@ -6,7 +6,10 @@ echo "=== NetSpecter Full Appliance Installer ==="
 INSTALL_DIR="/opt/netspecter"
 CONFIG_DIR="/etc/netspecter"
 DATA_DIR="/var/lib/netspecter"
+LOG_DIR="/var/log/netspecter"
 SERVICE_DIR="/etc/systemd/system"
+RUNTIME_USER="netspecter"
+RUNTIME_GROUP="netspecter"
 SOURCE_DIR="$(pwd -P)"
 INSTALL_ADGUARD="${INSTALL_ADGUARD:-1}"
 INSTALL_GATUS="${INSTALL_GATUS:-1}"
@@ -262,6 +265,114 @@ EOF
   fi
 }
 
+ensure_runtime_user() {
+  if ! getent group "$RUNTIME_GROUP" >/dev/null 2>&1; then
+    groupadd --system "$RUNTIME_GROUP"
+  fi
+  if ! id -u "$RUNTIME_USER" >/dev/null 2>&1; then
+    useradd --system --gid "$RUNTIME_GROUP" --home-dir "$DATA_DIR" --shell /usr/sbin/nologin "$RUNTIME_USER"
+  fi
+  if getent group adm >/dev/null 2>&1; then
+    usermod -aG adm "$RUNTIME_USER"
+  fi
+}
+
+apply_runtime_permissions() {
+  chown -R root:root "$INSTALL_DIR"
+  chown -R root:"$RUNTIME_GROUP" "$CONFIG_DIR"
+  chown -R "$RUNTIME_USER":"$RUNTIME_GROUP" "$DATA_DIR" "$LOG_DIR"
+
+  chmod 755 "$INSTALL_DIR"
+  chmod 750 "$CONFIG_DIR" "$CONFIG_DIR/adguard" "$DATA_DIR" "$LOG_DIR"
+  chmod 640 "$CONFIG_DIR/config.json" "$CONFIG_DIR/netspecter-https.crt" "$CONFIG_DIR/netspecter-https.key"
+  chmod 660 "$DATA_DIR/netspecter.db" "$DATA_DIR/netspecter_dns.db" "$DATA_DIR/netspecter_traffic.db" "$DATA_DIR/netspecter_security.db" "$DATA_DIR/cache.json" "$DATA_DIR/oui_cache.json"
+
+  find "$INSTALL_DIR" -type d -exec chmod 755 {} \;
+  find "$INSTALL_DIR" -type f -exec chmod 644 {} \;
+  if [ -d "$INSTALL_DIR/venv/bin" ]; then
+    find "$INSTALL_DIR/venv/bin" -maxdepth 1 -type f -exec chmod 755 {} \;
+  fi
+  chmod +x "$INSTALL_DIR/live_packet_collector.py"
+  chmod +x "$INSTALL_DIR/netspecter_https_proxy.py"
+  chmod +x "$INSTALL_DIR/scheduled_speedtest.py"
+  chmod +x "$INSTALL_DIR/monitor_sweeper.py"
+  chmod +x "$INSTALL_DIR/collector_watchdog.sh"
+  chmod +x "$INSTALL_DIR/scripts/render-adguard-template.sh"
+  chmod +x "$INSTALL_DIR/scripts/reset-history.sh"
+  chmod +x "$INSTALL_DIR/scripts/post-update-maintenance.sh"
+  chmod +x /usr/local/bin/netspecter-vault
+}
+
+validate_anomaly_permissions() {
+  local unit="${1:-netspecter-collector.service}"
+  local unit_user
+  local unit_group
+  unit_user="$(systemctl show "$unit" -p User --value 2>/dev/null || true)"
+  unit_group="$(systemctl show "$unit" -p Group --value 2>/dev/null || true)"
+  unit_user="${unit_user:-root}"
+  unit_group="${unit_group:-root}"
+
+  echo "Anomaly service unit:   $unit"
+  echo "Anomaly service user:   $unit_user"
+  echo "Anomaly service group:  $unit_group"
+  echo "Anomaly data store:     $DATA_DIR/netspecter.db"
+  echo "Baseline state:         anomaly_device_daily and anomaly_device_hourly tables in netspecter.db"
+  echo "Model/state files:      none; explainable baseline state is stored in SQLite"
+  echo "Cache files:            $DATA_DIR/cache.json"
+  echo "Lock files:             SQLite WAL/SHM/JOURNAL files in $DATA_DIR"
+  echo "Export files:           generated on demand; no anomaly-specific export directory"
+  echo "Anomaly logs:           journalctl -u $unit"
+  echo "Scheduled anomaly unit: none; anomaly learning/detection runs inside netspecter-collector.service"
+
+  runuser -u "$unit_user" -- test -r "$DATA_DIR/netspecter.db"
+  runuser -u "$unit_user" -- test -w "$DATA_DIR/netspecter.db"
+  runuser -u "$unit_user" -- test -w "$DATA_DIR"
+  runuser -u "$unit_user" -- test -r "$DATA_DIR/cache.json"
+  runuser -u "$unit_user" -- test -w "$DATA_DIR/cache.json"
+
+  runuser -u "$unit_user" -- "$INSTALL_DIR/venv/bin/python" - "$DATA_DIR/netspecter.db" <<'PY'
+import sqlite3
+import sys
+from pathlib import Path
+
+db = Path(sys.argv[1])
+conn = sqlite3.connect(db)
+conn.execute("PRAGMA journal_mode=WAL")
+conn.execute(
+    "CREATE TABLE IF NOT EXISTS installer_anomaly_permission_test "
+    "(id INTEGER PRIMARY KEY, value TEXT)"
+)
+conn.execute(
+    "INSERT INTO installer_anomaly_permission_test(value) VALUES (?)",
+    ("ok",)
+)
+conn.commit()
+row = conn.execute(
+    "SELECT value FROM installer_anomaly_permission_test ORDER BY id DESC LIMIT 1"
+).fetchone()
+if not row or row[0] != "ok":
+    raise SystemExit("Anomaly database write/read validation failed")
+conn.execute("DROP TABLE installer_anomaly_permission_test")
+conn.commit()
+conn.close()
+print("Anomaly database permissions valid")
+PY
+
+  runuser -u "$unit_user" -- "$INSTALL_DIR/venv/bin/python" - "$DATA_DIR" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+data_dir = Path(sys.argv[1])
+path = data_dir / ".installer_anomaly_state_test"
+path.write_text("ok\n")
+if path.read_text() != "ok\n":
+    raise SystemExit("Anomaly baseline/cache state write/read validation failed")
+path.unlink()
+print("Anomaly baseline/cache state permissions valid")
+PY
+}
+
 detect_os
 
 echo "[1/9] Refreshing package metadata and installing setup tools..."
@@ -297,9 +408,10 @@ echo "[3/10] Installing NetSpecter base packages..."
 apt install -y python3 python3-pip python3-venv sqlite3 bridge-utils nftables tcpdump curl nano git bmon vnstat ieee-data snmp dnsutils cifs-utils openssl
 install_speedtest_optional
 install_suricata_optional
+ensure_runtime_user
 
 echo "[4/10] Creating folders..."
-mkdir -p "$INSTALL_DIR/static" "$INSTALL_DIR/scripts" "$INSTALL_DIR/adguard" "$CONFIG_DIR/adguard" "$DATA_DIR"
+mkdir -p "$INSTALL_DIR/static" "$INSTALL_DIR/scripts" "$INSTALL_DIR/adguard" "$CONFIG_DIR/adguard" "$DATA_DIR" "$LOG_DIR"
 
 echo "[5/10] Copying NetSpecter files..."
 # A collector started outside systemd, or from an older build without locking,
@@ -365,21 +477,11 @@ if [ ! -s "$CONFIG_DIR/netspecter-https.crt" ] || [ ! -s "$CONFIG_DIR/netspecter
     exit 1
   fi
 fi
-chown -R root:root "$INSTALL_DIR" "$CONFIG_DIR" "$DATA_DIR"
-chmod 700 "$CONFIG_DIR" "$CONFIG_DIR/adguard" "$DATA_DIR"
-chmod 600 "$CONFIG_DIR/config.json" "$CONFIG_DIR/netspecter-https.crt" "$CONFIG_DIR/netspecter-https.key" "$DATA_DIR/netspecter.db" "$DATA_DIR/netspecter_dns.db" "$DATA_DIR/netspecter_traffic.db" "$DATA_DIR/netspecter_security.db" "$DATA_DIR/cache.json" "$DATA_DIR/oui_cache.json"
-chmod +x "$INSTALL_DIR/live_packet_collector.py"
-chmod +x "$INSTALL_DIR/netspecter_https_proxy.py"
-chmod +x "$INSTALL_DIR/scheduled_speedtest.py"
-chmod +x "$INSTALL_DIR/monitor_sweeper.py"
-chmod +x "$INSTALL_DIR/collector_watchdog.sh"
-chmod +x "$INSTALL_DIR/scripts/render-adguard-template.sh"
-chmod +x "$INSTALL_DIR/scripts/reset-history.sh"
-chmod +x "$INSTALL_DIR/scripts/post-update-maintenance.sh"
-chmod +x /usr/local/bin/netspecter-vault
+apply_runtime_permissions
 
 echo "[8/10] Preparing AdGuard template..."
 "$INSTALL_DIR/scripts/render-adguard-template.sh" "$INSTALL_DIR/adguard/AdGuardHome.yaml.example" "$CONFIG_DIR/adguard/AdGuardHome.yaml.generated" || true
+apply_runtime_permissions
 
 echo "[9/10] Installing systemd services..."
 cp systemd/netspecter-web.service "$SERVICE_DIR/netspecter-web.service"
@@ -394,6 +496,7 @@ cp systemd/netspecter-monitor.timer "$SERVICE_DIR/netspecter-monitor.timer"
 cp systemd/netspecter-vault.service "$SERVICE_DIR/netspecter-vault.service"
 cp systemd/netspecter-vault.timer "$SERVICE_DIR/netspecter-vault.timer"
 systemctl daemon-reload
+validate_anomaly_permissions "netspecter-collector.service"
 systemctl enable --now netspecter-web netspecter-https netspecter-collector netspecter-watchdog.timer netspecter-speedtest.timer netspecter-monitor.timer netspecter-vault.timer
 systemctl restart netspecter-web netspecter-https netspecter-collector
 systemctl restart netspecter-watchdog.timer
@@ -405,11 +508,16 @@ systemctl enable AdGuardHome || true
 install_gatus_optional
 install_beszel_optional
 "$INSTALL_DIR/scripts/post-update-maintenance.sh" || true
+apply_runtime_permissions
 
 echo "[10/10] IDS setup complete."
 
 echo ""
 echo "=== NetSpecter installed ==="
+echo "Anomaly engine:        AVAILABLE (learning/detection runs inside netspecter-collector.service)"
+echo "Anomaly database:      READ/WRITE OK"
+echo "Baseline state:        READ/WRITE OK"
+echo "Anomaly permissions:   VALID"
 echo "Open: https://SERVER-IP:9443"
 echo "AdGuard template: $CONFIG_DIR/adguard/AdGuardHome.yaml.generated"
 echo "Check: systemctl status netspecter-web netspecter-https netspecter-collector"
