@@ -19,6 +19,7 @@ STRUCTURED_TYPES = {"alert", "dns", "http", "tls", "fileinfo", "anomaly"}
 TEXT_LIMITS = {
     "signature": 260,
     "category": 180,
+    "application": 120,
     "query": 260,
     "answer_summary": 500,
     "hostname": 260,
@@ -47,6 +48,7 @@ EXTERNAL_IP_LOOKUP_PATTERNS = (
 )
 
 INFORMATIONAL_SIGNATURE_PATTERNS = EXTERNAL_IP_LOOKUP_PATTERNS + (
+    "ET USER_AGENTS",
     "ET INFO Session Traversal Utilities for NAT",
 )
 
@@ -59,6 +61,7 @@ DEFAULT_INFORMATIONAL_SIGNATURES = {
     "ET INFO Session Traversal Utilities for NAT (STUN Binding Request)",
     "ET INFO Session Traversal Utilities for NAT (STUN Binding Response)",
     "ET INFO Session Traversal Utilities for NAT (STUN Binding Request On Non-Standard High Port)",
+    "ET USER_AGENTS Steam HTTP Client User-Agent",
 }
 
 DEFAULT_SUPPRESSED_SIGNATURES = DEFAULT_HIDDEN_SIGNATURES | DEFAULT_INFORMATIONAL_SIGNATURES
@@ -94,8 +97,12 @@ def effective_alert_severity(signature, severity):
 
 
 def effective_alert_category(signature, category):
+    if normalized_signature(signature) == "ET USER_AGENTS Steam HTTP Client User-Agent":
+        return "Gaming"
     if any(normalized_signature(signature).startswith(pattern) for pattern in EXTERNAL_IP_LOOKUP_PATTERNS):
         return "External IP discovery"
+    if normalized_signature(signature).startswith("ET USER_AGENTS"):
+        return "User-Agent observation"
     if is_default_informational_signature(signature):
         return "STUN / NAT traversal"
     if is_default_low_signature(signature):
@@ -103,6 +110,12 @@ def effective_alert_category(signature, category):
     if is_default_hidden_signature(signature):
         return "Diagnostic capture event"
     return category
+
+
+def effective_alert_application(signature):
+    if normalized_signature(signature) == "ET USER_AGENTS Steam HTTP Client User-Agent":
+        return "Steam"
+    return ""
 
 
 def cap(value, limit=180):
@@ -232,6 +245,7 @@ def normalize_eve_event(event):
         "signature_id": None,
         "signature": "",
         "category": "",
+        "application": "",
         "severity": None,
         "query": "",
         "query_type": "",
@@ -267,6 +281,7 @@ def normalize_eve_event(event):
             "signature_id": sid,
             "signature": signature,
             "category": cap_field("category", effective_alert_category(signature, alert.get("category"))),
+            "application": cap_field("application", effective_alert_application(signature)),
             "severity": effective_alert_severity(signature, int_or_none(alert.get("severity"))),
             "query": cap_field("query", dns.get("rrname") or dns.get("query")),
             "query_type": cap(dns.get("rrtype") or dns.get("type"), 40),
@@ -349,6 +364,7 @@ def structured_alert_from_row(row):
         "sid": f"1:{sid}:1" if sid else "",
         "signature": row["signature"] or "Suricata alert",
         "classification": classification or "",
+        "application": row_value(row, "application", "") or "",
         "priority": str(effective_severity or 3),
         "protocol": row["protocol"] or "",
         "source": source,
@@ -544,7 +560,7 @@ def ingest_eve_incremental(connect_db, eve_path, batch_size=500):
 def insert_events(con, rows):
     columns = [
         "event_key", "event_type", "ts", "day", "src_ip", "src_port", "dest_ip", "dest_port",
-        "protocol", "app_proto", "flow_id", "signature_id", "signature", "category", "severity",
+        "protocol", "app_proto", "flow_id", "signature_id", "signature", "category", "application", "severity",
         "query", "query_type", "rcode", "answer_summary", "hostname", "method", "url_path",
         "user_agent", "status", "tls_sni", "tls_version", "cert_subject", "cert_issuer", "ja3",
         "ja4", "filename", "file_size", "mime_type", "hashes", "stored", "anomaly_event",
@@ -604,6 +620,18 @@ def reclassify_default_ids_alerts(connect_db):
             (signature,),
         )
         changed += con.total_changes - before
+    before = con.total_changes
+    con.execute(
+        "UPDATE ids_events SET category='User-Agent observation', severity=4 WHERE event_type='alert' AND signature LIKE ?",
+        ("ET USER_AGENTS%",),
+    )
+    changed += con.total_changes - before
+    before = con.total_changes
+    con.execute(
+        "UPDATE ids_events SET category='Gaming', application='Steam', severity=4 WHERE event_type='alert' AND signature=?",
+        ("ET USER_AGENTS Steam HTTP Client User-Agent",),
+    )
+    changed += con.total_changes - before
     before = con.total_changes
     con.execute(
         "UPDATE ids_events SET category='STUN / NAT traversal', severity=4 WHERE event_type='alert' AND signature LIKE ?",

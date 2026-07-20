@@ -39,6 +39,7 @@ CREATE TABLE ids_events (
     signature_id INTEGER,
     signature TEXT,
     category TEXT,
+    application TEXT,
     severity INTEGER,
     query TEXT,
     query_type TEXT,
@@ -335,6 +336,36 @@ class EveJsonTests(unittest.TestCase):
         self.assertEqual("ipinfo.io", alerts[0]["destination"])
         self.assertTrue(is_default_suppressed_signature(alerts[0]["signature"]))
         self.assertEqual([], recent_structured_alerts(self.connect_db))
+
+    def test_steam_user_agent_is_informational_gaming_and_suppressed(self):
+        self.write_events(alert_event(
+            signature="ET USER_AGENTS Steam HTTP Client User-Agent",
+            severity=1,
+            signature_id=2016778,
+        ))
+        ingest_eve_incremental(self.connect_db, self.eve_path)
+
+        alerts = recent_structured_alerts(self.connect_db, filters={"show_noise": True})
+
+        self.assertEqual(1, len(alerts))
+        self.assertEqual("4", alerts[0]["priority"])
+        self.assertEqual("Steam", alerts[0]["application"])
+        self.assertEqual("Gaming", alerts[0]["classification"])
+        self.assertTrue(is_default_suppressed_signature(alerts[0]["signature"]))
+        self.assertEqual([], recent_structured_alerts(self.connect_db))
+
+    def test_policy_categories_do_not_force_critical_without_malicious_signature(self):
+        self.write_events(alert_event(
+            signature="ET USER_AGENTS Generic Browser User-Agent",
+            severity=2,
+            signature_id=2016779,
+        ))
+        ingest_eve_incremental(self.connect_db, self.eve_path)
+
+        alerts = recent_structured_alerts(self.connect_db, filters={"show_noise": True})
+
+        self.assertEqual("4", alerts[0]["priority"])
+        self.assertEqual("User-Agent observation", alerts[0]["classification"])
 
     def test_info_tld_observations_are_low_and_keep_full_hostname(self):
         self.write_events(

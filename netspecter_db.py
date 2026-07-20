@@ -619,6 +619,7 @@ def init_db(force=False):
             signature_id INTEGER,
             signature TEXT,
             category TEXT,
+            application TEXT,
             severity INTEGER,
             query TEXT,
             query_type TEXT,
@@ -652,6 +653,7 @@ def init_db(force=False):
         "ALTER TABLE ids_events ADD COLUMN first_seen TEXT",
         "ALTER TABLE ids_events ADD COLUMN last_seen TEXT",
         "ALTER TABLE ids_events ADD COLUMN alert_count INTEGER DEFAULT 1",
+        "ALTER TABLE ids_events ADD COLUMN application TEXT",
     ):
         try:
             con.execute(sql)
@@ -663,6 +665,7 @@ def init_db(force=False):
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_dest_ip ON ids_events(dest_ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_type ON ids_events(event_type)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_signature ON ids_events(signature)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_application ON ids_events(application)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_day_type ON ids_events(day, event_type)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_alert_status ON ids_events(alert_status)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_alert_rollup ON ids_events(signature_id, src_ip, dest_ip, query, protocol)")
