@@ -4,7 +4,7 @@ import re
 import shutil
 import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -40,6 +40,21 @@ DEFAULT_HIDDEN_SIGNATURES = {
     "SURICATA IPv4 truncated packet",
 }
 
+EXTERNAL_IP_LOOKUP_PATTERNS = (
+    "ET INFO IP Check Domain",
+    "ET INFO External IP Lookup Domain",
+    "ET INFO Observed External IP Lookup Domain",
+)
+
+INFORMATIONAL_SIGNATURE_PATTERNS = EXTERNAL_IP_LOOKUP_PATTERNS + (
+    "ET INFO Session Traversal Utilities for NAT",
+)
+
+LOW_PRIORITY_SIGNATURES = {
+    "ET INFO Observed DNS Query to .biz TLD",
+    "ET INFO Observed DNS Query for Suspicious TLD (.management)",
+}
+
 DEFAULT_INFORMATIONAL_SIGNATURES = {
     "ET INFO Session Traversal Utilities for NAT (STUN Binding Request)",
     "ET INFO Session Traversal Utilities for NAT (STUN Binding Response)",
@@ -58,17 +73,36 @@ def is_default_hidden_signature(value):
 
 
 def is_default_informational_signature(value):
-    return normalized_signature(value) in DEFAULT_INFORMATIONAL_SIGNATURES
+    signature = normalized_signature(value)
+    return signature in DEFAULT_INFORMATIONAL_SIGNATURES or any(signature.startswith(pattern) for pattern in INFORMATIONAL_SIGNATURE_PATTERNS)
+
+
+def is_default_low_signature(value):
+    return normalized_signature(value) in LOW_PRIORITY_SIGNATURES
 
 
 def is_default_suppressed_signature(value):
-    return normalized_signature(value) in DEFAULT_SUPPRESSED_SIGNATURES
+    return is_default_hidden_signature(value) or is_default_informational_signature(value)
 
 
 def effective_alert_severity(signature, severity):
     if is_default_informational_signature(signature):
         return 4
+    if is_default_low_signature(signature):
+        return 3
     return severity
+
+
+def effective_alert_category(signature, category):
+    if any(normalized_signature(signature).startswith(pattern) for pattern in EXTERNAL_IP_LOOKUP_PATTERNS):
+        return "External IP discovery"
+    if is_default_informational_signature(signature):
+        return "STUN / NAT traversal"
+    if is_default_low_signature(signature):
+        return "Low-priority DNS observation"
+    if is_default_hidden_signature(signature):
+        return "Diagnostic capture event"
+    return category
 
 
 def cap(value, limit=180):
@@ -118,6 +152,25 @@ def sid_parts(alert):
 
 
 def event_key(event, normalized):
+    if normalized.get("event_type") == "alert":
+        window_seconds = int(os.environ.get("NETSPECTER_IDS_DEDUPE_WINDOW_SECONDS", "300") or 300)
+        try:
+            parsed = datetime.fromisoformat(str(normalized.get("ts") or "").replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                parsed = parsed.replace(tzinfo=None)
+            bucket = parsed - timedelta(seconds=parsed.timestamp() % max(1, window_seconds))
+            bucket_text = bucket.strftime("%Y-%m-%dT%H:%M")
+        except Exception:
+            bucket_text = day_from_ts(normalized.get("ts"))
+        destination = normalized.get("query") or normalized.get("hostname") or normalized.get("tls_sni") or normalized.get("dest_ip")
+        parts = [
+            bucket_text,
+            normalized.get("signature_id") or normalized.get("signature"),
+            normalized.get("src_ip"),
+            destination,
+            normalized.get("protocol") or normalized.get("app_proto"),
+        ]
+        return "|".join(cap(part, 120) for part in parts if part not in (None, ""))
     parts = [
         normalized.get("ts"),
         normalized.get("event_type"),
@@ -205,12 +258,22 @@ def normalize_eve_event(event):
     row["day"] = day_from_ts(row["ts"])
     if event_type == "alert":
         alert = event.get("alert") if isinstance(event.get("alert"), dict) else {}
+        dns = event.get("dns") if isinstance(event.get("dns"), dict) else {}
+        tls = event.get("tls") if isinstance(event.get("tls"), dict) else {}
+        http = event.get("http") if isinstance(event.get("http"), dict) else {}
         _gid, sid, _rev = sid_parts(alert)
+        signature = cap_field("signature", alert.get("signature"))
         row.update({
             "signature_id": sid,
-            "signature": cap_field("signature", alert.get("signature")),
-            "category": cap_field("category", alert.get("category")),
-            "severity": int_or_none(alert.get("severity")),
+            "signature": signature,
+            "category": cap_field("category", effective_alert_category(signature, alert.get("category"))),
+            "severity": effective_alert_severity(signature, int_or_none(alert.get("severity"))),
+            "query": cap_field("query", dns.get("rrname") or dns.get("query")),
+            "query_type": cap(dns.get("rrtype") or dns.get("type"), 40),
+            "rcode": cap(dns.get("rcode"), 40),
+            "answer_summary": dns_answer_summary(dns),
+            "hostname": cap_field("hostname", http.get("hostname")),
+            "tls_sni": cap_field("hostname", tls.get("sni")),
         })
     elif event_type == "dns":
         dns = event.get("dns") if isinstance(event.get("dns"), dict) else {}
@@ -278,21 +341,27 @@ def structured_alert_from_row(row):
     destination = endpoint(row["dest_ip"], row["dest_port"])
     sid = row["signature_id"] or ""
     effective_severity = effective_alert_severity(row["signature"], row["severity"] or 3)
+    classification = effective_alert_category(row["signature"], row["category"] or "")
+    destination_label = row["query"] or row["hostname"] or row["tls_sni"] or destination
     return {
         "id": row["id"],
         "ts": row["ts"],
         "sid": f"1:{sid}:1" if sid else "",
         "signature": row["signature"] or "Suricata alert",
-        "classification": row["category"] or "",
+        "classification": classification or "",
         "priority": str(effective_severity or 3),
         "protocol": row["protocol"] or "",
         "source": source,
-        "destination": destination,
+        "destination": destination_label,
         "source_ip": row["src_ip"] or ids_endpoint_ip(source),
         "destination_ip": row["dest_ip"] or ids_endpoint_ip(destination),
         "event_type": row["event_type"],
         "flow_id": row["flow_id"] or "",
         "alert_status": row_value(row, "alert_status", "open") or "open",
+        "query": row_value(row, "query", "") or "",
+        "first_seen": row_value(row, "first_seen", row["ts"]) or row["ts"],
+        "last_seen": row_value(row, "last_seen", row["ts"]) or row["ts"],
+        "alert_count": row_value(row, "alert_count", 1) or 1,
     }
 
 
@@ -480,10 +549,84 @@ def insert_events(con, rows):
         "user_agent", "status", "tls_sni", "tls_version", "cert_subject", "cert_issuer", "ja3",
         "ja4", "filename", "file_size", "mime_type", "hashes", "stored", "anomaly_event",
     ]
-    sql = f"INSERT OR IGNORE INTO ids_events ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})"
+    for row in rows:
+        if row.get("event_type") == "alert":
+            row["first_seen"] = row.get("ts")
+            row["last_seen"] = row.get("ts")
+            row["alert_count"] = 1
+    columns.extend(["first_seen", "last_seen", "alert_count"])
+    updates = """
+    alert_count=COALESCE(ids_events.alert_count, 1) + 1,
+    first_seen=CASE
+      WHEN ids_events.first_seen IS NULL OR excluded.first_seen < ids_events.first_seen THEN excluded.first_seen
+      ELSE ids_events.first_seen
+    END,
+    last_seen=CASE
+      WHEN ids_events.last_seen IS NULL OR excluded.last_seen > ids_events.last_seen THEN excluded.last_seen
+      ELSE ids_events.last_seen
+    END,
+    ts=excluded.ts,
+    day=excluded.day,
+    alert_status=CASE
+      WHEN COALESCE(ids_events.alert_status, 'open') IN ('ignored', 'suppressed', 'banned') THEN ids_events.alert_status
+      ELSE 'open'
+    END
+    """
+    sql = (
+        f"INSERT INTO ids_events ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)}) "
+        f"ON CONFLICT(event_key) DO UPDATE SET {updates}"
+    )
     before = con.total_changes
     con.executemany(sql, [[row.get(column) for column in columns] for row in rows])
     return con.total_changes - before
+
+
+def reclassify_default_ids_alerts(connect_db):
+    con = connect_db()
+    changed = 0
+    for signature in sorted(DEFAULT_HIDDEN_SIGNATURES):
+        before = con.total_changes
+        con.execute(
+            """
+            UPDATE ids_events
+            SET category='Diagnostic capture event',
+                severity=4,
+                alert_status=CASE WHEN COALESCE(alert_status, 'open')='open' THEN 'ignored' ELSE alert_status END
+            WHERE event_type='alert' AND signature=?
+            """,
+            (signature,),
+        )
+        changed += con.total_changes - before
+    for signature in sorted(DEFAULT_INFORMATIONAL_SIGNATURES):
+        before = con.total_changes
+        con.execute(
+            "UPDATE ids_events SET category='STUN / NAT traversal', severity=4 WHERE event_type='alert' AND signature=?",
+            (signature,),
+        )
+        changed += con.total_changes - before
+    before = con.total_changes
+    con.execute(
+        "UPDATE ids_events SET category='STUN / NAT traversal', severity=4 WHERE event_type='alert' AND signature LIKE ?",
+        ("ET INFO Session Traversal Utilities for NAT%",),
+    )
+    changed += con.total_changes - before
+    for prefix in EXTERNAL_IP_LOOKUP_PATTERNS:
+        before = con.total_changes
+        con.execute(
+            "UPDATE ids_events SET category='External IP discovery', severity=4 WHERE event_type='alert' AND signature LIKE ?",
+            (prefix + "%",),
+        )
+        changed += con.total_changes - before
+    for signature in sorted(LOW_PRIORITY_SIGNATURES):
+        before = con.total_changes
+        con.execute(
+            "UPDATE ids_events SET category='Low-priority DNS observation', severity=3 WHERE event_type='alert' AND signature=?",
+            (signature,),
+        )
+        changed += con.total_changes - before
+    con.commit()
+    con.close()
+    return changed
 
 
 def prune_ids_history(connect_db, config):

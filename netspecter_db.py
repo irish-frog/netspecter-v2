@@ -641,13 +641,23 @@ def init_db(force=False):
             hashes TEXT,
             stored INTEGER DEFAULT 0,
             anomaly_event TEXT,
-            alert_status TEXT DEFAULT 'open'
+            alert_status TEXT DEFAULT 'open',
+            first_seen TEXT,
+            last_seen TEXT,
+            alert_count INTEGER DEFAULT 1
         )
     """)
-    try:
-        con.execute("ALTER TABLE ids_events ADD COLUMN alert_status TEXT DEFAULT 'open'")
-    except sqlite3.OperationalError:
-        pass
+    for sql in (
+        "ALTER TABLE ids_events ADD COLUMN alert_status TEXT DEFAULT 'open'",
+        "ALTER TABLE ids_events ADD COLUMN first_seen TEXT",
+        "ALTER TABLE ids_events ADD COLUMN last_seen TEXT",
+        "ALTER TABLE ids_events ADD COLUMN alert_count INTEGER DEFAULT 1",
+    ):
+        try:
+            con.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+    con.execute("UPDATE ids_events SET first_seen=COALESCE(first_seen, ts), last_seen=COALESCE(last_seen, ts), alert_count=COALESCE(alert_count, 1)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_ts ON ids_events(ts)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_src_ip ON ids_events(src_ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_dest_ip ON ids_events(dest_ip)")
@@ -655,6 +665,7 @@ def init_db(force=False):
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_signature ON ids_events(signature)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_day_type ON ids_events(day, event_type)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_alert_status ON ids_events(alert_status)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_alert_rollup ON ids_events(signature_id, src_ip, dest_ip, query, protocol)")
     con.execute(
         """
         INSERT OR IGNORE INTO ids_alert_notifications (alert_key, last_sent_ts)

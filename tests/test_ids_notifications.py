@@ -3,6 +3,7 @@ import importlib.util
 import io
 import os
 import sqlite3
+import sys
 import tempfile
 import unittest
 from datetime import datetime
@@ -22,6 +23,8 @@ class IdsNotificationDecisionTests(unittest.TestCase):
         }
         os.environ["NETSPECTER_CONFIG_ROOT"] = str(root / "config")
         os.environ["NETSPECTER_DATA_ROOT"] = str(root / "data")
+        for module_name in ("netspecter_config", "netspecter_db", "netspecter_paths"):
+            sys.modules.pop(module_name, None)
         spec = importlib.util.spec_from_file_location("collector_notify_test", SOURCE_DIR / "live_packet_collector.py")
         self.collector = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.collector)
@@ -37,7 +40,7 @@ class IdsNotificationDecisionTests(unittest.TestCase):
                 os.environ[key] = value
         self.tmp.cleanup()
 
-    def insert_alert(self, event_id, ts=None):
+    def insert_alert(self, event_id, ts=None, signature="NETSPECTER TEST P1 IDS ALERT", severity=1, signature_id=999001):
         ts = ts or datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         con = self.collector.connect_db()
         con.execute(
@@ -46,10 +49,10 @@ class IdsNotificationDecisionTests(unittest.TestCase):
                 (event_key, event_type, ts, day, src_ip, src_port, dest_ip, dest_port, protocol,
                  app_proto, flow_id, signature_id, signature, category, severity)
             VALUES (?, 'alert', ?, ?, '192.168.1.50', 4444, '8.8.8.8', 443, 'TCP',
-                    'tls', ?, 999001, 'NETSPECTER TEST P1 IDS ALERT',
-                    'A Network Trojan was Detected', 1)
+                    'tls', ?, ?, ?,
+                    'A Network Trojan was Detected', ?)
             """,
-            (f"event-{event_id}", ts, ts[:10], f"flow-{event_id}"),
+            (f"event-{event_id}", ts, ts[:10], f"flow-{event_id}", signature_id, signature, severity),
         )
         con.commit()
         con.close()
@@ -114,6 +117,28 @@ class IdsNotificationDecisionTests(unittest.TestCase):
         banned_logs = self.process_and_logs({**config, "ids_banned_ips": ["192.168.1.50"]})
         self.assertIn("IDS_NOTIFY decision=suppressed reason=banned key=ids|netspecter test p1 ids alert|192.168.1.50 incident=1", banned_logs)
         self.assertEqual(1, len(self.send_attempts))
+
+    def test_informational_external_ip_lookup_does_not_send_email_or_telegram(self):
+        config = {
+            "ids_email_enabled": True,
+            "ids_email_cooldown_minutes": 1440,
+            "ids_banned_ips": [],
+            "ids_telegram_enabled": True,
+        }
+        telegram_attempts = []
+        self.collector.send_ids_telegram_message = lambda _config, _message: telegram_attempts.append(_message) or (True, "sent")
+        self.insert_alert(
+            1,
+            signature="ET INFO External IP Lookup Domain in DNS Lookup (ipinfo .io)",
+            severity=4,
+            signature_id=2054168,
+        )
+
+        logs = self.process_and_logs(config)
+
+        self.assertEqual([], self.send_attempts)
+        self.assertEqual([], telegram_attempts)
+        self.assertNotIn("IDS_NOTIFY decision=sent", logs)
 
 
 if __name__ == "__main__":

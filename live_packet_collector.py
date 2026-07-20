@@ -48,6 +48,7 @@ from netspecter_ids import (
     maybe_vacuum_ids,
     prune_ids_history,
     recent_structured_alerts,
+    reclassify_default_ids_alerts,
 )
 from netspecter_anomaly import prune_anomalies, run_anomaly_cycle
 from services.microsoft365_endpoints_service import cached_microsoft365_domain_mappings
@@ -1825,6 +1826,9 @@ def import_suricata_eve(config):
         result = ingest_eve_incremental(connect_db, SURICATA_EVE_LOG)
         if result.get("inserted"):
             print(f"Suricata eve.json imported rows: {result['inserted']}")
+            changed = reclassify_default_ids_alerts(connect_db)
+            if changed:
+                print(f"Suricata IDS alert severities reclassified: {changed}")
         if result.get("bad_json"):
             print(f"Suricata eve.json skipped malformed rows: {result['bad_json']}")
     except Exception as error:
@@ -1924,6 +1928,7 @@ def prune_history(config=None):
         con.commit()
         con.execute("PRAGMA wal_checkpoint(PASSIVE)")
         con.close()
+        reclassify_default_ids_alerts(connect_db)
         prune_ids_history(connect_db, c)
         prune_quality_history(connect_db, c)
         prune_config_changes(connect_db, c)

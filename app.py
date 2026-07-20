@@ -6849,8 +6849,8 @@ def ids_alerts():
   <div><span class="mono">{h(alert['source_ip'])}</span><small>{h(alert['source_name'] or 'Local')}</small></div>
   <div><span class="mono">{h(alert['destination'])}</span><small class="{rep_class}">{h(rep_label)}</small></div>
   <div><span>{h(alert.get('protocol') or '-')}</span><small>Protocol</small></div>
-  <div><span>{ids_human_ts(alert.get('ts'))}</span><small>First seen</small></div>
-  <div><span>{ids_human_ts(alert.get('ts'))}</span><small>Updated</small></div>
+  <div><span>{ids_human_ts(alert.get('first_seen') or alert.get('ts'))}</span><small>First seen</small></div>
+  <div><span>{ids_human_ts(alert.get('last_seen') or alert.get('ts'))}</span><small>{int(alert.get('alert_count') or 1):,} seen</small></div>
   <div><span class="ids-status-pill ids-status-pill--{status_class}"><span></span>{h(status_chip)}</span></div>
   <div>{source_actions}</div>
 </div>

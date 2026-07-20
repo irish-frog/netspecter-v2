@@ -253,12 +253,33 @@ refresh_suricata_rules() {
   guard_suricata_restart_loop
 }
 
+reclassify_ids_alerts() {
+  local python_bin="${NETSPECTER_PYTHON:-/opt/netspecter/venv/bin/python}"
+  if [ ! -x "$python_bin" ]; then
+    python_bin="$(command -v python3 || true)"
+  fi
+  if [ -z "$python_bin" ]; then
+    echo "Skipping IDS alert reclassification; Python is not available." >&2
+    return 0
+  fi
+
+  "$python_bin" - <<'PY'
+from netspecter_db import connect_db, init_db
+from netspecter_ids import reclassify_default_ids_alerts
+
+init_db()
+changed = reclassify_default_ids_alerts(connect_db)
+print(f"IDS alert severity reclassification complete ({changed} rows touched).")
+PY
+}
+
 install_safe_suricata_logrotate
 ensure_ethtool
 install_suricata_safety_override
 configure_suricata_interface
 install_nic_offload_service
 refresh_suricata_rules
+reclassify_ids_alerts
 systemctl reset-failed logrotate >/dev/null 2>&1 || true
 
 echo "NetSpecter post-update maintenance complete."

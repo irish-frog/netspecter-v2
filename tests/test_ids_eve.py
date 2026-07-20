@@ -8,6 +8,7 @@ from pathlib import Path
 from netspecter_ids import (
     fast_log_alerts_from_text,
     ingest_eve_incremental,
+    is_default_suppressed_signature,
     normalize_eve_event,
     prune_ids_history,
     recent_structured_alerts,
@@ -60,7 +61,10 @@ CREATE TABLE ids_events (
     hashes TEXT,
     stored INTEGER DEFAULT 0,
     anomaly_event TEXT,
-    alert_status TEXT DEFAULT 'open'
+    alert_status TEXT DEFAULT 'open',
+    first_seen TEXT,
+    last_seen TEXT,
+    alert_count INTEGER DEFAULT 1
 );
 CREATE INDEX idx_ids_events_ts ON ids_events(ts);
 CREATE INDEX idx_ids_events_src_ip ON ids_events(src_ip);
@@ -71,8 +75,8 @@ CREATE INDEX idx_ids_events_day_type ON ids_events(day, event_type);
 """
 
 
-def alert_event(ts="2026-07-12T10:00:00.000000+0200", flow_id=1, signature="Test alert"):
-    return {
+def alert_event(ts="2026-07-12T10:00:00.000000+0200", flow_id=1, signature="Test alert", severity=1, signature_id=None, dns_query=None):
+    event = {
         "timestamp": ts,
         "event_type": "alert",
         "src_ip": "192.168.1.50",
@@ -83,13 +87,19 @@ def alert_event(ts="2026-07-12T10:00:00.000000+0200", flow_id=1, signature="Test
         "app_proto": "tls",
         "flow_id": flow_id,
         "alert": {
-            "signature_id": 999001,
+            "signature_id": signature_id,
             "signature": signature,
             "category": "Potentially Bad Traffic",
-            "severity": 1,
+            "severity": severity,
         },
         "payload": "do not store me",
     }
+    if dns_query:
+        event["app_proto"] = "dns"
+        event["dest_port"] = 53
+        event["proto"] = "UDP"
+        event["dns"] = {"query": dns_query, "type": "query", "rrtype": "A"}
+    return event
 
 
 class EveJsonTests(unittest.TestCase):
@@ -122,7 +132,7 @@ class EveJsonTests(unittest.TestCase):
         return count
 
     def test_normalizes_supported_events_and_caps_payloads(self):
-        event = alert_event(signature="x" * 400)
+        event = alert_event(signature="x" * 400, signature_id=999001)
         normalized = normalize_eve_event(event)
         self.assertEqual("alert", normalized["event_type"])
         self.assertEqual(999001, normalized["signature_id"])
@@ -130,9 +140,9 @@ class EveJsonTests(unittest.TestCase):
         self.assertNotIn("payload", normalized)
 
     def test_incremental_large_file_does_not_reread_previous_rows(self):
-        self.write_events(alert_event(flow_id=1), alert_event(flow_id=2))
+        self.write_events(alert_event(flow_id=1, signature="Test alert 1"), alert_event(flow_id=2, signature="Test alert 2"))
         first = ingest_eve_incremental(self.connect_db, self.eve_path)
-        self.write_events(alert_event(flow_id=3))
+        self.write_events(alert_event(flow_id=3, signature="Test alert 3"))
         second = ingest_eve_incremental(self.connect_db, self.eve_path)
         self.assertEqual(2, first["inserted"])
         self.assertEqual(1, second["inserted"])
@@ -142,7 +152,7 @@ class EveJsonTests(unittest.TestCase):
         self.write_events(alert_event(flow_id=1))
         ingest_eve_incremental(self.connect_db, self.eve_path)
         self.eve_path.unlink()
-        self.write_events(alert_event(flow_id=2))
+        self.write_events(alert_event(flow_id=2, signature="Rotated alert"))
         result = ingest_eve_incremental(self.connect_db, self.eve_path)
         self.assertEqual(1, result["inserted"])
         self.assertEqual(2, self.count_events())
@@ -158,7 +168,7 @@ class EveJsonTests(unittest.TestCase):
         self.eve_path.write_text("{bad json\n{}\n", encoding="utf-8")
         self.write_events(alert_event(flow_id=1), alert_event(flow_id=1))
         result = ingest_eve_incremental(self.connect_db, self.eve_path)
-        self.assertEqual(1, result["inserted"])
+        self.assertEqual(2, result["inserted"])
         self.assertEqual(1, result["bad_json"])
         self.assertEqual(1, self.count_events())
 
@@ -169,9 +179,9 @@ class EveJsonTests(unittest.TestCase):
 
     def test_retention_row_limit_and_indexes(self):
         self.write_events(
-            alert_event(ts="2026-01-01T10:00:00.000000+0200", flow_id=1),
-            alert_event(ts="2026-07-12T10:00:00.000000+0200", flow_id=2),
-            alert_event(ts="2026-07-12T10:01:00.000000+0200", flow_id=3),
+            alert_event(ts="2026-01-01T10:00:00.000000+0200", flow_id=1, signature="Old"),
+            alert_event(ts="2026-07-12T10:00:00.000000+0200", flow_id=2, signature="Recent 1"),
+            alert_event(ts="2026-07-12T10:01:00.000000+0200", flow_id=3, signature="Recent 2"),
         )
         ingest_eve_incremental(self.connect_db, self.eve_path)
         prune_ids_history(self.connect_db, {"ids_alert_retention_days": 60, "ids_structured_max_records": 2, "ids_min_free_mb": 0})
@@ -298,7 +308,7 @@ class EveJsonTests(unittest.TestCase):
         self.write_events(
             alert_event(
                 flow_id=1,
-                signature="ET INFO Session Traversal Utilities for NAT (STUN Binding Request)",
+                signature="ET INFO Session Traversal Utilities for NAT (STUN Keepalive Variant)",
             )
         )
         ingest_eve_incremental(self.connect_db, self.eve_path)
@@ -307,6 +317,66 @@ class EveJsonTests(unittest.TestCase):
 
         self.assertEqual(1, len(alerts))
         self.assertEqual("4", alerts[0]["priority"])
+
+    def test_et_info_external_ip_lookup_is_informational_and_suppressed(self):
+        self.write_events(alert_event(
+            signature="ET INFO External IP Lookup Domain in DNS Lookup (ipinfo .io)",
+            severity=2,
+            signature_id=2054168,
+            dns_query="ipinfo.io",
+        ))
+        ingest_eve_incremental(self.connect_db, self.eve_path)
+
+        alerts = recent_structured_alerts(self.connect_db, filters={"show_noise": True})
+
+        self.assertEqual(1, len(alerts))
+        self.assertEqual("4", alerts[0]["priority"])
+        self.assertEqual("External IP discovery", alerts[0]["classification"])
+        self.assertEqual("ipinfo.io", alerts[0]["destination"])
+        self.assertTrue(is_default_suppressed_signature(alerts[0]["signature"]))
+        self.assertEqual([], recent_structured_alerts(self.connect_db))
+
+    def test_info_tld_observations_are_low_and_keep_full_hostname(self):
+        self.write_events(
+            alert_event(signature="ET INFO Observed DNS Query to .biz TLD", severity=2, signature_id=2027757, dns_query="updates.example.biz"),
+            alert_event(signature="ET INFO Observed DNS Query for Suspicious TLD (.management)", severity=2, signature_id=2047288, dns_query="portal.example.management"),
+        )
+        ingest_eve_incremental(self.connect_db, self.eve_path)
+
+        alerts = recent_structured_alerts(self.connect_db, filters={"show_noise": True, "sort": "oldest"})
+
+        self.assertEqual(["3", "3"], [alert["priority"] for alert in alerts])
+        self.assertEqual(["updates.example.biz", "portal.example.management"], [alert["destination"] for alert in alerts])
+        self.assertEqual([], recent_structured_alerts(self.connect_db))
+
+    def test_malware_and_exploit_signatures_remain_actionable(self):
+        self.write_events(
+            alert_event(signature="ET MALWARE Command and Control Checkin", severity=1, signature_id=2400001),
+            alert_event(signature="ET EXPLOIT Known Exploit Attempt", severity=2, signature_id=2400002),
+        )
+        ingest_eve_incremental(self.connect_db, self.eve_path)
+
+        alerts = recent_structured_alerts(self.connect_db, filters={"sort": "severity_high"})
+
+        self.assertEqual(["ET MALWARE Command and Control Checkin", "ET EXPLOIT Known Exploit Attempt"], [alert["signature"] for alert in alerts])
+        self.assertEqual(["1", "2"], [alert["priority"] for alert in alerts])
+
+    def test_duplicate_alerts_aggregate_within_configured_window(self):
+        self.write_events(
+            alert_event(ts="2026-07-12T10:00:01.000000+0200", flow_id=1, signature="ET MALWARE Repeat", signature_id=2400100),
+            alert_event(ts="2026-07-12T10:04:59.000000+0200", flow_id=2, signature="ET MALWARE Repeat", signature_id=2400100),
+        )
+        ingest_eve_incremental(self.connect_db, self.eve_path)
+
+        con = self.connect_db()
+        rows = con.execute("SELECT signature, first_seen, last_seen, alert_count FROM ids_events").fetchall()
+        con.close()
+
+        self.assertEqual(1, len(rows))
+        self.assertEqual("ET MALWARE Repeat", rows[0][0])
+        self.assertEqual("2026-07-12T10:00:01.000000+0200", rows[0][1])
+        self.assertEqual("2026-07-12T10:04:59.000000+0200", rows[0][2])
+        self.assertEqual(2, rows[0][3])
 
 
 if __name__ == "__main__":
