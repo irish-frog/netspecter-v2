@@ -46,12 +46,55 @@ install_suricata_safety_override() {
 [Unit]
 StartLimitIntervalSec=10min
 StartLimitBurst=3
+Wants=netspecter-nic-offload.service
+After=netspecter-nic-offload.service
 
 [Service]
 RestartSec=60
 CPUQuota=50%
 EOF
   systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+ensure_ethtool() {
+  if command -v ethtool >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "Skipping ethtool installation; root privileges are required." >&2
+    return 0
+  fi
+  echo "Installing ethtool for IDS bridge capture preparation..."
+  apt install -y ethtool
+}
+
+install_nic_offload_service() {
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "Skipping IDS NIC offload service maintenance; root privileges are required." >&2
+    return 0
+  fi
+
+  local root_dir
+  root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+  if [ -f "$root_dir/scripts/configure-ids-interfaces.sh" ]; then
+    chmod 755 "$root_dir/scripts/configure-ids-interfaces.sh"
+  else
+    echo "WARNING: configure-ids-interfaces.sh was not found." >&2
+    return 0
+  fi
+  if [ -f "$root_dir/systemd/netspecter-nic-offload.service" ]; then
+    cp "$root_dir/systemd/netspecter-nic-offload.service" /etc/systemd/system/netspecter-nic-offload.service
+  else
+    echo "WARNING: netspecter-nic-offload.service was not found." >&2
+    return 0
+  fi
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl enable netspecter-nic-offload.service >/dev/null 2>&1 || true
+  if "$root_dir/scripts/configure-ids-interfaces.sh" "$(detect_suricata_interface || echo br0)"; then
+    systemctl restart netspecter-nic-offload.service >/dev/null 2>&1 || true
+  else
+    echo "WARNING: IDS bridge members are not available yet; netspecter-nic-offload.service will retry at boot." >&2
+  fi
 }
 
 detect_suricata_interface() {
@@ -99,6 +142,7 @@ configure_suricata_interface() {
   iface="$(detect_suricata_interface)"
   iface="${iface:-br0}"
   echo "Configuring Suricata AF_PACKET interface: $iface"
+  cp -a /etc/suricata/suricata.yaml "/etc/suricata/suricata.yaml.netspecter.bak.$(date +%Y%m%d%H%M%S)"
 
   python3 - "/etc/suricata/suricata.yaml" "$iface" <<'PY'
 import re
@@ -127,10 +171,20 @@ for line in lines:
     out.append(line)
 
 if not changed:
-    out.extend(["", "af-packet:", f"  - interface: {iface}"])
+    out.extend(["", "af-packet:", f"  - interface: {iface}", "    cluster-id: 99", "    cluster-type: cluster_flow", "    defrag: yes", "    use-mmap: yes"])
 
 path.write_text("\n".join(out) + "\n")
 PY
+
+  if command -v suricata >/dev/null 2>&1 && ! suricata -T -c /etc/suricata/suricata.yaml; then
+    local backup
+    backup="$(ls -1t /etc/suricata/suricata.yaml.netspecter.bak.* 2>/dev/null | head -n 1 || true)"
+    if [ -n "$backup" ]; then
+      cp -a "$backup" /etc/suricata/suricata.yaml
+    fi
+    echo "ERROR: Suricata configuration validation failed; restored previous configuration." >&2
+    return 1
+  fi
 }
 
 suricata_interface_available() {
@@ -200,8 +254,10 @@ refresh_suricata_rules() {
 }
 
 install_safe_suricata_logrotate
+ensure_ethtool
 install_suricata_safety_override
 configure_suricata_interface
+install_nic_offload_service
 refresh_suricata_rules
 systemctl reset-failed logrotate >/dev/null 2>&1 || true
 

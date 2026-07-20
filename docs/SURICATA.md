@@ -114,6 +114,40 @@ af-packet: eth0: failed to find interface: No such device
 
 NetSpecter installer and post-update maintenance sync Suricata's AF_PACKET interface from `/etc/netspecter/config.json` `packet_iface`, or from `NETSPECTER_SURICATA_IFACE` when that environment variable is set.
 
+For bridge deployments, NetSpecter also installs:
+
+```text
+netspecter-nic-offload.service
+```
+
+This service runs before `suricata.service`, detects the physical interfaces attached to the monitored bridge, and disables GRO, GSO and TSO on those bridge members. NetSpecter does this because receive/segmentation offloads can make passive Suricata capture on a Linux bridge see packet-length artefacts such as:
+
+```text
+SURICATA AF-PACKET truncated packet
+SURICATA IPv4 truncated packet
+```
+
+Interface names are detected dynamically with `bridge link`; names such as `enp11s0f0`, `enp2s0`, `eth0` and others are not hard-coded. The bridge interface itself is not altered.
+
+There may be a small CPU usage increase because the NIC/driver is doing less packet coalescing. The tradeoff is better packet fidelity for IDS capture.
+
+Verify the applied settings:
+
+```bash
+bridge link
+/opt/netspecter/scripts/configure-ids-interfaces.sh br0 --verify
+systemctl status netspecter-nic-offload.service --no-pager
+systemctl status suricata --no-pager
+```
+
+Expected offload settings on the physical bridge members:
+
+```text
+tcp-segmentation-offload: off
+generic-segmentation-offload: off
+generic-receive-offload: off
+```
+
 NetSpecter installs a Suricata systemd safety override at:
 
 ```text
@@ -127,6 +161,8 @@ suricata -T -c /etc/suricata/suricata.yaml
 systemctl reset-failed suricata
 systemctl enable --now suricata
 ```
+
+NetSpecter hides the two truncated-packet diagnostic signatures from the normal IDS alert list by default, while keeping the raw events in Suricata logs and allowing them to be shown with the IDS diagnostic/noise filter. Common STUN signatures are shown as informational because STUN/NAT traversal is normal for tools such as Tailscale, Teams, WebRTC and similar real-time communication software. NetSpecter does not label STUN as Tailscale unless other evidence supports that attribution.
 
 Expected result:
 

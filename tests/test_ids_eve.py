@@ -207,6 +207,36 @@ class EveJsonTests(unittest.TestCase):
 
         self.assertEqual(["Critical", "High", "Low"], [alert["signature"] for alert in alerts])
 
+    def test_default_truncated_packet_noise_is_hidden_but_raw_view_can_show_it(self):
+        self.write_events(
+            alert_event(flow_id=1, signature="SURICATA AF-PACKET truncated packet"),
+            alert_event(flow_id=2, signature="SURICATA IPv6 truncated packet"),
+        )
+        ingest_eve_incremental(self.connect_db, self.eve_path)
+
+        normal_alerts = recent_structured_alerts(self.connect_db)
+        raw_alerts = recent_structured_alerts(self.connect_db, filters={"show_noise": True})
+
+        self.assertEqual(["SURICATA IPv6 truncated packet"], [alert["signature"] for alert in normal_alerts])
+        self.assertEqual(
+            ["SURICATA IPv6 truncated packet", "SURICATA AF-PACKET truncated packet"],
+            [alert["signature"] for alert in raw_alerts],
+        )
+
+    def test_stun_signatures_are_informational_not_medium(self):
+        self.write_events(
+            alert_event(
+                flow_id=1,
+                signature="ET INFO Session Traversal Utilities for NAT (STUN Binding Request)",
+            )
+        )
+        ingest_eve_incremental(self.connect_db, self.eve_path)
+
+        alerts = recent_structured_alerts(self.connect_db)
+
+        self.assertEqual(1, len(alerts))
+        self.assertEqual("4", alerts[0]["priority"])
+
 
 if __name__ == "__main__":
     unittest.main()

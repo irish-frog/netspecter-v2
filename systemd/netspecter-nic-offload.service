@@ -1,0 +1,14 @@
+[Unit]
+Description=Configure NetSpecter IDS capture interfaces
+Wants=network-online.target
+After=network-online.target
+Before=suricata.service
+ConditionPathExists=/opt/netspecter/scripts/configure-ids-interfaces.sh
+
+[Service]
+Type=oneshot
+ExecStart=/opt/netspecter/scripts/configure-ids-interfaces.sh br0
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -153,12 +153,37 @@ install_suricata_safety_override() {
 [Unit]
 StartLimitIntervalSec=10min
 StartLimitBurst=3
+Wants=netspecter-nic-offload.service
+After=netspecter-nic-offload.service
 
 [Service]
 RestartSec=60
 CPUQuota=50%
 EOF
   systemctl daemon-reload
+}
+
+install_nic_offload_service() {
+  if [ ! -f "$INSTALL_DIR/scripts/configure-ids-interfaces.sh" ]; then
+    echo "WARNING: IDS interface preparation script is not installed yet." >&2
+    return 0
+  fi
+  chmod 755 "$INSTALL_DIR/scripts/configure-ids-interfaces.sh"
+  if [ -f systemd/netspecter-nic-offload.service ]; then
+    cp systemd/netspecter-nic-offload.service "$SERVICE_DIR/netspecter-nic-offload.service"
+  elif [ -f "$INSTALL_DIR/systemd/netspecter-nic-offload.service" ]; then
+    cp "$INSTALL_DIR/systemd/netspecter-nic-offload.service" "$SERVICE_DIR/netspecter-nic-offload.service"
+  else
+    echo "WARNING: netspecter-nic-offload.service was not found; bridge offload settings will not be applied at boot." >&2
+    return 0
+  fi
+  systemctl daemon-reload
+  systemctl enable netspecter-nic-offload.service >/dev/null 2>&1 || true
+  if "$INSTALL_DIR/scripts/configure-ids-interfaces.sh" "$(detect_suricata_interface || echo br0)"; then
+    systemctl restart netspecter-nic-offload.service >/dev/null 2>&1 || true
+  else
+    echo "WARNING: IDS bridge members are not available yet; netspecter-nic-offload.service will retry at boot." >&2
+  fi
 }
 
 detect_suricata_interface() {
@@ -197,6 +222,7 @@ configure_suricata_interface() {
   iface="$(detect_suricata_interface)"
   iface="${iface:-br0}"
   echo "Configuring Suricata AF_PACKET interface: $iface"
+  cp -a /etc/suricata/suricata.yaml "/etc/suricata/suricata.yaml.netspecter.bak.$(date +%Y%m%d%H%M%S)"
 
   python3 - "/etc/suricata/suricata.yaml" "$iface" <<'PY'
 import re
@@ -225,10 +251,20 @@ for line in lines:
     out.append(line)
 
 if not changed:
-    out.extend(["", "af-packet:", f"  - interface: {iface}"])
+    out.extend(["", "af-packet:", f"  - interface: {iface}", "    cluster-id: 99", "    cluster-type: cluster_flow", "    defrag: yes", "    use-mmap: yes"])
 
 path.write_text("\n".join(out) + "\n")
 PY
+
+  if command -v suricata >/dev/null 2>&1 && ! suricata -T -c /etc/suricata/suricata.yaml; then
+    local backup
+    backup="$(ls -1t /etc/suricata/suricata.yaml.netspecter.bak.* 2>/dev/null | head -n 1 || true)"
+    if [ -n "$backup" ]; then
+      cp -a "$backup" /etc/suricata/suricata.yaml
+    fi
+    echo "ERROR: Suricata configuration validation failed; restored previous configuration." >&2
+    return 1
+  fi
 }
 
 suricata_interface_available() {
@@ -525,7 +561,7 @@ if [ "$ADGUARD_JUST_INSTALLED" = "1" ] && port_3000_in_use; then
 fi
 
 echo "[3/10] Installing NetSpecter base packages..."
-apt install -y python3 python3-pip python3-venv sqlite3 bridge-utils nftables tcpdump curl nano git bmon vnstat ieee-data snmp dnsutils cifs-utils openssl
+apt install -y python3 python3-pip python3-venv sqlite3 bridge-utils nftables tcpdump curl nano git bmon vnstat ieee-data snmp dnsutils cifs-utils openssl ethtool
 install_speedtest_optional
 install_suricata_optional
 ensure_runtime_user
@@ -554,12 +590,13 @@ if [ "$SOURCE_DIR" != "$(readlink -f "$INSTALL_DIR")" ]; then
   cp scheduled_speedtest.py "$INSTALL_DIR/scheduled_speedtest.py"
   cp monitor_sweeper.py "$INSTALL_DIR/monitor_sweeper.py"
   cp collector_watchdog.sh "$INSTALL_DIR/collector_watchdog.sh"
-  rm -rf "$INSTALL_DIR/netspecter_vault" "$INSTALL_DIR/services" "$INSTALL_DIR/config" "$INSTALL_DIR/docs" "$INSTALL_DIR/licenses"
+  rm -rf "$INSTALL_DIR/netspecter_vault" "$INSTALL_DIR/services" "$INSTALL_DIR/config" "$INSTALL_DIR/docs" "$INSTALL_DIR/licenses" "$INSTALL_DIR/systemd"
   cp -r netspecter_vault "$INSTALL_DIR/netspecter_vault"
   cp -r services "$INSTALL_DIR/services"
   cp -r config "$INSTALL_DIR/config"
   cp -r static/. "$INSTALL_DIR/static/"
   cp -r scripts/. "$INSTALL_DIR/scripts/"
+  cp -r systemd "$INSTALL_DIR/systemd"
   cp -r adguard/. "$INSTALL_DIR/adguard/"
   cp -r docs "$INSTALL_DIR/docs"
   cp -r licenses "$INSTALL_DIR/licenses"
@@ -615,7 +652,9 @@ cp systemd/netspecter-monitor.service "$SERVICE_DIR/netspecter-monitor.service"
 cp systemd/netspecter-monitor.timer "$SERVICE_DIR/netspecter-monitor.timer"
 cp systemd/netspecter-vault.service "$SERVICE_DIR/netspecter-vault.service"
 cp systemd/netspecter-vault.timer "$SERVICE_DIR/netspecter-vault.timer"
+cp systemd/netspecter-nic-offload.service "$SERVICE_DIR/netspecter-nic-offload.service"
 systemctl daemon-reload
+install_nic_offload_service
 validate_anomaly_permissions "netspecter-collector.service"
 systemctl enable --now netspecter-web netspecter-https netspecter-collector netspecter-watchdog.timer netspecter-speedtest.timer netspecter-monitor.timer netspecter-vault.timer
 systemctl restart netspecter-web netspecter-https netspecter-collector

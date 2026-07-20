@@ -35,6 +35,41 @@ TEXT_LIMITS = {
     "event_type": 24,
 }
 
+DEFAULT_HIDDEN_SIGNATURES = {
+    "SURICATA AF-PACKET truncated packet",
+    "SURICATA IPv4 truncated packet",
+}
+
+DEFAULT_INFORMATIONAL_SIGNATURES = {
+    "ET INFO Session Traversal Utilities for NAT (STUN Binding Request)",
+    "ET INFO Session Traversal Utilities for NAT (STUN Binding Response)",
+    "ET INFO Session Traversal Utilities for NAT (STUN Binding Request On Non-Standard High Port)",
+}
+
+DEFAULT_SUPPRESSED_SIGNATURES = DEFAULT_HIDDEN_SIGNATURES | DEFAULT_INFORMATIONAL_SIGNATURES
+
+
+def normalized_signature(value):
+    return str(value or "").strip()
+
+
+def is_default_hidden_signature(value):
+    return normalized_signature(value) in DEFAULT_HIDDEN_SIGNATURES
+
+
+def is_default_informational_signature(value):
+    return normalized_signature(value) in DEFAULT_INFORMATIONAL_SIGNATURES
+
+
+def is_default_suppressed_signature(value):
+    return normalized_signature(value) in DEFAULT_SUPPRESSED_SIGNATURES
+
+
+def effective_alert_severity(signature, severity):
+    if is_default_informational_signature(signature):
+        return 4
+    return severity
+
 
 def cap(value, limit=180):
     text = str(value or "").replace("\x00", "").strip()
@@ -242,13 +277,14 @@ def structured_alert_from_row(row):
     source = endpoint(row["src_ip"], row["src_port"])
     destination = endpoint(row["dest_ip"], row["dest_port"])
     sid = row["signature_id"] or ""
+    effective_severity = effective_alert_severity(row["signature"], row["severity"] or 3)
     return {
         "id": row["id"],
         "ts": row["ts"],
         "sid": f"1:{sid}:1" if sid else "",
         "signature": row["signature"] or "Suricata alert",
         "classification": row["category"] or "",
-        "priority": str(row["severity"] or 3),
+        "priority": str(effective_severity or 3),
         "protocol": row["protocol"] or "",
         "source": source,
         "destination": destination,
@@ -290,6 +326,11 @@ def recent_structured_alerts(connect_db, limit=300, filters=None):
     filters = filters or {}
     where = ["event_type='alert'"]
     params = []
+    show_default_noise = bool(filters.get("show_noise") or filters.get("show_default_noise"))
+    hidden_signatures = [] if show_default_noise else sorted(DEFAULT_HIDDEN_SIGNATURES)
+    for signature in hidden_signatures:
+        where.append("signature<>?")
+        params.append(signature)
     mapping = {
         "severity": "severity=?",
         "event_type": "event_type=?",

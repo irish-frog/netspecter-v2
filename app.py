@@ -6676,6 +6676,7 @@ def ids_alerts():
         "destination": request.args.get("destination", "").strip(),
         "signature": request.args.get("signature", "").strip(),
         "sort": request.args.get("sort", "newest").strip(),
+        "show_noise": request.args.get("show_noise", "").strip() == "1",
     }
     alerts, error = recent_suricata_alerts(filters=ids_filters)
     names = ids_device_names()
@@ -6763,7 +6764,8 @@ def ids_alerts():
     for alert in visible_alerts[:80]:
         priority = int(alert["priority"] or 3)
         alert_status = str(alert.get("alert_status") or "open").lower()
-        level = "critical" if priority == 1 else "high" if priority == 2 else "medium"
+        level = "critical" if priority == 1 else "high" if priority == 2 else "medium" if priority == 3 else "info"
+        severity_text = "Critical" if priority == 1 else "High" if priority == 2 else "Medium" if priority == 3 else "Informational"
         reputation = latest_reputation_for_event(connect_db, alert.get("id") or 0, alert["destination_ip"], "")
         rep_label = reputation.get("reputation", "Unknown")
         rep_class = "red" if rep_label == "Malicious" else "yellow" if rep_label == "Suspicious" else "green" if rep_label == "Clean" else "blue"
@@ -6837,7 +6839,7 @@ def ids_alerts():
         incident_rows += f"""
 <div class="ids-incident-row ids-incident-row--{level}">
   <div>{select_cell}</div>
-  <div><span class="ids-severity-pill ids-severity-pill--{level}"><span></span>{'Critical' if priority == 1 else 'High' if priority == 2 else 'Medium'}</span><small>IDS Alert</small></div>
+  <div><span class="ids-severity-pill ids-severity-pill--{level}"><span></span>{severity_text}</span><small>IDS Alert</small></div>
   <div class="ids-incident-title">{incident_title}<small>{h(alert['classification']) or 'Structured event'}</small></div>
   <div><span class="mono">{h(alert['source_ip'])}</span><small>{h(alert['source_name'] or 'Local')}</small></div>
   <div><span class="mono">{h(alert['destination'])}</span><small class="{rep_class}">{h(rep_label)}</small></div>
@@ -6879,6 +6881,7 @@ def ids_alerts():
     if action_notice:
         notice += f'<div class="{"setup-ok" if action_ok else "setup-warning"}">{h(action_notice)}</div>'
     unknown_checked = " checked" if unknown_only else ""
+    show_noise_checked = " checked" if ids_filters["show_noise"] else ""
     excluded_value = ", ".join(sorted(excluded_ips))
     event_type_options = "".join(
         f'<option value="{value}"{" selected" if ids_filters["event_type"] == value else ""}>{label}</option>'
@@ -7081,6 +7084,7 @@ def ids_alerts():
         <label>Protocol<input name="protocol" value="{h(ids_filters['protocol'])}" placeholder="TCP, UDP, TLS"></label>
         <label>Signature Contains<input name="signature" value="{h(ids_filters['signature'])}" placeholder="Enter signature or keyword"></label>
         <label>Sort<select name="sort">{sort_options}</select></label>
+        <label><input type="checkbox" name="show_noise" value="1" style="width:auto"{show_noise_checked}> Show diagnostic/noise alerts</label>
         <div class="ids-filter-actions"><button type="submit"><i class="fa-solid fa-filter"></i> Apply Filters</button><span class="ns-polish-subtle">{hidden_count:,} hidden by display filters</span></div>
       </div></form>
     </section>

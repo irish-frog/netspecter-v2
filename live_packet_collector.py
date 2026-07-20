@@ -44,6 +44,7 @@ from netspecter_ids import (
     fast_log_alerts_from_text,
     ingest_eve_incremental,
     ids_endpoint_ip,
+    is_default_suppressed_signature,
     maybe_vacuum_ids,
     prune_ids_history,
     recent_structured_alerts,
@@ -1572,12 +1573,16 @@ def process_ids_email_alerts(config):
         con.close()
         for row in rows:
             sid = f"1:{row['signature_id']}:1" if row["signature_id"] else ""
+            signature = row["signature"] or "Suricata alert"
+            if is_default_suppressed_signature(signature):
+                last_id = max(last_id, int(row["id"]))
+                continue
             alerts.append({
                 "id": row["id"],
                 "sid": sid,
                 "ts": row["ts"],
                 "priority": str(row["severity"] or 3),
-                "signature": row["signature"] or "Suricata alert",
+                "signature": signature,
                 "classification": row["category"] or "",
                 "protocol": row["protocol"] or "",
                 "source": f"{row['src_ip']}:{row['src_port']}" if row["src_port"] else row["src_ip"],
@@ -1762,6 +1767,9 @@ def process_ids_auto_blocks(config):
     blocked_count = 0
     now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for row in rows:
+        signature = row["signature"] or "Suricata alert"
+        if is_default_suppressed_signature(signature):
+            continue
         priority = int(row["severity"] or 3)
         source_ip = ids_endpoint_ip(row["src_ip"])
         destination_ip = ids_endpoint_ip(row["dest_ip"])
@@ -1778,7 +1786,6 @@ def process_ids_auto_blocks(config):
         banned.add(endpoint_ip)
         changed = True
         blocked_count += 1
-        signature = row["signature"] or "Suricata alert"
         event_ts = row["ts"] or now_text
         device = ids_device_name(con, endpoint_ip)
         try:
