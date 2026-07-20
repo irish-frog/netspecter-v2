@@ -6406,6 +6406,28 @@ def ids_add_exception(config, source_ip, signature=""):
     config["ids_exceptions"] = rules
 
 
+def ids_selected_alert_rows(event_ids):
+    clean_ids = []
+    for value in event_ids:
+        try:
+            clean_ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    clean_ids = sorted(set(clean_ids))
+    if not clean_ids:
+        return []
+    placeholders = ",".join("?" for _ in clean_ids)
+    return query(
+        f"""
+        SELECT id, src_ip, signature
+        FROM ids_events
+        WHERE event_type='alert'
+          AND id IN ({placeholders})
+        """,
+        tuple(clean_ids),
+    )
+
+
 def send_smtp_message(config, subject, body):
     host = str(config.get("smtp_host", "") or "").strip()
     username = str(config.get("smtp_username", "") or "").strip()
@@ -6536,6 +6558,32 @@ def ids_alerts():
                 restart_collector_service()
                 return redirect("/ids-alerts?saved=exception_removed")
             action_ok, action_notice = False, "Cannot remove that IDS exception because it no longer exists."
+        elif action in {"bulk_ignore_alerts", "bulk_source_exceptions", "bulk_rule_exceptions"}:
+            selected_rows = ids_selected_alert_rows(request.form.getlist("selected_event_id"))
+            if not selected_rows:
+                action_ok, action_notice = False, "Select one or more IDS alerts first."
+            else:
+                selected_ids = [int(row["id"]) for row in selected_rows]
+                placeholders = ",".join("?" for _ in selected_ids)
+                run_sql(
+                    f"""
+                    UPDATE ids_events
+                    SET alert_status='ignored'
+                    WHERE event_type='alert'
+                      AND id IN ({placeholders})
+                    """,
+                    tuple(selected_ids),
+                )
+                if action in {"bulk_source_exceptions", "bulk_rule_exceptions"}:
+                    for row in selected_rows:
+                        source_ip = str(row["src_ip"] or "").strip()
+                        signature = str(row["signature"] or "").strip() if action == "bulk_rule_exceptions" else ""
+                        if valid_ipv4_ip(source_ip):
+                            ids_add_exception(c, source_ip, signature)
+                    save_cfg(c)
+                    restart_collector_service()
+                    return redirect(f"/ids-alerts?saved=batch_exception&count={len(selected_rows)}")
+                return redirect(f"/ids-alerts?saved=batch_ignored&count={len(selected_rows)}")
         elif action in {"ban_source", "ban_destination"}:
             banned_ip = request.form.get("endpoint_ip", "").strip()
             if not valid_ipv4_ip(banned_ip):
@@ -6782,8 +6830,13 @@ def ids_alerts():
             f'<a href="/ids-alerts/{int(alert["id"])}">{h(alert["signature"])}</a>'
             if alert.get("id") else f'<span>{h(alert["signature"])}</span>'
         )
+        select_cell = (
+            f'<input class="ids-select-alert" form="idsBulkActionForm" type="checkbox" name="selected_event_id" value="{int(alert["id"])}" aria-label="Select IDS alert {int(alert["id"])}">'
+            if alert.get("id") else ""
+        )
         incident_rows += f"""
 <div class="ids-incident-row ids-incident-row--{level}">
+  <div>{select_cell}</div>
   <div><span class="ids-severity-pill ids-severity-pill--{level}"><span></span>{'Critical' if priority == 1 else 'High' if priority == 2 else 'Medium'}</span><small>IDS Alert</small></div>
   <div class="ids-incident-title">{incident_title}<small>{h(alert['classification']) or 'Structured event'}</small></div>
   <div><span class="mono">{h(alert['source_ip'])}</span><small>{h(alert['source_name'] or 'Local')}</small></div>
@@ -6805,6 +6858,10 @@ def ids_alerts():
         notice += '<div class="setup-ok">IDS exception saved. Matching current alerts were marked ignored.</div>'
     if request.args.get("saved") == "exception_removed":
         notice += '<div class="setup-ok">IDS exception removed. Future matching alerts will be shown again.</div>'
+    if request.args.get("saved") == "batch_ignored":
+        notice += f'<div class="setup-ok">{h(request.args.get("count", "0"))} IDS alerts marked ignored.</div>'
+    if request.args.get("saved") == "batch_exception":
+        notice += f'<div class="setup-ok">{h(request.args.get("count", "0"))} IDS exceptions saved. Matching alerts were marked ignored.</div>'
     if request.args.get("saved") == "banned":
         notice += '<div class="setup-ok">Endpoint IP added to the firewall ban list. The collector has restarted.</div>'
     if request.args.get("saved") == "unbanned":
@@ -6921,13 +6978,18 @@ def ids_alerts():
 .ids-summary-card strong {{ display:block; font-size:24px; line-height:1.1; margin-bottom:6px; }}
 .ids-summary-card b {{ display:block; margin-bottom:4px; }}
 .ids-summary-card small {{ color:var(--ns-text-secondary); line-height:1.35; }}
-.ids-incident-table {{ display:grid; grid-template-columns:minmax(96px, .72fr) minmax(280px, 1.45fr) minmax(110px, .75fr) minmax(120px, .85fr) minmax(66px, .48fr) minmax(104px, .68fr) minmax(104px, .68fr) minmax(124px, .75fr) minmax(98px, .55fr); gap:0; }}
+.ids-bulk-toolbar {{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px; border:1px solid rgba(125,176,224,.14); border-radius:8px; background:rgba(3,15,28,.58); }}
+.ids-bulk-toolbar > div {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
+.ids-bulk-toolbar label {{ display:inline-flex; align-items:center; gap:8px; color:var(--ns-text-secondary); font-weight:800; }}
+.ids-bulk-toolbar button {{ min-height:34px; padding:8px 11px; }}
+.ids-select-alert, .ids-select-all {{ width:18px; height:18px; accent-color:#00d6ff; }}
+.ids-incident-table {{ display:grid; grid-template-columns:minmax(42px, .28fr) minmax(96px, .72fr) minmax(280px, 1.45fr) minmax(110px, .75fr) minmax(120px, .85fr) minmax(66px, .48fr) minmax(104px, .68fr) minmax(104px, .68fr) minmax(124px, .75fr) minmax(98px, .55fr); gap:0; }}
 .ids-incident-head, .ids-incident-row {{ display:contents; }}
 .ids-incident-head > span {{ padding:0 12px 12px; color:var(--ns-text-secondary); font-weight:800; font-size:13px; }}
 .ids-incident-row > div {{ min-width:0; padding:15px 12px; border-top:1px solid rgba(125,176,224,.14); background:rgba(4,16,29,.44); }}
-.ids-incident-row > div:nth-child(8), .ids-incident-row > div:nth-child(9) {{ display:flex; align-items:center; }}
-.ids-incident-row > div:nth-child(8) {{ justify-content:flex-start; padding-right:18px; }}
-.ids-incident-row > div:nth-child(9) {{ justify-content:flex-end; }}
+.ids-incident-row > div:nth-child(9), .ids-incident-row > div:nth-child(10) {{ display:flex; align-items:center; }}
+.ids-incident-row > div:nth-child(9) {{ justify-content:flex-start; padding-right:18px; }}
+.ids-incident-row > div:nth-child(10) {{ justify-content:flex-end; }}
 .ids-incident-row > div:first-child {{ border-left:3px solid #1485ff; border-radius:8px 0 0 8px; }}
 .ids-incident-row > div:last-child {{ border-radius:0 8px 8px 0; }}
 .ids-incident-row--critical > div:first-child {{ border-left-color:#ff355d; }}
@@ -6963,7 +7025,7 @@ def ids_alerts():
 .ids-signature-row {{ display:flex; align-items:center; gap:9px; margin-top:10px; }}
 .ids-signature-row b {{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }}
 .ids-signature-row em {{ color:var(--ns-text-secondary); font-style:normal; }}
-@media (max-width:1380px) {{ .ids-incident-table {{ grid-template-columns:1fr; }} .ids-incident-head {{ display:none; }} .ids-incident-row {{ display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:0; margin-bottom:10px; border:1px solid rgba(125,176,224,.14); border-left:3px solid #1485ff; border-radius:8px; overflow:visible; background:rgba(4,16,29,.44); }} .ids-incident-row > div {{ display:block; border-top:1px solid rgba(125,176,224,.10); background:transparent; }} .ids-incident-row > div:first-child {{ border-left:0; border-radius:0; }} .ids-incident-row > div:last-child {{ border-radius:0; }} .ids-incident-row > div:nth-child(9) {{ justify-content:flex-start; }} }}
+@media (max-width:1380px) {{ .ids-incident-table {{ grid-template-columns:1fr; }} .ids-incident-head {{ display:none; }} .ids-incident-row {{ display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:0; margin-bottom:10px; border:1px solid rgba(125,176,224,.14); border-left:3px solid #1485ff; border-radius:8px; overflow:visible; background:rgba(4,16,29,.44); }} .ids-incident-row > div {{ display:block; border-top:1px solid rgba(125,176,224,.10); background:transparent; }} .ids-incident-row > div:first-child {{ border-left:0; border-radius:0; }} .ids-incident-row > div:last-child {{ border-radius:0; }} .ids-incident-row > div:nth-child(10) {{ justify-content:flex-start; }} }}
 @media (max-width:1180px) {{ .ids-open-shell, .ids-lower-grid {{ grid-template-columns:1fr; }} .ids-score-strip {{ grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }} .ids-score-strip > div {{ padding:0; border-left:0; }} .ids-score-strip > a {{ justify-self:start; }} }}
 @media (max-width:720px) {{ .ids-panel-pad {{ padding:14px; }} .ids-section-head {{ align-items:flex-start; flex-direction:column; }} .ids-score-strip, .ids-summary-grid, .ids-filter-grid, .ids-filter-actions, .ids-incident-row {{ grid-template-columns:1fr; }} .ids-row-actions {{ justify-content:flex-start; }} .ids-row-actions__menu {{ left:0; right:auto; max-width:calc(100vw - 48px); }} }}
 </style>
@@ -6990,8 +7052,19 @@ def ids_alerts():
         <div class="ids-summary-card"><strong>{new_24h_count:,}</strong><b>New in 24h</b><small>Seen during the last day</small></div>
         <div class="ids-summary-card"><strong>{affected_devices_count:,}</strong><b>Affected devices</b><small>Most recent: {h(most_recent_incident)}</small></div>
       </div>
+      <form id="idsBulkActionForm" method="post">
+        {csrf_input()}
+      </form>
+      <div class="ids-bulk-toolbar">
+        <label><input class="ids-select-all" type="checkbox" id="idsSelectAll"> Select visible</label>
+        <div>
+          <button form="idsBulkActionForm" type="submit" name="action" value="bulk_ignore_alerts" disabled><i class="fa-solid fa-eye-slash"></i> Ignore Selected</button>
+          <button form="idsBulkActionForm" type="submit" name="action" value="bulk_source_exceptions" disabled><i class="fa-solid fa-circle-minus"></i> Exception Sources</button>
+          <button form="idsBulkActionForm" type="submit" name="action" value="bulk_rule_exceptions" disabled><i class="fa-solid fa-filter-circle-xmark"></i> Exception Source + Rule</button>
+        </div>
+      </div>
       <div class="ids-incident-table" id="allAlerts">
-        <div class="ids-incident-head"><span>Severity</span><span>Incident</span><span>Source</span><span>Destination</span><span>Protocol</span><span>First Seen</span><span>Updated</span><span>Status</span><span>Actions</span></div>
+        <div class="ids-incident-head"><span></span><span>Severity</span><span>Incident</span><span>Source</span><span>Destination</span><span>Protocol</span><span>First Seen</span><span>Updated</span><span>Status</span><span>Actions</span></div>
         {incident_rows or '<div class="ns-dashboard-empty" style="grid-column:1/-1;">No recent Suricata alerts found.</div>'}
       </div>
     </div>
@@ -7049,6 +7122,29 @@ def ids_alerts():
   </div>
 </div>
 {auto_refresh_script(60)}
+<script>
+(function() {{
+  const selectAll = document.getElementById("idsSelectAll");
+  const checks = Array.from(document.querySelectorAll(".ids-select-alert"));
+  const buttons = Array.from(document.querySelectorAll(".ids-bulk-toolbar button"));
+  function refreshBulkState() {{
+    const selected = checks.filter((box) => box.checked).length;
+    buttons.forEach((button) => button.disabled = selected === 0);
+    if (selectAll) {{
+      selectAll.checked = selected > 0 && selected === checks.length;
+      selectAll.indeterminate = selected > 0 && selected < checks.length;
+    }}
+  }}
+  if (selectAll) {{
+    selectAll.addEventListener("change", function() {{
+      checks.forEach((box) => box.checked = selectAll.checked);
+      refreshBulkState();
+    }});
+  }}
+  checks.forEach((box) => box.addEventListener("change", refreshBulkState));
+  refreshBulkState();
+}})();
+</script>
 """
     return shell("IDS Alerts", body, "IDS Alerts")
 
