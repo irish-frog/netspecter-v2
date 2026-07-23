@@ -103,6 +103,40 @@ class WebSecurityTests(unittest.TestCase):
         self.assertFalse(example["snmp_enabled"])
         self.assertFalse(self.module.DEFAULT_CONFIG["mqtt_enabled"])
         self.assertFalse(example["mqtt_enabled"])
+        self.assertEqual([], self.module.DEFAULT_CONFIG["api_keys"])
+        self.assertEqual([], example["api_keys"])
+
+    def test_v1_api_uses_read_only_api_key_auth(self):
+        self.module.init_db()
+        key = "test-api-key-for-local-ai"
+        config = self.module.cfg()
+        config["api_keys"] = [{
+            "id": "test-ai",
+            "name": "Test AI",
+            "enabled": True,
+            "key_hash": __import__("api_v1.auth", fromlist=["hash_api_key"]).hash_api_key(key),
+            "roles": ["reader"],
+            "scopes": ["read"],
+            "rate_limit_per_minute": 30,
+        }]
+        self.module.save_cfg(config)
+
+        missing = self.client.get("/api/v1/dashboard")
+        self.assertEqual(401, missing.status_code)
+        self.assertEqual("missing_api_key", missing.get_json()["error"])
+
+        response = self.client.get("/api/v1/dashboard", headers={"X-API-Key": key})
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("v1", response.headers["X-NetSpecter-API-Version"])
+        self.assertIn("device_count", response.get_json())
+
+        rejected = self.client.post("/api/v1/dashboard", headers={"X-API-Key": key})
+        self.assertEqual(405, rejected.status_code)
+        self.assertEqual("read_only_api", rejected.get_json()["error"])
+
+        openapi = self.client.get("/api/v1/openapi.json", headers={"Authorization": f"Bearer {key}"})
+        self.assertEqual(200, openapi.status_code)
+        self.assertIn("/api/v1/ai/executive-summary", openapi.get_json()["paths"])
 
     def test_web_service_uses_gunicorn_wsgi_entrypoint(self):
         requirements = (SOURCE_DIR / "requirements.txt").read_text().splitlines()

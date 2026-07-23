@@ -138,6 +138,7 @@
   "auth_enabled": true,
   "admin_user": "admin",
   "admin_password_hash": "",
+  "api_keys": [],
   "netlic_enabled": true,
   "netlic_url": "https://netlic.it-inyanga.co.za",
   "netlic_free_registration_key": "FREE",

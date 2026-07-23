@@ -40,6 +40,7 @@ DEFAULT_CONFIG = {
     "auth_enabled": True,
     "admin_user": "admin",
     "admin_password_hash": "",
+    "api_keys": [],
     "netlic_enabled": True,
     "netlic_url": "https://netlic.it-inyanga.co.za",
     "netlic_free_registration_key": "FREE",

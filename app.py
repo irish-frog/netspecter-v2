@@ -127,6 +127,7 @@ from services.report_pdf_service import reporting_pdf_response
 from services.ai_attribution_service import ai_attribution_summary
 from services.application_classification_service import categories as application_categories, valid_domain_pattern
 from services.microsoft365_endpoints_service import microsoft365_endpoint_cache_status, refresh_microsoft365_endpoints
+from api_v1 import register_api
 from netspecter_ui_helpers import (
     device_age_seconds,
     device_lifecycle_badges,
@@ -153,6 +154,7 @@ LCD_RATE_LIMIT_SECONDS = 2.0
 NETLIC_CHECKIN_LOCK = threading.Lock()
 
 app = Flask(__name__, static_folder=str(ROOT / "static"), static_url_path="/static")
+register_api(app)
 
 NOISE_DOMAINS = [
     "msftconnecttest.com",
@@ -616,6 +618,10 @@ def recent_request_timings(limit=20):
 def require_csrf_token():
     if request.path == "/api/monitor-alert" and request.remote_addr in ("127.0.0.1", "::1"):
         return None
+    if request.path.startswith("/api/v1/"):
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            return jsonify({"error": "read_only_api"}), 405
+        return None
     if request.method == "POST":
         expected = session.get("_csrf_token", "")
         submitted = request.form.get("_csrf_token", "")
@@ -631,6 +637,8 @@ def require_login():
     if request.endpoint in ["static", "login", "logout", "setup_admin"]:
         return None
     if request.path == "/api/lcd/summary":
+        return None
+    if request.path.startswith("/api/v1/"):
         return None
     if (request.path.startswith("/api/health/") or request.path == "/api/monitor-alert") and request.remote_addr in ("127.0.0.1", "::1"):
         return None
