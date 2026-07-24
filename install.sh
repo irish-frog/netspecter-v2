@@ -519,7 +519,8 @@ apply_runtime_permissions() {
 
   chmod 755 "$INSTALL_DIR"
   chmod 750 "$CONFIG_DIR" "$CONFIG_DIR/adguard" "$DATA_DIR" "$LOG_DIR"
-  chmod 640 "$CONFIG_DIR/config.json" "$CONFIG_DIR/netspecter-https.key" "$CONFIG_DIR/session.key" "$CONFIG_DIR/secret.key"
+  chmod 660 "$CONFIG_DIR/config.json"
+  chmod 640 "$CONFIG_DIR/netspecter-https.key" "$CONFIG_DIR/session.key" "$CONFIG_DIR/secret.key"
   chmod 644 "$CONFIG_DIR/netspecter-https.crt"
   chmod 660 "$DATA_DIR/netspecter.db" "$DATA_DIR/netspecter_dns.db" "$DATA_DIR/netspecter_traffic.db" "$DATA_DIR/netspecter_security.db" "$DATA_DIR/cache.json" "$DATA_DIR/oui_cache.json"
 

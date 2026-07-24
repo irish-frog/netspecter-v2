@@ -228,7 +228,7 @@ def write_config_json(data):
     stored = config_for_storage(data)
     CONFIG_PATH.write_text(json.dumps(stored, indent=2))
     try:
-        CONFIG_PATH.chmod(0o600)
+        CONFIG_PATH.chmod(0o660)
     except Exception:
         pass
 

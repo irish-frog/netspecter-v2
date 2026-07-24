@@ -165,7 +165,7 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn('ensure_runtime_user', installer)
         self.assertIn('validate_anomaly_permissions "netspecter-collector.service"', installer)
         self.assertIn('chmod 750 "$CONFIG_DIR" "$CONFIG_DIR/adguard" "$DATA_DIR" "$LOG_DIR"', installer)
-        self.assertIn('chmod 640 "$CONFIG_DIR/config.json"', installer)
+        self.assertIn('chmod 660 "$CONFIG_DIR/config.json"', installer)
         self.assertIn('chmod 660 "$DATA_DIR/netspecter.db"', installer)
         self.assertIn('find "$INSTALL_DIR/venv/bin" -maxdepth 1 -type f -exec chmod 755 {} \\;', installer)
         self.assertIn("installer_anomaly_permission_test", installer)
@@ -598,6 +598,7 @@ class WebSecurityTests(unittest.TestCase):
         source = (SOURCE_DIR / "netspecter_config.py").read_text()
         self.assertIn("Config normalization skipped", source)
         self.assertIn("except PermissionError as e:", source)
+        self.assertIn("CONFIG_PATH.chmod(0o660)", source)
 
         legacy = self.module.DEFAULT_CONFIG.copy()
         legacy["old_unused_password"] = "not-needed"
