@@ -583,6 +583,10 @@ class WebSecurityTests(unittest.TestCase):
         self.assertFalse((SOURCE_DIR / "static" / "netspecter-logo-wide.png").exists())
 
     def test_unsupported_legacy_config_keys_are_removed_on_load(self):
+        source = (SOURCE_DIR / "netspecter_config.py").read_text()
+        self.assertIn("Config normalization skipped", source)
+        self.assertIn("except PermissionError as e:", source)
+
         legacy = self.module.DEFAULT_CONFIG.copy()
         legacy["old_unused_password"] = "not-needed"
         self.module.CONFIG_PATH.write_text(json.dumps(legacy))

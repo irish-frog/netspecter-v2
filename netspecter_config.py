@@ -338,7 +338,10 @@ def cfg():
     data["tagline"] = "Monitor | Filter | Protect"
 
     if changed or plaintext_sensitive:
-        save_cfg(data)
+        try:
+            save_cfg(data)
+        except PermissionError as e:
+            print(f"Config normalization skipped: {e}")
 
     return data
 
