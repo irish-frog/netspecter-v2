@@ -148,6 +148,7 @@ DEFAULT_CONFIG = {
     "lan_prefix": "192.168.1.",
     "packet_iface": "br0",
     "traffic_retention_days": 60,
+    "raw_traffic_retention_hours": 6,
     "dns_retention_days": 60,
     "gateway_ip": "",
     "ignore_ips": [],
@@ -192,6 +193,8 @@ DEFAULT_CONFIG = {
     "ids_detail_retention_days": 45,
     "ids_file_retention_days": 45,
     "ids_raw_flow_retention_hours": 0,
+    "suricata_log_retention_hours": 24,
+    "suricata_active_log_max_mb": 256,
     "ids_structured_max_records": 200000,
     "ids_min_free_mb": 512,
     "internet_quality_targets": ["1.1.1.1", "8.8.8.8"],
@@ -1944,6 +1947,148 @@ def prune_history(config=None):
         print(f"History retention cleanup failed: {e}")
 
 
+def rollup_and_prune_raw_traffic(config=None):
+    """Summarise raw traffic rows into hourly rollups, then prune short-lived raw rows."""
+    c = config or cfg()
+    raw_hours = positive_int(c.get("raw_traffic_retention_hours", 6), 6, 1)
+    traffic_days = positive_int(c.get("traffic_retention_days", 60), 60, 1)
+    raw_cutoff = f"-{raw_hours} hours"
+    rollup_cutoff = f"-{traffic_days - 1} days"
+    con = None
+    try:
+        con = connect_db()
+        con.execute("PRAGMA busy_timeout=1000")
+        con.execute(
+            """
+            INSERT INTO traffic_hourly_rollups
+                (hour, day, ip, name, mac, downloaded_mb, uploaded_mb, total_mb, avg_live_bps, samples)
+            SELECT
+                substr(ts, 1, 13) || ':00' AS hour,
+                day,
+                ip,
+                COALESCE(MAX(NULLIF(name, '')), ip) AS name,
+                COALESCE(MAX(NULLIF(mac, '')), '') AS mac,
+                SUM(downloaded_mb),
+                SUM(uploaded_mb),
+                SUM(total_mb),
+                AVG(live_bps),
+                COUNT(*)
+            FROM traffic_intervals
+            WHERE ts < datetime('now', 'localtime', ?)
+            GROUP BY hour, day, ip
+            ON CONFLICT(hour, ip) DO UPDATE SET
+                name=excluded.name,
+                mac=excluded.mac,
+                downloaded_mb=excluded.downloaded_mb,
+                uploaded_mb=excluded.uploaded_mb,
+                total_mb=excluded.total_mb,
+                avg_live_bps=excluded.avg_live_bps,
+                samples=excluded.samples
+            """,
+            (raw_cutoff,),
+        )
+        con.execute(
+            """
+            INSERT INTO estimated_app_hourly_rollups
+                (hour, day, ip, category, downloaded_mb, uploaded_mb, total_mb, samples)
+            SELECT
+                substr(ts, 1, 13) || ':00' AS hour,
+                day,
+                ip,
+                category,
+                SUM(downloaded_mb),
+                SUM(uploaded_mb),
+                SUM(total_mb),
+                COUNT(*)
+            FROM estimated_app_traffic
+            WHERE ts < datetime('now', 'localtime', ?)
+            GROUP BY hour, day, ip, category
+            ON CONFLICT(hour, ip, category) DO UPDATE SET
+                downloaded_mb=excluded.downloaded_mb,
+                uploaded_mb=excluded.uploaded_mb,
+                total_mb=excluded.total_mb,
+                samples=excluded.samples
+            """,
+            (raw_cutoff,),
+        )
+        con.execute(
+            """
+            INSERT INTO remote_traffic_hourly_rollups
+                (hour, day, ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb, samples)
+            SELECT
+                substr(ts, 1, 13) || ':00' AS hour,
+                day,
+                ip,
+                remote_ip,
+                category,
+                SUM(downloaded_mb),
+                SUM(uploaded_mb),
+                SUM(total_mb),
+                COUNT(*)
+            FROM remote_traffic_intervals
+            WHERE ts < datetime('now', 'localtime', ?)
+            GROUP BY hour, day, ip, remote_ip, category
+            ON CONFLICT(hour, ip, remote_ip, category) DO UPDATE SET
+                downloaded_mb=excluded.downloaded_mb,
+                uploaded_mb=excluded.uploaded_mb,
+                total_mb=excluded.total_mb,
+                samples=excluded.samples
+            """,
+            (raw_cutoff,),
+        )
+        con.execute("DELETE FROM traffic_intervals WHERE ts < datetime('now', 'localtime', ?)", (raw_cutoff,))
+        con.execute("DELETE FROM traffic_samples WHERE ts < datetime('now', 'localtime', ?)", (raw_cutoff,))
+        con.execute("DELETE FROM traffic_hourly_rollups WHERE day < date('now', 'localtime', ?)", (rollup_cutoff,))
+        con.execute("DELETE FROM estimated_app_hourly_rollups WHERE day < date('now', 'localtime', ?)", (rollup_cutoff,))
+        con.execute("DELETE FROM remote_traffic_hourly_rollups WHERE day < date('now', 'localtime', ?)", (rollup_cutoff,))
+        con.commit()
+        con.execute("PRAGMA wal_checkpoint(PASSIVE)")
+    except Exception as e:
+        if con:
+            con.rollback()
+        print(f"Traffic rollup cleanup failed: {e}")
+    finally:
+        if con:
+            con.close()
+
+
+def prune_suricata_raw_logs(config=None):
+    """Keep Suricata raw logs bounded; NetSpecter keeps normalized IDS history separately."""
+    c = config or cfg()
+    retention_hours = positive_int(c.get("suricata_log_retention_hours", 24), 24, 1)
+    active_max_mb = positive_int(c.get("suricata_active_log_max_mb", 256), 256, 16)
+    log_dir = SURICATA_EVE_LOG.parent
+    active_logs = {SURICATA_EVE_LOG.resolve(), SURICATA_FAST_LOG.resolve()}
+    cutoff = time.time() - (retention_hours * 3600)
+    max_bytes = active_max_mb * 1024 * 1024
+    if not log_dir.exists():
+        return
+    try:
+        for path in log_dir.iterdir():
+            if not path.is_file():
+                continue
+            resolved = path.resolve()
+            name = path.name.lower()
+            if resolved in active_logs:
+                try:
+                    if path.stat().st_size > max_bytes:
+                        path.write_text("")
+                        print(f"Suricata active log truncated: {path}")
+                except Exception as error:
+                    print(f"Suricata active log cleanup failed for {path}: {error}")
+                continue
+            if not (name.endswith(".log") or name.endswith(".json") or name.endswith(".old") or name.endswith(".gz")):
+                continue
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    print(f"Suricata old raw log deleted: {path}")
+            except Exception as error:
+                print(f"Suricata raw log cleanup failed for {path}: {error}")
+    except Exception as error:
+        print(f"Suricata raw log cleanup failed: {error}")
+
+
 def retention_cleanup_loop():
     init_db()
     time.sleep(30 * 60)
@@ -1951,6 +2096,8 @@ def retention_cleanup_loop():
         started = time.monotonic()
         try:
             with db_write_lock:
+                rollup_and_prune_raw_traffic(cfg())
+                prune_suricata_raw_logs(cfg())
                 prune_history(cfg())
         except Exception as e:
             print(f"Retention cleanup loop failed: {e}")

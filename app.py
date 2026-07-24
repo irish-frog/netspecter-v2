@@ -242,12 +242,12 @@ def today():
 
 def range_days():
     value = request.args.get("range", "1d")
-    return {"1d": 1, "7d": 7, "30d": 30, "60d": 60, "90d": 90}.get(value, 1)
+    return {"1d": 1, "7d": 7, "30d": 30, "60d": 60}.get(value, 1)
 
 
 def range_key():
     days = range_days()
-    return "90d" if days == 90 else "60d" if days == 60 else "30d" if days == 30 else "7d" if days == 7 else "1d"
+    return "60d" if days == 60 else "30d" if days == 30 else "7d" if days == 7 else "1d"
 
 
 def range_label():
@@ -256,7 +256,6 @@ def range_label():
         "7d": "Last 7 Days",
         "30d": "Last 30 Days",
         "60d": "Last 60 Days",
-        "90d": "Last 90 Days",
     }.get(range_key(), "Today")
 
 
@@ -273,7 +272,7 @@ def range_query_suffix(extra=""):
 
 
 def time_picker():
-    options = [("1d", "Today"), ("7d", "7 Days"), ("30d", "30 Days"), ("60d", "60 Days"), ("90d", "90 Days")]
+    options = [("1d", "Today"), ("7d", "7 Days"), ("30d", "30 Days"), ("60d", "60 Days")]
     current = range_key()
     links = ""
     path = h(request.path)
@@ -3192,9 +3191,8 @@ def dashboard():
         "7d": "Last 7 Days",
         "30d": "Last 30 Days",
         "60d": "Last 60 Days",
-        "90d": "Last 90 Days",
     }.get(range_key(), "Today")
-    dashboard_period = {"1d": "24h", "7d": "7d", "30d": "30d", "60d": "60d", "90d": "90d"}.get(range_key(), "24h")
+    dashboard_period = {"1d": "24h", "7d": "7d", "30d": "30d", "60d": "60d"}.get(range_key(), "24h")
     protection_text = "LOADING"
     protection_class = "yellow"
     protection_detail = "Loading AdGuard status"
@@ -4270,7 +4268,7 @@ def unlock_device(ip):
     )
     if request.form.get("return_to") == "device":
         return_range = request.form.get("range", "1d")
-        if return_range not in ["1d", "7d", "30d", "60d", "90d"]:
+        if return_range not in ["1d", "7d", "30d", "60d"]:
             return_range = "1d"
         return local_redirect(device_page_url(ip, range=return_range))
     return local_redirect("/devices")
@@ -5184,7 +5182,7 @@ def api_history():
         except ValueError:
             ip = ""
 
-    if period not in ["1h", "24h", "7d", "30d", "60d", "90d"]:
+    if period not in ["1h", "24h", "7d", "30d", "60d"]:
         period = "1h"
 
     if period == "1h":
@@ -5199,9 +5197,6 @@ def api_history():
     elif period == "60d":
         bucket_expr = "day"
         since_clause = "day >= date('now','localtime','-60 days')"
-    elif period == "90d":
-        bucket_expr = "day"
-        since_clause = "day >= date('now','localtime','-90 days')"
     else:
         bucket_expr = "day"
         since_clause = "day >= date('now','localtime','-30 days')"
@@ -5294,7 +5289,6 @@ def history():
       <button type="button" data-history-period="7d" onclick="loadHistory('7d')">7 Days</button>
       <button type="button" data-history-period="30d" onclick="loadHistory('30d')">30 Days</button>
       <button type="button" data-history-period="60d" onclick="loadHistory('60d')">60 Days</button>
-      <button type="button" data-history-period="90d" onclick="loadHistory('90d')">90 Days</button>
     </div>
     <div class="ns-chart-panel">
       <canvas id="historyChart" aria-label="Traffic history chart" role="img"></canvas>
@@ -5742,7 +5736,7 @@ def applications():
     )
     total_domains = int(domain_count_rows[0]["total"] or 0) if domain_count_rows else 0
     range_links = ""
-    for key, label in [("1d", "Today"), ("7d", "7 Days"), ("30d", "30 Days"), ("60d", "60 Days"), ("90d", "90 Days")]:
+    for key, label in [("1d", "Today"), ("7d", "7 Days"), ("30d", "30 Days"), ("60d", "60 Days")]:
         active = "active" if key == range_key() else ""
         range_links += f'<a class="{active}" href="/applications?range={key}&view={h(view_mode)}">{label}</a>'
     app_time_picker = f'<div class="time-picker ns-app-time-picker">{range_links}</div>'
@@ -10762,7 +10756,8 @@ def settings():
     section_keys = {
         "network": [
             "appliance_ip", "gateway_ip", "ignore_ips", "lan_prefix", "packet_iface",
-            "collect_interval_seconds", "traffic_retention_days", "dns_retention_days", "fast_page_mode",
+            "collect_interval_seconds", "raw_traffic_retention_hours", "traffic_retention_days", "dns_retention_days", "fast_page_mode",
+            "suricata_log_retention_hours", "suricata_active_log_max_mb",
         ],
         "adguard": ["adguard_url", "adguard_user", "adguard_pass", "adguard_querylog_interval_seconds"],
         "telemetry": [
@@ -10956,8 +10951,11 @@ def settings():
         "lan_prefix": "LAN prefix used to identify local devices, for example 192.168.1.",
         "adguard_url": "AdGuard Home URL used for DNS stats and controls.",
         "collect_interval_seconds": "Seconds between measured traffic interval writes. Live speed freshness follows this value.",
-        "traffic_retention_days": "Number of calendar days of measured traffic history to keep. Use 90 for the 90-day view.",
-        "dns_retention_days": "Number of calendar days of imported DNS/application activity to keep. Use 90 for the 90-day view.",
+        "raw_traffic_retention_hours": "Hours of raw traffic intervals to keep before automatic hourly rollups take over.",
+        "traffic_retention_days": "Number of calendar days of measured traffic history to keep. The appliance UI supports up to 60 days.",
+        "dns_retention_days": "Number of calendar days of imported DNS/application activity to keep. The appliance UI supports up to 60 days.",
+        "suricata_log_retention_hours": "Hours of raw Suricata rotated logs to keep. Normalized IDS alerts remain in NetSpecter history.",
+        "suricata_active_log_max_mb": "Maximum size for active Suricata eve.json and fast.log before NetSpecter truncates them after import.",
         "fast_page_mode": "Speeds up navigation by disabling dashboard background refresh and loading the traffic graph only when requested.",
         "snmp_enabled": "Enable NetSpecter to poll existing SNMP devices such as switches, routers, APs, UPS units and printers.",
         "snmp_targets": "Comma-separated IPs or hostnames to poll with SNMP, for example gateway, switches and APs.",

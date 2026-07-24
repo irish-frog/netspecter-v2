@@ -200,6 +200,22 @@ def init_traffic_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_intervals_ip_day_totals ON traffic_intervals(ip, day, downloaded_mb, uploaded_mb, total_mb)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_intervals_day_ip_totals ON traffic_intervals(day, ip, total_mb, downloaded_mb, uploaded_mb)")
     con.execute("""
+        CREATE TABLE IF NOT EXISTS traffic_hourly_rollups (
+            hour TEXT NOT NULL,
+            day TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            name TEXT,
+            mac TEXT,
+            downloaded_mb REAL DEFAULT 0,
+            uploaded_mb REAL DEFAULT 0,
+            total_mb REAL DEFAULT 0,
+            avg_live_bps REAL DEFAULT 0,
+            samples INTEGER DEFAULT 0,
+            PRIMARY KEY (hour, ip)
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_traffic_hourly_day_ip ON traffic_hourly_rollups(day, ip)")
+    con.execute("""
         CREATE TABLE IF NOT EXISTS estimated_app_traffic (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip TEXT NOT NULL,
@@ -213,6 +229,20 @@ def init_traffic_db():
     """)
     con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_day_ip ON estimated_app_traffic(day, category, ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_day_category ON estimated_app_traffic(day, category, ip, total_mb, downloaded_mb, uploaded_mb)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS estimated_app_hourly_rollups (
+            hour TEXT NOT NULL,
+            day TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            category TEXT NOT NULL,
+            downloaded_mb REAL DEFAULT 0,
+            uploaded_mb REAL DEFAULT 0,
+            total_mb REAL DEFAULT 0,
+            samples INTEGER DEFAULT 0,
+            PRIMARY KEY (hour, ip, category)
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_hourly_day_ip ON estimated_app_hourly_rollups(day, category, ip)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS remote_traffic_intervals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -229,6 +259,21 @@ def init_traffic_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_day_ip ON remote_traffic_intervals(day, remote_ip, category)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_ts_ip ON remote_traffic_intervals(ts, ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_ts_ip_remote ON remote_traffic_intervals(ts, ip, remote_ip)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS remote_traffic_hourly_rollups (
+            hour TEXT NOT NULL,
+            day TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            remote_ip TEXT NOT NULL,
+            category TEXT NOT NULL,
+            downloaded_mb REAL DEFAULT 0,
+            uploaded_mb REAL DEFAULT 0,
+            total_mb REAL DEFAULT 0,
+            samples INTEGER DEFAULT 0,
+            PRIMARY KEY (hour, ip, remote_ip, category)
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_hourly_day_ip ON remote_traffic_hourly_rollups(day, ip, remote_ip, category)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS remote_ip_locations (
             remote_ip TEXT PRIMARY KEY,

@@ -91,12 +91,16 @@ class WebSecurityTests(unittest.TestCase):
 
     def test_fresh_install_interval_matches_live_collection_intent(self):
         example = json.loads((SOURCE_DIR / "config.example.json").read_text())
-        self.assertEqual(2, self.module.DEFAULT_CONFIG["collect_interval_seconds"])
-        self.assertEqual(2, example["collect_interval_seconds"])
-        self.assertEqual(90, self.module.DEFAULT_CONFIG["traffic_retention_days"])
-        self.assertEqual(90, example["traffic_retention_days"])
-        self.assertEqual(90, self.module.DEFAULT_CONFIG["dns_retention_days"])
-        self.assertEqual(90, example["dns_retention_days"])
+        self.assertEqual(60, self.module.DEFAULT_CONFIG["traffic_retention_days"])
+        self.assertEqual(60, example["traffic_retention_days"])
+        self.assertEqual(6, self.module.DEFAULT_CONFIG["raw_traffic_retention_hours"])
+        self.assertEqual(6, example["raw_traffic_retention_hours"])
+        self.assertEqual(24, self.module.DEFAULT_CONFIG["suricata_log_retention_hours"])
+        self.assertEqual(24, example["suricata_log_retention_hours"])
+        self.assertEqual(256, self.module.DEFAULT_CONFIG["suricata_active_log_max_mb"])
+        self.assertEqual(256, example["suricata_active_log_max_mb"])
+        self.assertEqual(60, self.module.DEFAULT_CONFIG["dns_retention_days"])
+        self.assertEqual(60, example["dns_retention_days"])
         self.assertTrue(self.module.DEFAULT_CONFIG["fast_page_mode"])
         self.assertTrue(example["fast_page_mode"])
         self.assertFalse(self.module.DEFAULT_CONFIG["snmp_enabled"])
@@ -292,7 +296,7 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn('id="trafficRows"', source)
         self.assertIn('id="dashboardSummaryLoading"', source)
         self.assertIn("Last 60 Days", source)
-        self.assertIn("Last 90 Days", source)
+        self.assertNotIn("Last 90 Days", source)
         self.assertNotIn("setInterval(loadDashboardSummary, 30000);", source)
         self.assertNotIn("setInterval(loadDashboardSummary, 5000);", source)
         self.assertNotIn("setInterval(refreshLiveSpeeds, 2000);", source)
@@ -308,13 +312,13 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn('if (dashboardButton) dashboardButton.style.display = "inline-flex";', source)
 
     def test_range_picker_includes_longer_ranges(self):
-        with self.module.app.test_request_context("/traffic?range=90d"):
+        with self.module.app.test_request_context("/traffic?range=60d"):
             html = self.module.time_picker()
             self.assertIn('href="/traffic?range=60d"', html)
-            self.assertIn('href="/traffic?range=90d"', html)
-            self.assertIn('class="active" href="/traffic?range=90d"', html)
-            self.assertEqual(90, self.module.range_days())
-            self.assertEqual("90d", self.module.range_key())
+            self.assertNotIn('href="/traffic?range=90d"', html)
+            self.assertIn('class="active" href="/traffic?range=60d"', html)
+            self.assertEqual(60, self.module.range_days())
+            self.assertEqual("60d", self.module.range_key())
 
     def test_settings_exposes_snmp_and_mqtt_setup(self):
         with self.module.app.test_request_context("/settings"):
@@ -346,18 +350,23 @@ class WebSecurityTests(unittest.TestCase):
         con = self.module.connect_db()
         tables = {
             row[0]
-            for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            for row in con.execute("SELECT name FROM trafficdb.sqlite_master WHERE type='table'").fetchall()
         }
         con.close()
         self.assertIn("estimated_app_traffic", tables)
         self.assertIn("remote_traffic_intervals", tables)
+        self.assertIn("traffic_hourly_rollups", tables)
+        self.assertIn("estimated_app_hourly_rollups", tables)
+        self.assertIn("remote_traffic_hourly_rollups", tables)
         self.assertIn("remote_ip_locations", tables)
         self.assertNotIn("<h2>Estimated App Traffic", source)
         self.assertIn("remember_estimated_app_targets", collector)
         self.assertIn("MONITORED_APP_DOMAIN_KEYS", collector)
         self.assertIn("MONITORED_APP_CATEGORIES", source)
         self.assertIn("Est. Download / Total", source)
-        self.assertIn("Estimated data is measured from DNS-attributed delivery traffic for this monitored app.", source)
+        self.assertIn("def rollup_and_prune_raw_traffic(config=None):", collector)
+        self.assertIn("def prune_suricata_raw_logs(config=None):", collector)
+        self.assertIn("suricata_active_log_max_mb", collector)
 
     def test_data_tables_offer_stable_sorting_without_live_rate_sorting(self):
         self.module.init_db()
