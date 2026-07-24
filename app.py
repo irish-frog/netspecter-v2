@@ -6966,9 +6966,7 @@ def ids_alerts():
         notice += '<div class="setup-ok">IDS alert deleted.</div>'
     if action_notice:
         notice += f'<div class="{"setup-ok" if action_ok else "setup-warning"}">{h(action_notice)}</div>'
-    unknown_checked = " checked" if unknown_only else ""
     show_noise_checked = " checked" if ids_filters["show_noise"] else ""
-    excluded_value = ", ".join(sorted(excluded_ips))
     event_type_options = "".join(
         f'<option value="{value}"{" selected" if ids_filters["event_type"] == value else ""}>{label}</option>'
         for value, label in [("", "All alert events"), ("alert", "Alerts"), ("dns", "DNS"), ("http", "HTTP"), ("tls", "TLS"), ("fileinfo", "Files"), ("anomaly", "Anomalies")]
@@ -7109,6 +7107,7 @@ def ids_alerts():
 .ids-status-pill--banned span {{ background:#48d38b; }}
 .ids-flag {{ display:inline-grid; place-items:center; width:26px; height:20px; border-radius:6px; background:rgba(20,133,255,.14); color:#8ec8ff; font-size:11px; font-weight:900; vertical-align:middle; }}
 .ids-lower-grid {{ display:grid; grid-template-columns:minmax(320px, 1.15fr) minmax(280px, .9fr) minmax(220px, .58fr); gap:14px; }}
+.ids-management-grid {{ display:grid; grid-template-columns:minmax(280px, .75fr) minmax(420px, 1.25fr); gap:14px; align-items:start; }}
 .ids-filter-grid {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px 28px; }}
 .ids-filter-grid label {{ color:var(--ns-text-secondary); font-weight:800; font-size:13px; }}
 .ids-filter-grid input, .ids-filter-grid select {{ width:100%; margin-top:7px; }}
@@ -7125,7 +7124,7 @@ def ids_alerts():
 .ids-signature-row b {{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }}
 .ids-signature-row em {{ color:var(--ns-text-secondary); font-style:normal; }}
 @media (max-width:1380px) {{ .ids-incident-table {{ grid-template-columns:1fr; }} .ids-incident-head {{ display:none; }} .ids-incident-row {{ display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:0; margin-bottom:10px; border:1px solid rgba(125,176,224,.14); border-left:3px solid #1485ff; border-radius:8px; overflow:visible; background:rgba(4,16,29,.44); }} .ids-incident-row > div {{ display:block; border-top:1px solid rgba(125,176,224,.10); background:transparent; }} .ids-incident-row > div:first-child {{ border-left:0; border-radius:0; }} .ids-incident-row > div:last-child {{ border-radius:0; }} .ids-incident-row > div:nth-child(10) {{ justify-content:flex-start; }} }}
-@media (max-width:1180px) {{ .ids-open-shell, .ids-lower-grid {{ grid-template-columns:1fr; }} .ids-score-strip {{ grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }} .ids-score-strip > div {{ padding:0; border-left:0; }} .ids-score-strip > a {{ justify-self:start; }} }}
+@media (max-width:1180px) {{ .ids-open-shell, .ids-lower-grid, .ids-management-grid {{ grid-template-columns:1fr; }} .ids-score-strip {{ grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }} .ids-score-strip > div {{ padding:0; border-left:0; }} .ids-score-strip > a {{ justify-self:start; }} }}
 @media (max-width:720px) {{ .ids-panel-pad {{ padding:14px; }} .ids-section-head {{ align-items:flex-start; flex-direction:column; }} .ids-score-strip, .ids-summary-grid, .ids-filter-grid, .ids-filter-actions, .ids-incident-row {{ grid-template-columns:1fr; }} .ids-row-actions {{ justify-content:flex-start; }} .ids-row-actions__menu {{ left:0; right:auto; max-width:calc(100vw - 48px); }} }}
 </style>
 <div class="ids-page">
@@ -7189,18 +7188,7 @@ def ids_alerts():
     <section class="ids-panel ids-panel-pad"><div class="ids-section-head"><h2 class="ns-polish-section-title">Top Signatures (24h)</h2><span class="ns-chip">24h</span></div><div class="ids-signature-donut"><div><b>{len(visible_alerts):,}</b><small>Total</small></div></div>{signature_list or '<div class="ns-dashboard-empty">No alerts to summarise.</div>'}</section>
   </div>
 
-  <div class="ids-lower-grid">
-    <section class="ids-panel ids-panel-pad settings">
-      <h2>Alert Display Filters</h2>
-      <form method="post">
-        {csrf_input()}
-        <label><input type="checkbox" name="ids_unknown_only" value="1" style="width:auto"{unknown_checked}> Only show alerts from source IPs not already known in Devices</label>
-        <small>Known devices can still become compromised; hidden alerts remain in Suricata logs.</small>
-        <label>Excluded Source IPs</label>
-        <input name="ids_excluded_ips" value="{h(excluded_value)}" placeholder="Comma-separated expected source IPs">
-        <button type="submit" name="action" value="filters">Save IDS Display Filters</button>
-      </form>
-    </section>
+  <div class="ids-management-grid">
     <section class="ids-panel ids-panel-pad">
       <h2>Firewall Ban List</h2>
       <table><tr><th>Banned IP</th><th>Known Name</th><th>Action</th></tr>{banned_rows or '<tr><td colspan="3">No endpoint IPs currently banned.</td></tr>'}</table>
