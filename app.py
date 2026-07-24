@@ -6713,7 +6713,7 @@ def ids_alerts():
             ids_reopen_ignored_alerts()
             restart_collector_service()
             return redirect("/ids-alerts?saved=exceptions_cleared")
-        elif action in {"bulk_ignore_alerts", "bulk_source_exceptions", "bulk_destination_exceptions", "bulk_rule_exceptions"}:
+        elif action in {"bulk_ignore_alerts", "bulk_source_exceptions", "bulk_destination_exceptions", "bulk_rule_exceptions", "bulk_ban_sources", "bulk_ban_destinations"}:
             selected_rows = ids_selected_alert_rows(request.form.getlist("selected_event_id"))
             if not selected_rows:
                 action_ok, action_notice = False, "Select one or more IDS alerts first."
@@ -6729,6 +6729,17 @@ def ids_alerts():
                     """,
                     tuple(selected_ids),
                 )
+                if action in {"bulk_ban_sources", "bulk_ban_destinations"}:
+                    banned = set(cfg_list(c.get("ids_banned_ips", [])))
+                    for row in selected_rows:
+                        field = "src_ip" if action == "bulk_ban_sources" else "dest_ip"
+                        endpoint_ip = str(row[field] or "").strip()
+                        if valid_ipv4_ip(endpoint_ip):
+                            banned.add(endpoint_ip)
+                    c["ids_banned_ips"] = sorted(banned)
+                    save_cfg(c)
+                    restart_collector_service()
+                    return redirect(f"/ids-alerts?saved=batch_banned&count={len(selected_rows)}")
                 if action in {"bulk_source_exceptions", "bulk_destination_exceptions", "bulk_rule_exceptions"}:
                     for row in selected_rows:
                         source_ip = str(row["src_ip"] or "").strip()
@@ -7056,6 +7067,8 @@ def ids_alerts():
         notice += f'<div class="setup-ok">{h(request.args.get("count", "0"))} IDS alerts marked ignored.</div>'
     if request.args.get("saved") == "batch_exception":
         notice += f'<div class="setup-ok">{h(request.args.get("count", "0"))} IDS exceptions saved. Matching alerts were marked ignored.</div>'
+    if request.args.get("saved") == "batch_banned":
+        notice += f'<div class="setup-ok">{h(request.args.get("count", "0"))} selected IDS alerts added to the firewall ban list.</div>'
     if request.args.get("saved") == "banned":
         notice += '<div class="setup-ok">Endpoint IP added to the firewall ban list. The collector has restarted.</div>'
     if request.args.get("saved") == "unbanned":
@@ -7201,6 +7214,12 @@ def ids_alerts():
 .ids-bulk-toolbar > div {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }}
 .ids-bulk-toolbar label {{ display:inline-flex; align-items:center; gap:8px; color:var(--ns-text-secondary); font-weight:800; }}
 .ids-bulk-toolbar button {{ min-height:34px; padding:8px 11px; }}
+.ids-bulk-menu {{ position:relative; }}
+.ids-bulk-menu summary {{ list-style:none; }}
+.ids-bulk-menu summary::-webkit-details-marker {{ display:none; }}
+.ids-bulk-menu__button {{ display:inline-flex; align-items:center; gap:8px; min-height:36px; padding:8px 12px; border:1px solid rgba(61,133,211,.55); border-radius:8px; color:#d9ecff; background:rgba(10,28,48,.78); cursor:pointer; font-weight:900; }}
+.ids-bulk-menu__items {{ position:absolute; right:0; z-index:18; width:238px; margin-top:6px; padding:8px; border:1px solid var(--ns-line); border-radius:8px; background:#071322; box-shadow:0 18px 44px rgba(0,0,0,.46); }}
+.ids-bulk-menu__items button {{ display:flex; align-items:center; justify-content:flex-start; gap:9px; width:100%; margin:0 0 6px; text-align:left; }}
 .ids-select-alert, .ids-select-all {{ width:18px; height:18px; accent-color:#00d6ff; }}
 .ids-incident-table {{ display:grid; grid-template-columns:minmax(42px, .28fr) minmax(96px, .72fr) minmax(280px, 1.45fr) minmax(110px, .75fr) minmax(120px, .85fr) minmax(66px, .48fr) minmax(104px, .68fr) minmax(104px, .68fr) minmax(124px, .75fr) minmax(98px, .55fr); gap:0; }}
 .ids-incident-head, .ids-incident-row {{ display:contents; }}
@@ -7279,12 +7298,17 @@ def ids_alerts():
       </form>
       <div class="ids-bulk-toolbar">
         <label><input class="ids-select-all" type="checkbox" id="idsSelectAll"> Select visible</label>
-        <div>
-          <button form="idsBulkActionForm" type="submit" name="action" value="bulk_ignore_alerts" disabled><i class="fa-solid fa-eye-slash"></i> Ignore Selected</button>
-          <button form="idsBulkActionForm" type="submit" name="action" value="bulk_source_exceptions" disabled><i class="fa-solid fa-circle-minus"></i> Exception Sources</button>
-          <button form="idsBulkActionForm" type="submit" name="action" value="bulk_destination_exceptions" disabled><i class="fa-solid fa-circle-minus"></i> Exception Destinations</button>
-          <button form="idsBulkActionForm" type="submit" name="action" value="bulk_rule_exceptions" disabled><i class="fa-solid fa-filter-circle-xmark"></i> Exception Source + Rule</button>
-        </div>
+        <details class="ids-bulk-menu">
+          <summary class="ids-bulk-menu__button"><i class="fa-solid fa-layer-group"></i> Selected Actions <i class="fa-solid fa-chevron-down"></i></summary>
+          <div class="ids-bulk-menu__items">
+            <button form="idsBulkActionForm" type="submit" name="action" value="bulk_ignore_alerts" disabled><i class="fa-solid fa-eye-slash"></i> Ignore Selected</button>
+            <button form="idsBulkActionForm" type="submit" name="action" value="bulk_ban_sources" disabled onclick="return confirm('Ban source IPs from selected alerts?')"><i class="fa-solid fa-user-slash"></i> Ban Sources</button>
+            <button form="idsBulkActionForm" type="submit" name="action" value="bulk_ban_destinations" disabled onclick="return confirm('Ban destination IPs from selected alerts?')"><i class="fa-solid fa-network-wired"></i> Ban Destinations</button>
+            <button form="idsBulkActionForm" type="submit" name="action" value="bulk_source_exceptions" disabled><i class="fa-solid fa-circle-minus"></i> Exception Sources</button>
+            <button form="idsBulkActionForm" type="submit" name="action" value="bulk_destination_exceptions" disabled><i class="fa-solid fa-circle-minus"></i> Exception Destinations</button>
+            <button form="idsBulkActionForm" type="submit" name="action" value="bulk_rule_exceptions" disabled><i class="fa-solid fa-filter-circle-xmark"></i> Exception Source + Rule</button>
+          </div>
+        </details>
       </div>
       <div class="ids-incident-table" id="allAlerts">
         <div class="ids-incident-head"><span></span><span>Severity</span><span>Incident</span><span>Source</span><span>Destination</span><span>Protocol</span><span>First Seen</span><span>Updated</span><span>Status</span><span>Actions</span></div>
