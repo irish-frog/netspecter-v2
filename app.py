@@ -6437,6 +6437,17 @@ def ids_add_exception(config, source_ip="", signature="", destination_ip=""):
     config["ids_exceptions"] = rules
 
 
+def ids_reopen_ignored_alerts():
+    run_sql(
+        """
+        UPDATE ids_events
+        SET alert_status='open'
+        WHERE event_type='alert'
+          AND alert_status='ignored'
+        """
+    )
+
+
 def ids_selected_alert_rows(event_ids):
     clean_ids = []
     for value in event_ids:
@@ -6604,9 +6615,16 @@ def ids_alerts():
                 del rules[index]
                 c["ids_exceptions"] = rules
                 save_cfg(c)
+                ids_reopen_ignored_alerts()
                 restart_collector_service()
                 return redirect("/ids-alerts?saved=exception_removed")
             action_ok, action_notice = False, "Cannot remove that IDS exception because it no longer exists."
+        elif action == "clear_exceptions":
+            c["ids_exceptions"] = []
+            save_cfg(c)
+            ids_reopen_ignored_alerts()
+            restart_collector_service()
+            return redirect("/ids-alerts?saved=exceptions_cleared")
         elif action in {"bulk_ignore_alerts", "bulk_source_exceptions", "bulk_destination_exceptions", "bulk_rule_exceptions"}:
             selected_rows = ids_selected_alert_rows(request.form.getlist("selected_event_id"))
             if not selected_rows:
@@ -6926,6 +6944,8 @@ def ids_alerts():
         notice += '<div class="setup-ok">IDS exception saved. Matching current alerts were marked ignored.</div>'
     if request.args.get("saved") == "exception_removed":
         notice += '<div class="setup-ok">IDS exception removed. Future matching alerts will be shown again.</div>'
+    if request.args.get("saved") == "exceptions_cleared":
+        notice += '<div class="setup-ok">All IDS exceptions cleared. Previously ignored exception matches were reopened.</div>'
     if request.args.get("saved") == "batch_ignored":
         notice += f'<div class="setup-ok">{h(request.args.get("count", "0"))} IDS alerts marked ignored.</div>'
     if request.args.get("saved") == "batch_exception":
@@ -6984,7 +7004,7 @@ def ids_alerts():
   <td><span class="mono">{h(source_ip or '-')}</span></td>
   <td><span class="mono">{h(destination_ip or '-')}</span></td>
   <td>{h(signature or scope_label)}</td>
-  <td><form class="ids-action" method="post">{csrf_input()}<input type="hidden" name="exception_index" value="{idx}"><button type="submit" name="action" value="remove_exception">Remove Exception</button></form></td>
+  <td class="ids-exception-action"><form class="ids-action" method="post">{csrf_input()}<input type="hidden" name="exception_index" value="{idx}"><button type="submit" name="action" value="remove_exception">Remove</button></form></td>
 </tr>"""
     email_checked = " checked" if c.get("ids_email_enabled") else ""
     ids_telegram_checked = " checked" if c.get("ids_telegram_enabled") else ""
@@ -7038,6 +7058,13 @@ def ids_alerts():
 .ids-score-strip b {{ font-size:17px; }}
 .ids-score-strip strong {{ display:block; font-size:30px; line-height:1; margin:6px 0; }}
 .ids-score-strip small, .ids-incident-row small, .ids-panel-subtitle {{ display:block; color:var(--ns-text-secondary); }}
+.ids-table-scroll {{ overflow-x:auto; }}
+.ids-exception-table {{ min-width:720px; table-layout:fixed; }}
+.ids-exception-table th:nth-child(1), .ids-exception-table td:nth-child(1),
+.ids-exception-table th:nth-child(2), .ids-exception-table td:nth-child(2) {{ width:22%; }}
+.ids-exception-table th:nth-child(4), .ids-exception-table td:nth-child(4) {{ width:112px; }}
+.ids-exception-action {{ white-space:nowrap; }}
+.ids-exception-action .ids-action button {{ min-width:82px; padding:8px 10px; }}
 .ids-open-shell {{ display:grid; gap:16px; }}
 .ids-panel {{ border:1px solid var(--ns-border); border-radius:8px; background:linear-gradient(145deg, rgba(8,25,42,.96), rgba(4,15,27,.98)); box-shadow:0 16px 40px rgba(0,0,0,.22); }}
 .ids-panel-pad {{ padding:20px; }}
@@ -7180,7 +7207,11 @@ def ids_alerts():
     </section>
     <section class="ids-panel ids-panel-pad">
       <h2>IDS Exceptions</h2>
-      <table><tr><th>Source IP</th><th>Destination IP</th><th>Signature</th><th>Action</th></tr>{exception_rows or '<tr><td colspan="4">No IDS exceptions configured.</td></tr>'}</table>
+      <div class="ids-section-head">
+        <div class="ids-panel-subtitle">Whitelisted alert matches are hidden and marked ignored.</div>
+        <form class="ids-action" method="post">{csrf_input()}<button type="submit" name="action" value="clear_exceptions" onclick="return confirm('Clear all IDS exceptions and reopen ignored matching alerts?')">Clear All</button></form>
+      </div>
+      <div class="ids-table-scroll"><table class="ids-exception-table"><tr><th>Source IP</th><th>Destination IP</th><th>Signature</th><th>Action</th></tr>{exception_rows or '<tr><td colspan="4">No IDS exceptions configured.</td></tr>'}</table></div>
     </section>
     <section class="ids-panel ids-panel-pad settings">
       <h2>Notifications</h2>
