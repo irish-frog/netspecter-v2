@@ -175,6 +175,7 @@ DEFAULT_CONFIG = {
     "ids_excluded_ips": [],
     "ids_exceptions": [],
     "ids_banned_ips": [],
+    "ids_banned_domains": [],
     "ids_auto_ban_enabled": False,
     "ids_email_enabled": False,
     "smtp_host": "",

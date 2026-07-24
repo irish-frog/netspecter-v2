@@ -4450,6 +4450,94 @@ def app_block_domain_valid(domain):
     return bool(re.fullmatch(r"[a-z0-9][a-z0-9.-]*[a-z0-9]", text)) and "." in text
 
 
+def ids_domain_ban_marker(domain):
+    return f"# netspecter-ids-domain-ban domain={quote(str(domain or '').lower().strip('.'), safe='')}"
+
+
+def ids_domain_ban_rule(domain):
+    return f"||{str(domain or '').lower().strip('.')}^"
+
+
+def ids_domains_for_endpoint_ip(ip, limit=5):
+    if not valid_ipv4_ip(ip):
+        return []
+    domains = []
+    seen = set()
+
+    def add_domain(value):
+        domain = str(value or "").strip().lower().strip(".")
+        if app_block_domain_valid(domain) and domain not in seen:
+            seen.add(domain)
+            domains.append(domain)
+
+    try:
+        rows = query(
+            """
+            SELECT COALESCE(NULLIF(query, ''), NULLIF(hostname, '')) AS domain, COUNT(*) AS total
+            FROM ids_events
+            WHERE (src_ip=? OR dest_ip=?)
+              AND COALESCE(NULLIF(query, ''), NULLIF(hostname, '')) IS NOT NULL
+            GROUP BY domain
+            ORDER BY total DESC, MAX(ts) DESC
+            LIMIT ?
+            """,
+            (ip, ip, limit),
+        )
+        for row in rows:
+            add_domain(row["domain"])
+    except Exception:
+        pass
+
+    if len(domains) < limit:
+        try:
+            rows = query(
+                """
+                SELECT domain, MAX(resolved_ts) AS last_seen
+                FROM dns_resolved_ips
+                WHERE remote_ip=?
+                GROUP BY domain
+                ORDER BY last_seen DESC
+                LIMIT ?
+                """,
+                (ip, limit),
+            )
+            for row in rows:
+                add_domain(row["domain"])
+                if len(domains) >= limit:
+                    break
+        except Exception:
+            pass
+    return domains[:limit]
+
+
+def set_ids_domain_ban(domain, blocked=True):
+    domain = str(domain or "").strip().lower().strip(".")
+    if not app_block_domain_valid(domain):
+        return False, {"error": "Invalid FQDN."}
+    ok, data = ag_get("/filtering/status")
+    if not ok or not isinstance(data, dict):
+        return False, data
+    rules = data.get("user_rules") or []
+    marker = ids_domain_ban_marker(domain)
+    rule_line = ids_domain_ban_rule(domain)
+    cleaned = []
+    skip_next = False
+    for rule in rules:
+        rule_text = str(rule or "")
+        if rule_text == marker:
+            skip_next = True
+            continue
+        if skip_next and rule_text == rule_line:
+            skip_next = False
+            continue
+        skip_next = False
+        if rule_text != rule_line:
+            cleaned.append(rule)
+    if blocked:
+        cleaned.extend([marker, rule_line])
+    return ag_post("/filtering/set_rules", {"rules": cleaned})
+
+
 def app_block_status(ip, category):
     ok, data = ag_get("/filtering/status")
     if not ok or not isinstance(data, dict):
@@ -6700,6 +6788,24 @@ def ids_alerts():
                 )
             restart_collector_service()
             return redirect("/ids-alerts?saved=unbanned")
+        elif action in {"ban_fqdn", "unban_fqdn"}:
+            domain = request.form.get("domain", "").strip().lower().strip(".")
+            if not app_block_domain_valid(domain):
+                action_ok, action_notice = False, "Cannot block that FQDN because it is invalid or noise."
+            else:
+                should_block = action == "ban_fqdn"
+                ok, resp = set_ids_domain_ban(domain, should_block)
+                if ok:
+                    banned_domains = set(cfg_list(c.get("ids_banned_domains", [])))
+                    if should_block:
+                        banned_domains.add(domain)
+                    else:
+                        banned_domains.discard(domain)
+                    c["ids_banned_domains"] = sorted(banned_domains)
+                    save_cfg(c)
+                    return redirect("/ids-alerts?saved=fqdn_banned" if should_block else "/ids-alerts?saved=fqdn_unbanned")
+                detail = resp.get("body") or resp.get("error") if isinstance(resp, dict) else resp
+                action_ok, action_notice = False, f"AdGuard could not update the FQDN block: {str(detail)[:180]}"
         elif action == "filters":
             c["ids_unknown_only"] = request.form.get("ids_unknown_only") == "1"
             requested_ips = cfg_list(request.form.get("ids_excluded_ips", ""))
@@ -6954,6 +7060,10 @@ def ids_alerts():
         notice += '<div class="setup-ok">Endpoint IP added to the firewall ban list. The collector has restarted.</div>'
     if request.args.get("saved") == "unbanned":
         notice += '<div class="setup-ok">Endpoint IP removed from the firewall ban list.</div>'
+    if request.args.get("saved") == "fqdn_banned":
+        notice += '<div class="setup-ok">FQDN added to AdGuard blocking rules.</div>'
+    if request.args.get("saved") == "fqdn_unbanned":
+        notice += '<div class="setup-ok">FQDN removed from AdGuard blocking rules.</div>'
     if request.args.get("saved") == "email":
         notice += '<div class="setup-ok">IDS email settings saved. The collector has restarted.</div>'
     if request.args.get("saved") == "acknowledged":
@@ -6980,11 +7090,23 @@ def ids_alerts():
         for value, label in [("newest", "Newest first"), ("severity_high", "Highest severity first"), ("severity_low", "Lowest severity first"), ("oldest", "Oldest first")]
     )
     banned_rows = ""
+    banned_domains = set(str(domain or "").strip().lower().strip(".") for domain in cfg_list(c.get("ids_banned_domains", [])))
     for banned_ip in sorted(banned_ips):
+        related_domains = ids_domains_for_endpoint_ip(banned_ip)
+        domain_controls = ""
+        for domain in related_domains:
+            is_blocked = domain in banned_domains
+            domain_controls += f"""
+<form class="ids-action ids-domain-ban-row" method="post">
+  {csrf_input()}<input type="hidden" name="domain" value="{h(domain)}">
+  <span class="mono">{h(domain)}</span>
+  <button type="submit" name="action" value="{'unban_fqdn' if is_blocked else 'ban_fqdn'}">{'Remove FQDN' if is_blocked else 'Block FQDN'}</button>
+</form>"""
         banned_rows += f"""
 <tr>
   <td><span class="mono">{h(banned_ip)}</span></td>
   <td>{h(names.get(banned_ip, "External / unknown endpoint"))}</td>
+  <td>{domain_controls or '<span class="muted">No FQDN evidence yet</span>'}</td>
   <td><form class="ids-action" method="post">{csrf_input()}<input type="hidden" name="endpoint_ip" value="{h(banned_ip)}"><button type="submit" name="action" value="unban_ip">Remove Ban</button></form></td>
 </tr>"""
     exception_rows = ""
@@ -7123,6 +7245,8 @@ def ids_alerts():
 .ids-signature-row {{ display:flex; align-items:center; gap:9px; margin-top:10px; }}
 .ids-signature-row b {{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }}
 .ids-signature-row em {{ color:var(--ns-text-secondary); font-style:normal; }}
+.ids-domain-ban-row {{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 0 6px; }}
+.ids-domain-ban-row button {{ white-space:nowrap; }}
 @media (max-width:1380px) {{ .ids-incident-table {{ grid-template-columns:1fr; }} .ids-incident-head {{ display:none; }} .ids-incident-row {{ display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:0; margin-bottom:10px; border:1px solid rgba(125,176,224,.14); border-left:3px solid #1485ff; border-radius:8px; overflow:visible; background:rgba(4,16,29,.44); }} .ids-incident-row > div {{ display:block; border-top:1px solid rgba(125,176,224,.10); background:transparent; }} .ids-incident-row > div:first-child {{ border-left:0; border-radius:0; }} .ids-incident-row > div:last-child {{ border-radius:0; }} .ids-incident-row > div:nth-child(10) {{ justify-content:flex-start; }} }}
 @media (max-width:1180px) {{ .ids-open-shell, .ids-lower-grid, .ids-management-grid {{ grid-template-columns:1fr; }} .ids-score-strip {{ grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }} .ids-score-strip > div {{ padding:0; border-left:0; }} .ids-score-strip > a {{ justify-self:start; }} }}
 @media (max-width:720px) {{ .ids-panel-pad {{ padding:14px; }} .ids-section-head {{ align-items:flex-start; flex-direction:column; }} .ids-score-strip, .ids-summary-grid, .ids-filter-grid, .ids-filter-actions, .ids-incident-row {{ grid-template-columns:1fr; }} .ids-row-actions {{ justify-content:flex-start; }} .ids-row-actions__menu {{ left:0; right:auto; max-width:calc(100vw - 48px); }} }}
@@ -7191,7 +7315,7 @@ def ids_alerts():
   <div class="ids-management-grid">
     <section class="ids-panel ids-panel-pad">
       <h2>Firewall Ban List</h2>
-      <table><tr><th>Banned IP</th><th>Known Name</th><th>Action</th></tr>{banned_rows or '<tr><td colspan="3">No endpoint IPs currently banned.</td></tr>'}</table>
+      <div class="ids-table-scroll"><table><tr><th>Banned IP</th><th>Known Name</th><th>Related FQDN</th><th>Action</th></tr>{banned_rows or '<tr><td colspan="4">No endpoint IPs currently banned.</td></tr>'}</table></div>
     </section>
     <section class="ids-panel ids-panel-pad">
       <h2>IDS Exceptions</h2>
@@ -7201,18 +7325,19 @@ def ids_alerts():
       </div>
       <div class="ids-table-scroll"><table class="ids-exception-table"><tr><th>Source IP</th><th>Destination IP</th><th>Signature</th><th>Action</th></tr>{exception_rows or '<tr><td colspan="4">No IDS exceptions configured.</td></tr>'}</table></div>
     </section>
-    <section class="ids-panel ids-panel-pad settings">
-      <h2>Notifications</h2>
-      <form method="post">
-        {csrf_input()}
-        <label><input type="checkbox" name="ids_email_enabled" value="1" style="width:auto"{email_checked}> Enable IDS email alerts</label>
-        <label><input type="checkbox" name="ids_telegram_enabled" value="1" style="width:auto"{ids_telegram_disabled}{ids_telegram_checked}> Enable IDS Telegram alerts for P1/P2</label>
-        <label>Repeat Alert Cooldown Minutes</label>
-        <input name="ids_email_cooldown_minutes" value="{h(c.get('ids_email_cooldown_minutes', 480))}">
-        <button type="submit" name="action" value="save_email">Save Notification Settings</button>
-      </form>
-    </section>
   </div>
+
+  <section class="ids-panel ids-panel-pad settings">
+    <h2>Notifications</h2>
+    <form method="post">
+      {csrf_input()}
+      <label><input type="checkbox" name="ids_email_enabled" value="1" style="width:auto"{email_checked}> Enable IDS email alerts</label>
+      <label><input type="checkbox" name="ids_telegram_enabled" value="1" style="width:auto"{ids_telegram_disabled}{ids_telegram_checked}> Enable IDS Telegram alerts for P1/P2</label>
+      <label>Repeat Alert Cooldown Minutes</label>
+      <input name="ids_email_cooldown_minutes" value="{h(c.get('ids_email_cooldown_minutes', 480))}">
+      <button type="submit" name="action" value="save_email">Save Notification Settings</button>
+    </form>
+  </section>
 </div>
 {auto_refresh_script(60)}
 <script>
