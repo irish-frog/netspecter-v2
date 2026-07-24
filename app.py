@@ -18,6 +18,7 @@ import ssl
 import shlex
 import zipfile
 import threading
+import traceback
 from functools import wraps
 from collections import Counter
 from datetime import datetime, timedelta
@@ -11934,6 +11935,7 @@ def handle_uncaught_error(error):
         return error
 
     print(f"Unhandled dashboard error: {error}")
+    traceback.print_exc()
     body = f"""
 {topbar('System')}
 <div class="panel">

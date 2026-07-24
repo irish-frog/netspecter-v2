@@ -292,6 +292,11 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn('Update Available</button>', source)
         self.assertIn('if (dashboardButton) dashboardButton.style.display = "inline-flex";', source)
 
+    def test_uncaught_error_handler_logs_traceback(self):
+        source = (SOURCE_DIR / "app.py").read_text()
+        self.assertIn("import traceback", source)
+        self.assertIn("traceback.print_exc()", source)
+
     def test_range_picker_includes_longer_ranges(self):
         with self.module.app.test_request_context("/traffic?range=60d"):
             html = self.module.time_picker()
