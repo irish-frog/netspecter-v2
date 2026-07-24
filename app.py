@@ -4538,6 +4538,34 @@ def set_ids_domain_ban(domain, blocked=True):
     return ag_post("/filtering/set_rules", {"rules": cleaned})
 
 
+def ids_apply_domain_bans_for_ips(config, endpoint_ips):
+    blocked_domains = set(str(domain or "").strip().lower().strip(".") for domain in cfg_list(config.get("ids_banned_domains", [])))
+    failures = []
+    for endpoint_ip in endpoint_ips:
+        if not valid_ipv4_ip(endpoint_ip):
+            continue
+        for domain in ids_domains_for_endpoint_ip(endpoint_ip):
+            if domain in blocked_domains:
+                continue
+            ok, resp = set_ids_domain_ban(domain, True)
+            if ok:
+                blocked_domains.add(domain)
+            else:
+                failures.append(resp)
+    config["ids_banned_domains"] = sorted(blocked_domains)
+    return failures
+
+
+def ids_clear_domain_bans(config):
+    failures = []
+    for domain in cfg_list(config.get("ids_banned_domains", [])):
+        ok, resp = set_ids_domain_ban(domain, False)
+        if not ok:
+            failures.append(resp)
+    config["ids_banned_domains"] = []
+    return failures
+
+
 def app_block_status(ip, category):
     ok, data = ag_get("/filtering/status")
     if not ok or not isinstance(data, dict):
@@ -6731,12 +6759,15 @@ def ids_alerts():
                 )
                 if action in {"bulk_ban_sources", "bulk_ban_destinations"}:
                     banned = set(cfg_list(c.get("ids_banned_ips", [])))
+                    ban_ips = []
                     for row in selected_rows:
                         field = "src_ip" if action == "bulk_ban_sources" else "dest_ip"
                         endpoint_ip = str(row[field] or "").strip()
                         if valid_ipv4_ip(endpoint_ip):
                             banned.add(endpoint_ip)
+                            ban_ips.append(endpoint_ip)
                     c["ids_banned_ips"] = sorted(banned)
+                    ids_apply_domain_bans_for_ips(c, ban_ips)
                     save_cfg(c)
                     restart_collector_service()
                     return redirect(f"/ids-alerts?saved=batch_banned&count={len(selected_rows)}")
@@ -6760,6 +6791,7 @@ def ids_alerts():
                 action_ok, action_notice = False, "Cannot ban this endpoint because its IPv4 address is invalid."
             else:
                 c["ids_banned_ips"] = sorted(set(cfg_list(c.get("ids_banned_ips", []))) | {banned_ip})
+                ids_apply_domain_bans_for_ips(c, [banned_ip])
                 save_cfg(c)
                 try:
                     event_id = int(request.form.get("event_id", "0") or 0)
@@ -6799,6 +6831,20 @@ def ids_alerts():
                 )
             restart_collector_service()
             return redirect("/ids-alerts?saved=unbanned")
+        elif action == "clear_bans":
+            c["ids_banned_ips"] = []
+            ids_clear_domain_bans(c)
+            save_cfg(c)
+            run_sql(
+                """
+                UPDATE ids_events
+                SET alert_status='open'
+                WHERE event_type='alert'
+                  AND alert_status='banned'
+                """
+            )
+            restart_collector_service()
+            return redirect("/ids-alerts?saved=bans_cleared")
         elif action in {"ban_fqdn", "unban_fqdn"}:
             domain = request.form.get("domain", "").strip().lower().strip(".")
             if not app_block_domain_valid(domain):
@@ -7073,6 +7119,8 @@ def ids_alerts():
         notice += '<div class="setup-ok">Endpoint IP added to the firewall ban list. The collector has restarted.</div>'
     if request.args.get("saved") == "unbanned":
         notice += '<div class="setup-ok">Endpoint IP removed from the firewall ban list.</div>'
+    if request.args.get("saved") == "bans_cleared":
+        notice += '<div class="setup-ok">All firewall bans and NetSpecter FQDN blocks were cleared.</div>'
     if request.args.get("saved") == "fqdn_banned":
         notice += '<div class="setup-ok">FQDN added to AdGuard blocking rules.</div>'
     if request.args.get("saved") == "fqdn_unbanned":
@@ -7338,7 +7386,13 @@ def ids_alerts():
 
   <div class="ids-management-grid">
     <section class="ids-panel ids-panel-pad">
-      <h2>Firewall Ban List</h2>
+      <div class="ids-section-head">
+        <div>
+          <h2>Firewall Ban List</h2>
+          <div class="ids-panel-subtitle">IP bans are enforced by the collector. Related FQDNs are blocked in AdGuard when NetSpecter has evidence.</div>
+        </div>
+        <form class="ids-action" method="post">{csrf_input()}<button type="submit" name="action" value="clear_bans" onclick="return confirm('Clear all firewall bans and NetSpecter FQDN blocks?')">Clear All</button></form>
+      </div>
       <div class="ids-table-scroll"><table><tr><th>Banned IP</th><th>Known Name</th><th>Related FQDN</th><th>Action</th></tr>{banned_rows or '<tr><td colspan="4">No endpoint IPs currently banned.</td></tr>'}</table></div>
     </section>
     <section class="ids-panel ids-panel-pad">
