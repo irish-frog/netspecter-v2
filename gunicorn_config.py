@@ -1,5 +1,6 @@
 import json
 import os
+import multiprocessing
 from pathlib import Path
 
 
@@ -17,7 +18,7 @@ except Exception:
     pass
 
 bind = f"{host}:{port}"
-workers = 2
+workers = int(os.environ.get("NETSPECTER_WEB_WORKERS") or (multiprocessing.cpu_count() or 1))
 preload_app = True
 accesslog = "-"
 errorlog = "-"

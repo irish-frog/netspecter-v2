@@ -484,6 +484,34 @@ ensure_https_certificate() {
   chmod 640 "$key_path"
 }
 
+ensure_secret_files() {
+  if [ ! -s "$CONFIG_DIR/session.key" ]; then
+    python3 - "$CONFIG_DIR/session.key" <<'PY'
+import secrets
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+path.write_text(secrets.token_urlsafe(48))
+PY
+  fi
+
+  if [ ! -s "$CONFIG_DIR/secret.key" ]; then
+    "$INSTALL_DIR/venv/bin/python" - "$CONFIG_DIR/secret.key" <<'PY'
+import sys
+from pathlib import Path
+
+from cryptography.fernet import Fernet
+
+path = Path(sys.argv[1])
+path.write_text(Fernet.generate_key().decode())
+PY
+  fi
+
+  chown root:"$RUNTIME_GROUP" "$CONFIG_DIR/session.key" "$CONFIG_DIR/secret.key"
+  chmod 640 "$CONFIG_DIR/session.key" "$CONFIG_DIR/secret.key"
+}
+
 apply_runtime_permissions() {
   chown -R root:root "$INSTALL_DIR"
   chown -R root:"$RUNTIME_GROUP" "$CONFIG_DIR"
@@ -491,7 +519,7 @@ apply_runtime_permissions() {
 
   chmod 755 "$INSTALL_DIR"
   chmod 750 "$CONFIG_DIR" "$CONFIG_DIR/adguard" "$DATA_DIR" "$LOG_DIR"
-  chmod 640 "$CONFIG_DIR/config.json" "$CONFIG_DIR/netspecter-https.key"
+  chmod 640 "$CONFIG_DIR/config.json" "$CONFIG_DIR/netspecter-https.key" "$CONFIG_DIR/session.key" "$CONFIG_DIR/secret.key"
   chmod 644 "$CONFIG_DIR/netspecter-https.crt"
   chmod 660 "$DATA_DIR/netspecter.db" "$DATA_DIR/netspecter_dns.db" "$DATA_DIR/netspecter_traffic.db" "$DATA_DIR/netspecter_security.db" "$DATA_DIR/cache.json" "$DATA_DIR/oui_cache.json"
 
@@ -676,6 +704,7 @@ python3 -m venv "$INSTALL_DIR/venv"
 echo "[7/10] Preparing database and permissions..."
 touch "$DATA_DIR/netspecter.db" "$DATA_DIR/netspecter_dns.db" "$DATA_DIR/netspecter_traffic.db" "$DATA_DIR/netspecter_security.db"
 ensure_https_certificate
+ensure_secret_files
 apply_runtime_permissions
 
 echo "[8/10] Preparing AdGuard template..."
