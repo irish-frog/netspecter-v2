@@ -92,9 +92,12 @@ install_speedtest_optional() {
 install_suricata_optional() {
   if apt install -y suricata suricata-update; then
     mkdir -p /var/lib/suricata/rules /var/log/suricata
+    SURICATA_RULES_FILE="/var/lib/suricata/rules/suricata.rules"
+    if [ ! -e "$SURICATA_RULES_FILE" ]; then
+      printf '# NetSpecter placeholder. suricata-update will replace this when rules download succeeds.\n' > "$SURICATA_RULES_FILE"
+    fi
     install_suricata_safety_override
     configure_suricata_interface
-    SURICATA_RULES_FILE="/var/lib/suricata/rules/suricata.rules"
     SURICATA_REFRESH_RULES=0
     if [ ! -s "$SURICATA_RULES_FILE" ]; then
       SURICATA_REFRESH_RULES=1
