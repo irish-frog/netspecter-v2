@@ -436,6 +436,54 @@ ensure_runtime_user() {
   fi
 }
 
+detect_primary_ip() {
+  ip -4 route get 1.1.1.1 2>/dev/null | awk '
+    {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "src" && (i + 1) <= NF) {
+          print $(i + 1)
+          exit
+        }
+      }
+    }
+  '
+}
+
+ensure_https_certificate() {
+  local cert_path="$CONFIG_DIR/netspecter-https.crt"
+  local key_path="$CONFIG_DIR/netspecter-https.key"
+  local appliance_ip
+  local subject_cn
+  local san
+
+  if [ -s "$cert_path" ] && [ -s "$key_path" ]; then
+    return 0
+  fi
+
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "OpenSSL is required to create the NetSpecter HTTPS certificate." >&2
+    exit 1
+  fi
+
+  appliance_ip="$(detect_primary_ip || true)"
+  subject_cn="${appliance_ip:-netspecter.local}"
+  san="IP:127.0.0.1,DNS:localhost,DNS:netspecter.local"
+  if [ -n "$appliance_ip" ]; then
+    san="IP:${appliance_ip},${san}"
+  fi
+
+  echo "Creating NetSpecter HTTPS certificate for ${subject_cn}..."
+  openssl req -x509 -nodes -newkey rsa:2048 -days 825 \
+    -keyout "$key_path" \
+    -out "$cert_path" \
+    -subj "/CN=${subject_cn}" \
+    -addext "subjectAltName=${san}" >/dev/null 2>&1
+
+  chown root:"$RUNTIME_GROUP" "$cert_path" "$key_path"
+  chmod 644 "$cert_path"
+  chmod 640 "$key_path"
+}
+
 apply_runtime_permissions() {
   chown -R root:root "$INSTALL_DIR"
   chown -R root:"$RUNTIME_GROUP" "$CONFIG_DIR"
@@ -443,7 +491,8 @@ apply_runtime_permissions() {
 
   chmod 755 "$INSTALL_DIR"
   chmod 750 "$CONFIG_DIR" "$CONFIG_DIR/adguard" "$DATA_DIR" "$LOG_DIR"
-  chmod 640 "$CONFIG_DIR/config.json" "$CONFIG_DIR/netspecter-https.crt" "$CONFIG_DIR/netspecter-https.key"
+  chmod 640 "$CONFIG_DIR/config.json" "$CONFIG_DIR/netspecter-https.key"
+  chmod 644 "$CONFIG_DIR/netspecter-https.crt"
   chmod 660 "$DATA_DIR/netspecter.db" "$DATA_DIR/netspecter_dns.db" "$DATA_DIR/netspecter_traffic.db" "$DATA_DIR/netspecter_security.db" "$DATA_DIR/cache.json" "$DATA_DIR/oui_cache.json"
 
   find "$INSTALL_DIR" -type d -exec chmod 755 {} \;
@@ -626,17 +675,7 @@ python3 -m venv "$INSTALL_DIR/venv"
 
 echo "[7/10] Preparing database and permissions..."
 touch "$DATA_DIR/netspecter.db" "$DATA_DIR/netspecter_dns.db" "$DATA_DIR/netspecter_traffic.db" "$DATA_DIR/netspecter_security.db"
-if [ ! -s "$CONFIG_DIR/netspecter-https.crt" ] || [ ! -s "$CONFIG_DIR/netspecter-https.key" ]; then
-  if command -v openssl >/dev/null 2>&1; then
-    openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
-      -keyout "$CONFIG_DIR/netspecter-https.key" \
-      -out "$CONFIG_DIR/netspecter-https.crt" \
-      -subj "/CN=NetSpecter" >/dev/null 2>&1
-  else
-    echo "OpenSSL is required to create the NetSpecter HTTPS certificate." >&2
-    exit 1
-  fi
-fi
+ensure_https_certificate
 apply_runtime_permissions
 
 echo "[8/10] Preparing AdGuard template..."
