@@ -26,6 +26,14 @@ def rows_dict(rows):
     return [row_dict(row) for row in rows or []]
 
 
+def value(row, key, default=None):
+    if row is None:
+        return default
+    if hasattr(row, "keys"):
+        return row[key] if key in row.keys() else default
+    return row.get(key, default)
+
+
 def period(days=7):
     end = datetime.now()
     start = end - timedelta(days=int(days or 7))
@@ -39,13 +47,13 @@ def dashboard_summary():
     recent_items = incidents(limit=5)
     return {
         "device_count": overview.get("devices", 0),
-        "internet_status": latest.get("status") or "unknown",
+        "internet_status": value(latest, "status") or "unknown",
         "active_alerts": overview.get("ids_alerts", 0),
         "threat_count": threat_count(),
         "dns_health": {
             "query_volume_7d": overview.get("dns_total", 0),
             "blocked_7d": overview.get("dns_blocked", 0),
-            "latest_dns_response_ms": latest.get("dns_ms"),
+            "latest_dns_response_ms": value(latest, "dns_ms"),
         },
         "recent_incidents": recent_items["items"],
         "period": {"start": start, "end": end},
@@ -116,10 +124,10 @@ def internet_health():
     outage_rows = get_internet_issue_summary(start, end, 1)
     return {
         "availability": _availability(rollup),
-        "latency_ms": latest.get("internet_latency_ms"),
-        "jitter_ms": latest.get("jitter_ms"),
-        "packet_loss_pct": latest.get("internet_loss_pct"),
-        "dns_response_time_ms": latest.get("dns_ms"),
+        "latency_ms": value(latest, "internet_latency_ms"),
+        "jitter_ms": value(latest, "jitter_ms"),
+        "packet_loss_pct": value(latest, "internet_loss_pct"),
+        "dns_response_time_ms": value(latest, "dns_ms"),
         "last_outage": row_dict(outage_rows[0]) if outage_rows else None,
         "period_rollup": row_dict(rollup) if hasattr(rollup, "keys") else rollup,
     }
@@ -156,7 +164,7 @@ def dns_analytics():
         "top_clients": rows_dict(top_clients),
         "blocked_domains": rows_dict(blocked),
         "query_volume": sum(int(row["queries"] or 0) for row in top_clients),
-        "dns_latency_ms": latest.get("dns_ms"),
+        "dns_latency_ms": value(latest, "dns_ms"),
         "period": {"start": start, "end": end},
     }
 
