@@ -6405,6 +6405,21 @@ def ids_alert_matches_exception(alert, rule):
     return bool(source_ip or destination_ip or signature)
 
 
+def ids_destination_filter_matches(alert, value):
+    needle = str(value or "").strip().lower()
+    if not needle:
+        return True
+    haystacks = [
+        alert.get("destination"),
+        alert.get("destination_ip"),
+        alert.get("destination_name"),
+        alert.get("query"),
+        alert.get("hostname"),
+        alert.get("tls_sni"),
+    ]
+    return any(needle in str(item or "").lower() for item in haystacks)
+
+
 def ids_add_exception(config, source_ip="", signature="", destination_ip=""):
     source_ip = str(source_ip or "").strip()
     destination_ip = str(destination_ip or "").strip()
@@ -6716,7 +6731,9 @@ def ids_alerts():
         "sort": request.args.get("sort", "newest").strip(),
         "show_noise": request.args.get("show_noise", "").strip() == "1",
     }
-    alerts, error = recent_suricata_alerts(filters=ids_filters)
+    query_filters = dict(ids_filters)
+    destination_filter = query_filters.pop("destination", "").strip()
+    alerts, error = recent_suricata_alerts(filters=query_filters)
     names = ids_device_names()
     excluded_ips = set(cfg_list(c.get("ids_excluded_ips", [])))
     exception_rules = ids_exception_rules(c)
@@ -6730,6 +6747,8 @@ def ids_alerts():
         alert["destination_ip"] = destination_ip
         alert["source_name"] = names.get(source_ip, "")
         alert["destination_name"] = names.get(destination_ip, "")
+        if destination_filter and not ids_destination_filter_matches(alert, destination_filter):
+            continue
         if source_ip in excluded_ips:
             continue
         if any(ids_alert_matches_exception(alert, rule) for rule in exception_rules):
@@ -7131,7 +7150,7 @@ def ids_alerts():
         <label>Severity<select name="severity">{severity_options}</select></label>
         <label>Device / Source IP<input name="device" value="{h(ids_filters['device'])}" placeholder="e.g. 192.168.1.50"></label>
         <label>Event Type<select name="event_type">{event_type_options}</select></label>
-        <label>Destination IP<input name="destination" value="{h(ids_filters['destination'])}" placeholder="e.g. 8.8.8.8"></label>
+        <label>Destination IP / Name<input name="destination" value="{h(ids_filters['destination'])}" placeholder="e.g. 8.8.8.8, Nextcloud, ipinfo"></label>
         <label>Protocol<input name="protocol" value="{h(ids_filters['protocol'])}" placeholder="TCP, UDP, TLS"></label>
         <label>Signature Contains<input name="signature" value="{h(ids_filters['signature'])}" placeholder="Enter signature or keyword"></label>
         <label>Sort<select name="sort">{sort_options}</select></label>

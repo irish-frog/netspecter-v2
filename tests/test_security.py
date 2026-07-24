@@ -539,6 +539,8 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn("Highest severity first", source)
         self.assertIn("Show Medium, Low and diagnostic alerts", source)
         self.assertIn("Actionable IDS Alerts", source)
+        self.assertIn("def ids_destination_filter_matches(alert, value):", source)
+        self.assertIn("Destination IP / Name", source)
         self.assertIn('value="ban_source"', source)
         self.assertIn('value="ban_destination"', source)
         self.assertIn("Firewall Ban List", source)
