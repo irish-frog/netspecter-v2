@@ -6394,19 +6394,27 @@ def ids_alert_matches_exception(alert, rule):
     if not isinstance(rule, dict):
         return False
     source_ip = str(rule.get("source_ip") or "").strip()
+    destination_ip = str(rule.get("destination_ip") or "").strip()
     signature = str(rule.get("signature") or "").strip().lower()
     if source_ip and source_ip != str(alert.get("source_ip") or ""):
         return False
+    if destination_ip and destination_ip != str(alert.get("destination_ip") or ""):
+        return False
     if signature and signature != str(alert.get("signature") or "").strip().lower():
         return False
-    return bool(source_ip or signature)
+    return bool(source_ip or destination_ip or signature)
 
 
-def ids_add_exception(config, source_ip, signature=""):
+def ids_add_exception(config, source_ip="", signature="", destination_ip=""):
     source_ip = str(source_ip or "").strip()
+    destination_ip = str(destination_ip or "").strip()
     signature = str(signature or "").strip()
     rules = ids_exception_rules(config)
-    candidate = {"source_ip": source_ip}
+    candidate = {}
+    if source_ip:
+        candidate["source_ip"] = source_ip
+    if destination_ip:
+        candidate["destination_ip"] = destination_ip
     if signature:
         candidate["signature"] = signature
     if candidate not in rules:
@@ -6427,7 +6435,7 @@ def ids_selected_alert_rows(event_ids):
     placeholders = ",".join("?" for _ in clean_ids)
     return query(
         f"""
-        SELECT id, src_ip, signature
+        SELECT id, src_ip, dest_ip, signature
         FROM ids_events
         WHERE event_type='alert'
           AND id IN ({placeholders})
@@ -6520,17 +6528,35 @@ def ids_alerts():
                 save_cfg(c)
                 restart_collector_service()
                 return redirect("/ids-alerts?saved=ignored")
-        elif action in {"add_source_exception", "add_signature_exception"}:
+        elif action in {"add_source_exception", "add_destination_exception", "add_signature_exception"}:
             source_ip = request.form.get("source_ip", "").strip()
+            destination_ip = request.form.get("destination_ip", "").strip()
             signature = request.form.get("signature", "").strip() if action == "add_signature_exception" else ""
-            if not valid_ipv4_ip(source_ip):
+            if action in {"add_source_exception", "add_signature_exception"} and not valid_ipv4_ip(source_ip):
                 action_ok, action_notice = False, "Cannot add this IDS exception because its source IP address is invalid."
+            elif action == "add_destination_exception" and not valid_ipv4_ip(destination_ip):
+                action_ok, action_notice = False, "Cannot add this IDS exception because its destination IP address is invalid."
             elif action == "add_signature_exception" and not signature:
                 action_ok, action_notice = False, "Cannot add this IDS exception because the alert signature is missing."
             else:
-                ids_add_exception(c, source_ip, signature)
+                ids_add_exception(
+                    c,
+                    source_ip=source_ip if action != "add_destination_exception" else "",
+                    destination_ip=destination_ip if action == "add_destination_exception" else "",
+                    signature=signature,
+                )
                 save_cfg(c)
-                if signature:
+                if action == "add_destination_exception":
+                    run_sql(
+                        """
+                        UPDATE ids_events
+                        SET alert_status='ignored'
+                        WHERE event_type='alert'
+                          AND dest_ip=?
+                        """,
+                        (destination_ip,),
+                    )
+                elif signature:
                     run_sql(
                         """
                         UPDATE ids_events
@@ -6566,7 +6592,7 @@ def ids_alerts():
                 restart_collector_service()
                 return redirect("/ids-alerts?saved=exception_removed")
             action_ok, action_notice = False, "Cannot remove that IDS exception because it no longer exists."
-        elif action in {"bulk_ignore_alerts", "bulk_source_exceptions", "bulk_rule_exceptions"}:
+        elif action in {"bulk_ignore_alerts", "bulk_source_exceptions", "bulk_destination_exceptions", "bulk_rule_exceptions"}:
             selected_rows = ids_selected_alert_rows(request.form.getlist("selected_event_id"))
             if not selected_rows:
                 action_ok, action_notice = False, "Select one or more IDS alerts first."
@@ -6582,11 +6608,15 @@ def ids_alerts():
                     """,
                     tuple(selected_ids),
                 )
-                if action in {"bulk_source_exceptions", "bulk_rule_exceptions"}:
+                if action in {"bulk_source_exceptions", "bulk_destination_exceptions", "bulk_rule_exceptions"}:
                     for row in selected_rows:
                         source_ip = str(row["src_ip"] or "").strip()
+                        destination_ip = str(row["dest_ip"] or "").strip()
                         signature = str(row["signature"] or "").strip() if action == "bulk_rule_exceptions" else ""
-                        if valid_ipv4_ip(source_ip):
+                        if action == "bulk_destination_exceptions":
+                            if valid_ipv4_ip(destination_ip):
+                                ids_add_exception(c, destination_ip=destination_ip)
+                        elif valid_ipv4_ip(source_ip):
                             ids_add_exception(c, source_ip, signature)
                     save_cfg(c)
                     restart_collector_service()
@@ -6812,6 +6842,10 @@ def ids_alerts():
       <button class="ids-menu-item" type="submit" name="action" value="add_source_exception"><i class="fa-solid fa-circle-minus"></i> Add Source Exception</button>
     </form>
     <form class="ids-action" method="post">
+  {csrf_input()}<input type="hidden" name="destination_ip" value="{h(alert['destination_ip'])}">
+      <button class="ids-menu-item" type="submit" name="action" value="add_destination_exception"><i class="fa-solid fa-circle-minus"></i> Add Destination Exception</button>
+    </form>
+    <form class="ids-action" method="post">
   {csrf_input()}<input type="hidden" name="source_ip" value="{h(alert['source_ip'])}"><input type="hidden" name="signature" value="{h(alert['signature'])}">
       <button class="ids-menu-item" type="submit" name="action" value="add_signature_exception"><i class="fa-solid fa-filter-circle-xmark"></i> Add Rule Exception</button>
     </form>
@@ -6921,13 +6955,16 @@ def ids_alerts():
         if not isinstance(rule, dict):
             continue
         source_ip = str(rule.get("source_ip") or "").strip()
+        destination_ip = str(rule.get("destination_ip") or "").strip()
         signature = str(rule.get("signature") or "").strip()
-        if not source_ip and not signature:
+        if not source_ip and not destination_ip and not signature:
             continue
+        scope_label = "All matching destination alerts" if destination_ip and not source_ip else "All signatures from source"
         exception_rows += f"""
 <tr>
   <td><span class="mono">{h(source_ip or '-')}</span></td>
-  <td>{h(signature or 'All signatures from source')}</td>
+  <td><span class="mono">{h(destination_ip or '-')}</span></td>
+  <td>{h(signature or scope_label)}</td>
   <td><form class="ids-action" method="post">{csrf_input()}<input type="hidden" name="exception_index" value="{idx}"><button type="submit" name="action" value="remove_exception">Remove Exception</button></form></td>
 </tr>"""
     email_checked = " checked" if c.get("ids_email_enabled") else ""
@@ -7076,6 +7113,7 @@ def ids_alerts():
         <div>
           <button form="idsBulkActionForm" type="submit" name="action" value="bulk_ignore_alerts" disabled><i class="fa-solid fa-eye-slash"></i> Ignore Selected</button>
           <button form="idsBulkActionForm" type="submit" name="action" value="bulk_source_exceptions" disabled><i class="fa-solid fa-circle-minus"></i> Exception Sources</button>
+          <button form="idsBulkActionForm" type="submit" name="action" value="bulk_destination_exceptions" disabled><i class="fa-solid fa-circle-minus"></i> Exception Destinations</button>
           <button form="idsBulkActionForm" type="submit" name="action" value="bulk_rule_exceptions" disabled><i class="fa-solid fa-filter-circle-xmark"></i> Exception Source + Rule</button>
         </div>
       </div>
@@ -7123,7 +7161,7 @@ def ids_alerts():
     </section>
     <section class="ids-panel ids-panel-pad">
       <h2>IDS Exceptions</h2>
-      <table><tr><th>Source IP</th><th>Signature</th><th>Action</th></tr>{exception_rows or '<tr><td colspan="3">No IDS exceptions configured.</td></tr>'}</table>
+      <table><tr><th>Source IP</th><th>Destination IP</th><th>Signature</th><th>Action</th></tr>{exception_rows or '<tr><td colspan="4">No IDS exceptions configured.</td></tr>'}</table>
     </section>
     <section class="ids-panel ids-panel-pad settings">
       <h2>Notifications</h2>

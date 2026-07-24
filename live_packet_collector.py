@@ -1668,14 +1668,18 @@ def ids_alert_matches_exception(alert, exception):
     if not isinstance(exception, dict):
         return False
     source_ip = str(exception.get("source_ip") or "").strip()
+    destination_ip = str(exception.get("destination_ip") or "").strip()
     signature = str(exception.get("signature") or "").strip().lower()
     alert_source = ids_endpoint_ip(alert.get("source") or alert.get("src_ip") or "")
+    alert_destination = ids_endpoint_ip(alert.get("destination") or alert.get("dest_ip") or "")
     alert_signature = str(alert.get("signature") or "").strip().lower()
     if source_ip and source_ip != alert_source:
         return False
+    if destination_ip and destination_ip != alert_destination:
+        return False
     if signature and signature != alert_signature:
         return False
-    return bool(source_ip or signature)
+    return bool(source_ip or destination_ip or signature)
 
 
 def ids_alert_is_excepted(config, alert):
