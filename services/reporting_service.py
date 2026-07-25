@@ -9,6 +9,22 @@ DEFAULT_LIMIT = 100
 MAX_LIMIT = 500
 
 
+def traffic_history_source_sql(alias="t"):
+    return f"""
+        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts,
+               substr(ts, 1, 13) || ':00' AS hour
+        FROM traffic_intervals
+        UNION ALL
+        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, avg_live_bps AS live_bps,
+               day, hour AS ts, hour
+        FROM traffic_hourly_rollups
+        WHERE hour NOT IN (
+            SELECT DISTINCT substr(ts, 1, 13) || ':00'
+            FROM traffic_intervals
+        )
+    """
+
+
 def parse_period(start_value=None, end_value=None):
     end = _parse_dt(end_value) or datetime.now()
     start = _parse_dt(start_value) or (end - timedelta(days=1))
@@ -21,9 +37,9 @@ def get_site_overview(start_time, end_time):
     return {
         "devices": _scalar("SELECT COUNT(*) FROM devices"),
         "active_devices": _scalar(
-            """
+            f"""
             SELECT COUNT(DISTINCT ip)
-            FROM traffic_intervals
+            FROM ({traffic_history_source_sql()})
             WHERE ts BETWEEN ? AND ?
             """,
             (start_time, end_time),
@@ -95,7 +111,7 @@ def get_device_activity(device_ids, start_time, end_time, limit=DEFAULT_LIMIT):
             SUM(t.uploaded_mb) AS uploaded_mb,
             SUM(t.total_mb) AS total_mb,
             MAX(t.ts) AS last_seen
-        FROM traffic_intervals t
+        FROM ({traffic_history_source_sql()}) t
         LEFT JOIN (
             SELECT ip, MAX(name) AS name, MAX(mac) AS mac
             FROM devices
@@ -205,7 +221,7 @@ def get_top_users(filters, start_time, end_time, limit=5):
             MAX(t.ts) AS last_seen
         FROM user_device_assignments a
         JOIN user_labels u ON u.id=a.user_id
-        JOIN traffic_intervals t ON t.ip=a.device_ip
+        JOIN ({traffic_history_source_sql()}) t ON t.ip=a.device_ip
         WHERE u.active=1
           AND u.display_name IS NOT NULL
           AND TRIM(u.display_name) != ''
@@ -300,7 +316,7 @@ def get_top_devices(filters, start_time, end_time, limit=10):
             SUM(t.uploaded_mb) AS uploaded_mb,
             SUM(t.total_mb) AS total_mb,
             MAX(t.ts) AS last_seen
-        FROM traffic_intervals t
+        FROM ({traffic_history_source_sql()}) t
         LEFT JOIN (
             SELECT ip, MAX(name) AS name, MAX(mac) AS mac
             FROM devices
@@ -425,7 +441,7 @@ def get_traffic_summary(filters, start_time, end_time):
         f"""
         SELECT SUM(downloaded_mb) AS downloaded_mb, SUM(uploaded_mb) AS uploaded_mb,
                SUM(total_mb) AS total_mb
-        FROM traffic_intervals
+        FROM ({traffic_history_source_sql()})
         WHERE ts BETWEEN ? AND ? {where}
         """,
         (start_time, end_time, *params),

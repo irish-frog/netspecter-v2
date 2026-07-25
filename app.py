@@ -263,6 +263,22 @@ def range_start_day():
     return datetime.fromtimestamp(time.time() - seconds).strftime("%Y-%m-%d")
 
 
+def traffic_history_source_sql():
+    return """
+        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts,
+               substr(ts, 1, 13) || ':00' AS hour
+        FROM traffic_intervals
+        UNION ALL
+        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, avg_live_bps AS live_bps,
+               day, hour AS ts, hour
+        FROM traffic_hourly_rollups
+        WHERE hour NOT IN (
+            SELECT DISTINCT substr(ts, 1, 13) || ':00'
+            FROM traffic_intervals
+        )
+    """
+
+
 def range_query_suffix(extra=""):
     suffix = f"?range={range_key()}"
     if extra:
@@ -1482,6 +1498,7 @@ def classify_device(name="", vendor="", mac=""):
 
 def totals():
     start_day = range_start_day()
+    history_source_sql = traffic_history_source_sql()
     ignore = ignored_ips()
     ignore_clause = ""
     params = [start_day]
@@ -1501,7 +1518,7 @@ def totals():
                 SUM(downloaded_mb) AS downloaded_mb,
                 SUM(uploaded_mb) AS uploaded_mb,
                 SUM(total_mb) AS total_mb
-            FROM traffic_intervals
+            FROM ({history_source_sql})
             WHERE day >= ?
             GROUP BY ip
         )
@@ -2773,16 +2790,17 @@ def api_dashboard_summary():
     """Refresh accumulated dashboard counters from measured history."""
     start_day = range_start_day()
     snapshot = live_snapshot.summary()
+    history_source_sql = traffic_history_source_sql()
     traffic_rows = cached_query(
         f"dashboard_summary_traffic:{start_day}",
         30,
-        """
+        f"""
         SELECT
             SUM(downloaded_mb) AS downloaded,
             SUM(uploaded_mb) AS uploaded,
             SUM(total_mb) AS total,
             COUNT(*) AS rows_seen
-        FROM traffic_intervals
+        FROM ({history_source_sql})
         WHERE day>=?
         """,
         (start_day,),
@@ -2818,11 +2836,11 @@ def api_dashboard_summary():
     active_rows = cached_query(
         f"dashboard_summary_active:{start_day}",
         30,
-        """
+        f"""
         SELECT COUNT(*) AS active
         FROM (
             SELECT ip
-            FROM traffic_intervals
+            FROM ({history_source_sql})
             WHERE day>=?
             GROUP BY ip
         )
@@ -2980,17 +2998,18 @@ def dashboard_top_clients(limit=5):
     start_day = range_start_day()
     today_day = today()
     if not rows:
+        history_source_sql = traffic_history_source_sql()
         rows = list(
             cached_query(
                 f"dashboard_top_clients:{start_day}:{today_day}:{limit}",
                 20,
-                """
+                f"""
                 WITH usage AS (
                     SELECT
                         ip,
                         SUM(total_mb) AS total_mb,
                         SUM(CASE WHEN day=? THEN total_mb ELSE 0 END) AS today_mb
-                    FROM traffic_intervals
+                    FROM ({history_source_sql})
                     WHERE day>=?
                     GROUP BY ip
                 )
@@ -3895,7 +3914,7 @@ def devices():
         fd_is_online = device_age_seconds(first_device["last_seen"]) is not None and device_age_seconds(first_device["last_seen"]) <= 300
         fd_alerts = query("SELECT COUNT(*) AS total FROM ids_events WHERE src_ip=? OR dest_ip=?", (first_device["ip"], first_device["ip"]))
         fd_dns = query("SELECT COUNT(*) AS total FROM dns_querylog WHERE client=?", (first_device["ip"],))
-        fd_traffic = query("SELECT COALESCE(SUM(total_mb), 0) AS total FROM traffic_intervals WHERE ip=? AND day>=?", (first_device["ip"], range_start_day()))
+        fd_traffic = query(f"SELECT COALESCE(SUM(total_mb), 0) AS total FROM ({traffic_history_source_sql()}) WHERE ip=? AND day>=?", (first_device["ip"], range_start_day()))
         fd_alert_count = int(fd_alerts[0]["total"] or 0) if fd_alerts else 0
         fd_dns_count = int(fd_dns[0]["total"] or 0) if fd_dns else 0
         fd_traffic_total = fmt_mb(fd_traffic[0]["total"] if fd_traffic else 0)
@@ -4122,9 +4141,9 @@ def device_drawer_payload(ip, period="1d", history_type=""):
             raise
 
     traffic = optional_query(
-        """
+        f"""
         SELECT day, COALESCE(SUM(downloaded_mb), 0) AS down_mb, COALESCE(SUM(uploaded_mb), 0) AS up_mb, COALESCE(SUM(total_mb), 0) AS total_mb
-        FROM traffic_intervals
+        FROM ({traffic_history_source_sql()})
         WHERE ip=? AND day>=?
         GROUP BY day
         ORDER BY day
@@ -5199,17 +5218,7 @@ def api_history():
         since_clause = "day >= date('now','localtime','-30 days')"
         history_table = "traffic_history_union"
 
-    history_source_sql = """
-        SELECT ip, downloaded_mb, uploaded_mb, total_mb, day, ts, substr(ts, 1, 13) || ':00' AS hour
-        FROM traffic_intervals
-        UNION ALL
-        SELECT ip, downloaded_mb, uploaded_mb, total_mb, day, hour AS ts, hour
-        FROM traffic_hourly_rollups
-        WHERE hour NOT IN (
-            SELECT DISTINCT substr(ts, 1, 13) || ':00'
-            FROM traffic_intervals
-        )
-    """
+    history_source_sql = traffic_history_source_sql()
 
     if ip:
         rows = cached_query(
@@ -5525,6 +5534,7 @@ def api_traffic_rows():
     }
     sort_col = sort_map.get(sort, "total_mb")
     direction_sql = "ASC" if direction == "asc" else "DESC"
+    history_source_sql = traffic_history_source_sql()
     rows = cached_query(
         f"traffic_rows:{start_day}:{mode}:{sort}:{direction}:{limit}:{offset}",
         HEAVY_PAGE_CACHE_SECONDS,
@@ -5540,7 +5550,7 @@ def api_traffic_rows():
                 MAX(live_bps) AS live_bps,
                 MAX(day) AS day,
                 MAX(ts) AS ts
-            FROM traffic_intervals
+            FROM ({history_source_sql})
             WHERE day>=?
             GROUP BY ip
         )
@@ -5646,7 +5656,7 @@ def applications():
     total_traffic_rows = cached_query(
         f"applications_total_traffic:{start_day}",
         HEAVY_PAGE_CACHE_SECONDS,
-        "SELECT COALESCE(SUM(total_mb), 0) AS total, COALESCE(SUM(downloaded_mb), 0) AS down, COALESCE(SUM(uploaded_mb), 0) AS up FROM traffic_intervals WHERE day>=?",
+        f"SELECT COALESCE(SUM(total_mb), 0) AS total, COALESCE(SUM(downloaded_mb), 0) AS down, COALESCE(SUM(uploaded_mb), 0) AS up FROM ({traffic_history_source_sql()}) WHERE day>=?",
         (start_day,),
     )
     attributed_total = float(total_usage_rows[0]["total"] or 0) if total_usage_rows else 0.0
@@ -9536,7 +9546,7 @@ def export_csv(kind):
 
     if kind == "traffic":
         rows = query(
-            """
+            f"""
             SELECT
                 ip,
                 MAX(name) AS name,
@@ -9547,7 +9557,7 @@ def export_csv(kind):
                 MAX(live_bps) AS live_bps,
                 day,
                 MAX(ts) AS ts
-            FROM traffic_intervals
+            FROM ({traffic_history_source_sql()})
             WHERE day>=?
             GROUP BY day, ip
             ORDER BY ts DESC

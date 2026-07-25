@@ -19,6 +19,7 @@ from services.reporting_service import (
     list_applications,
     list_domains,
     parse_period,
+    traffic_history_source_sql,
 )
 from services.report_summary_service import build_rule_based_findings
 
@@ -267,7 +268,7 @@ def reporting_overview(filters, start_time, end_time, traffic):
     active_devices_sql = (
         f"SELECT COUNT(DISTINCT ip) FROM estimated_app_traffic WHERE {' AND '.join(app_where)}"
         if application else
-        f"SELECT COUNT(DISTINCT ip) FROM traffic_intervals WHERE {' AND '.join(traffic_where)}"
+        f"SELECT COUNT(DISTINCT ip) FROM ({traffic_history_source_sql()}) WHERE {' AND '.join(traffic_where)}"
     )
     active_devices = _scalar(active_devices_sql, tuple(app_params if application else traffic_params))
 

@@ -29,6 +29,22 @@ DEFAULT_SITE_APPLICATION_MAPPINGS = [
 ]
 
 
+def traffic_history_source_sql():
+    return """
+        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts,
+               substr(ts, 1, 13) || ':00' AS hour
+        FROM traffic_intervals
+        UNION ALL
+        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, avg_live_bps AS live_bps,
+               day, hour AS ts, hour
+        FROM traffic_hourly_rollups
+        WHERE hour NOT IN (
+            SELECT DISTINCT substr(ts, 1, 13) || ':00'
+            FROM traffic_intervals
+        )
+    """
+
+
 def load_category_config():
     try:
         mtime = CATEGORY_CONFIG_PATH.stat().st_mtime
@@ -305,7 +321,7 @@ def unclassified_device_summary(start_time, end_time, filters=None, limit=8):
             SUM(t.uploaded_mb) AS uploaded_mb,
             COALESCE(a.classified_mb, 0) AS classified_mb,
             MAX(t.ts) AS last_seen
-        FROM traffic_intervals t
+        FROM ({traffic_history_source_sql()}) t
         LEFT JOIN (
             SELECT ip, MAX(name) AS name, MAX(mac) AS mac
             FROM devices
@@ -373,7 +389,7 @@ def add_site_device_mappings(buckets, start_time, end_time, device_ids=None, app
                    SUM(uploaded_mb) AS uploaded_mb,
                    SUM(total_mb) AS total_mb,
                    COUNT(DISTINCT ip) AS devices
-            FROM traffic_intervals
+            FROM ({traffic_history_source_sql()})
             WHERE ts BETWEEN ? AND ? AND ip=?
             """,
             (start_time, end_time, ip),
