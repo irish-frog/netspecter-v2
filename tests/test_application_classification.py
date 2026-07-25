@@ -10,7 +10,7 @@ from services.ai_attribution_service import ai_attribution_summary, ai_service_f
 from services.report_pdf_service import reporting_pdf_response
 from services.report_export_service import structured_report_text
 from netspecter_config import DEFAULT_CONFIG, appliance_ip_from_host, apply_appliance_ip_urls
-from live_packet_collector import monitored_app_for_domain
+from live_packet_collector import app_from_domain, monitored_app_for_domain
 
 
 def category_for(app_name):
@@ -337,6 +337,27 @@ def test_common_mobile_pc_unknown_domains_are_built_in(monkeypatch):
     assert classify_application(domain="a68.dscg4.akamai.net")["category"] == "Cloud Infrastructure"
     assert classify_application(domain="foo.googleusercontent.com")["category"] == "Cloud Infrastructure"
     assert classify_application(domain="foo.gvt1.com")["category"] == "Software Updates"
+
+
+def test_common_unknown_domains_are_monitored_for_byte_attribution():
+    assert monitored_app_for_domain("e7a37f2d.hvcdn.to", DEFAULT_CONFIG) == "HVCDN"
+    assert monitored_app_for_domain("dit.whatsapp.net", DEFAULT_CONFIG) == "WhatsApp"
+    assert monitored_app_for_domain("gateway.icloud.com", DEFAULT_CONFIG) == "iCloud Drive"
+    assert monitored_app_for_domain("bag.itunes.apple.com", DEFAULT_CONFIG) == "Apple Update"
+    assert monitored_app_for_domain("mon16-normal-alisg.tiktokv.com", DEFAULT_CONFIG) == "TikTok"
+    assert monitored_app_for_domain("edge-mqtt.facebook.com", DEFAULT_CONFIG) == "Facebook"
+    assert monitored_app_for_domain("test-gateway.instagram.com", DEFAULT_CONFIG) == "Instagram"
+    assert monitored_app_for_domain("a68.dscg4.akamai.net", DEFAULT_CONFIG) == "Akamai CDN"
+    assert monitored_app_for_domain("ccp-lh.googleusercontent.com", DEFAULT_CONFIG) == "Google Cloud"
+    assert monitored_app_for_domain("foo.gvt1.com", DEFAULT_CONFIG) == "Android Update"
+
+
+def test_common_unknown_domains_get_specific_dns_app_names():
+    assert app_from_domain("e7a37f2d.hvcdn.to") == "HVCDN"
+    assert app_from_domain("amplitude.life360.com") == "Life360"
+    assert app_from_domain("api.locketcamera.com") == "Locket"
+    assert app_from_domain("gateway.icloud.com") == "iCloud Drive"
+    assert app_from_domain("foo.gvt1.com") == "Android Update"
 
 
 def test_saved_signatures_do_not_disable_builtin_category_signatures(monkeypatch):

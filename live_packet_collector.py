@@ -287,23 +287,26 @@ last_dns_map_refresh = 0.0
 oui_vendor_cache = None
 GEOLOCATION_REFRESH_SECONDS = 3600
 DNS_MAP_REFRESH_SECONDS = 300
-DNS_MAP_DOMAIN_LIMIT = 50
-DNS_MAP_IP_LIMIT = 120
+DNS_MAP_DOMAIN_LIMIT = 80
+DNS_MAP_IP_LIMIT = 180
 DNS_MAP_GEO_LOOKUPS_PER_RUN = 3
-ESTIMATED_APP_NFT_TARGET_LIMIT = 100
+ESTIMATED_APP_NFT_TARGET_LIMIT = 200
 NFT_SIGNATURE_REFRESH_SECONDS = 900
 ADGUARD_CLIENT_REFRESH_SECONDS = 300
 UNIFI_CLIENT_REFRESH_SECONDS = 1800
 MICROSOFT365_MAPPING_CACHE = {"ts": 0.0, "enabled": None, "items": []}
 MONITORED_APP_DOMAIN_KEYS = {
     "Nextcloud": ("nextcloud.com", "owncloud.com"),
-    "YouTube": ("googlevideo.com",),
-    "Netflix": ("nflxvideo.net", "netflix.com"),
-    "TikTok": ("tiktokcdn.com", "tiktokv.com", "byteoversea.com"),
-    "Facebook": ("fbcdn.net", "facebook.com"),
+    "YouTube": ("googlevideo.com", "youtube.com", "ytimg.com", "youtubei.googleapis.com"),
+    "Netflix": ("nflxvideo.net", "netflix.com", "nflxso.net", "nflxext.com"),
+    "TikTok": ("tiktokcdn.com", "tiktokv.com", "byteoversea.com", "ibytedtos.com"),
+    "Facebook": ("fbcdn.net", "facebook.com", "facebook.net"),
     "Instagram": ("cdninstagram.com", "instagram.com"),
     "WhatsApp": ("whatsapp.net", "whatsapp.com"),
+    "Life360": ("life360.com",),
+    "Locket": ("locketcamera.com",),
     "OneDrive": ("onedrive.com", "onedrive.live.com", "storage.live.com"),
+    "iCloud Drive": ("icloud.com", "icloud-content.com"),
     "SharePoint Documents": ("sharepoint.com", "sharepoint-df.com"),
     "Outlook": ("outlook.office.com", "outlook.office365.com", "outlook.live.com", "outlook.com", "protection.outlook.com"),
     "Microsoft Teams": ("teams.microsoft.com", "teams.live.com", "trouter.teams.microsoft.com", "trouter.io", "skype.com", "lync.com"),
@@ -325,14 +328,21 @@ MONITORED_APP_DOMAIN_KEYS = {
         "download.microsoft.com",
         "officecdn.microsoft.com",
     ),
-    "Spotify": ("spotify.com", "scdn.co", "spotifycdn.com"),
+    "Apple Update": ("apple.com", "cdn-apple.com", "mzstatic.com", "itunes.apple.com", "gdmf.apple.com"),
+    "Android Update": ("android.com", "gvt1.com", "gvt2.com"),
+    "Spotify": ("spotify.com", "scdn.co", "spotifycdn.com", "audio-ak-spotify-com.akamaized.net"),
     "Steam": ("steamserver.net", "steamcontent.com", "steampowered.com"),
     "Twitter / X": ("twitter.com", "twimg.com", "x.com"),
     "Snapchat": ("snapchat.com", "sc-cdn.net"),
     "Discord": ("discord.com", "discordapp.com", "discordcdn.com"),
     "Twitch": ("twitch.tv", "ttvnw.net"),
-    "Disney+": ("disneyplus.com", "dssott.com", "bamgrid.com"),
-    "Prime Video": ("primevideo.com", "aiv-cdn.net"),
+    "Disney+": ("disneyplus.com", "disney-plus.net", "dssott.com", "bamgrid.com"),
+    "Prime Video": ("primevideo.com", "aiv-cdn.net", "media-amazon.com"),
+    "HVCDN": ("hvcdn.to",),
+    "Xiaomi TV Services": ("tv.global.mi.com", "mitv.tracking.miui.com", "androidtvwatsonfe-pa.googleapis.com"),
+    "Akamai CDN": ("akamai.net", "akamaihd.net", "akamaized.net"),
+    "Cloudflare CDN": ("cloudflare.net", "cloudflare.com"),
+    "Google Cloud": ("googleapis.com", "gstatic.com", "googleusercontent.com", "app-measurement.com", "firebaseio.com", "firebaseapp.com"),
     "ChatGPT": ("chatgpt.com", "chat.openai.com"),
     "OpenAI API": ("api.openai.com", "platform.openai.com"),
     "OpenAI Authentication": ("auth.openai.com",),
@@ -1055,9 +1065,9 @@ def app_from_domain(domain):
 
     mapping = {
         "YouTube": ["youtube", "googlevideo", "ytimg"],
-        "TikTok": ["tiktok", "tiktokcdn", "tiktokv", "byteoversea", "bytedance"],
+        "TikTok": ["tiktok", "tiktokcdn", "tiktokv", "byteoversea", "bytedance", "ibytedtos"],
         "Netflix": ["netflix", "nflx", "nrdp"],
-        "Spotify": ["spotify", "spclient"],
+        "Spotify": ["spotify", "spclient", "scdn.co"],
         "Steam": ["steam", "steampowered", "steamserver"],
         "Roblox": ["roblox"],
         "ChatGPT": ["chatgpt", "chat.openai"],
@@ -1073,9 +1083,11 @@ def app_from_domain(domain):
         "Perplexity": ["perplexity.ai"],
         "DeepSeek": ["deepseek"],
         "GitHub": ["github"],
-        "Facebook": ["facebook", "fbcdn", "messenger"],
+        "Facebook": ["facebook", "fbcdn", "facebook.net", "messenger"],
         "Instagram": ["instagram", "cdninstagram"],
         "WhatsApp": ["whatsapp"],
+        "Life360": ["life360"],
+        "Locket": ["locketcamera"],
         "Twitter / X": ["twitter", "twimg"],
         "Snapchat": ["snapchat", "sc-cdn"],
         "Discord": ["discord", "discordapp", "discordcdn"],
@@ -1092,6 +1104,8 @@ def app_from_domain(domain):
         "Microsoft 365": ["microsoft365", "office.com", "office365", "office.net", "officeapps.live"],
         "Azure": ["azure.com", "azurewebsites", "blob.core.windows", "queue.core.windows", "table.core.windows", "file.core.windows"],
         "Windows Update": ["windowsupdate", "update.microsoft", "delivery.mp.microsoft", "emdl.ws.microsoft", "dsp.mp.microsoft", "download.microsoft", "officecdn"],
+        "Apple Update": ["cdn-apple", "mzstatic", "itunes.apple", "gdmf.apple"],
+        "Android Update": ["android.com", "gvt1", "gvt2"],
         "Microsoft CDN": ["msedge", "azureedge", "akamaized"],
         "Microsoft Cloud Services": ["microsoft", "msftconnecttest"],
         "Dell": ["dell.com", "dellcdn", "dellsupport", "delltechnologies"],
@@ -1107,11 +1121,16 @@ def app_from_domain(domain):
         "Realtek": ["realtek.com"],
         "Broadcom": ["broadcom.com"],
         "Qualcomm": ["qualcomm.com"],
-        "Apple": ["apple", "icloud", "aaplimg"],
+        "iCloud Drive": ["icloud", "icloud-content"],
+        "Apple": ["apple", "aaplimg"],
+        "Google Cloud": ["googleusercontent", "app-measurement", "firebaseio", "firebaseapp"],
         "Google": ["google", "gstatic", "googleapis", "androidtvchannels"],
         "Plex": ["plex"],
+        "HVCDN": ["hvcdn"],
+        "Xiaomi TV Services": ["tv.global.mi.com", "androidtvwatsonfe", "mitv.tracking.miui"],
         "Samsung": ["samsung"],
         "Cloudflare": ["cloudflare"],
+        "Akamai CDN": ["akamai", "akamaihd"],
         "Amazon": ["amazon", "aws", "cloudfront"],
         "Mozilla": ["mozilla", "firefox"],
         "Gaming": ["xbox", "playstation", "epicgames", "battle.net"],
