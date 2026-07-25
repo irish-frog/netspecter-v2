@@ -241,6 +241,19 @@ def test_signature_domain_match_sets_single_primary_category(monkeypatch):
     assert result["confidence"] > 0
 
 
+def test_common_streaming_social_and_tv_domains_are_built_in(monkeypatch):
+    monkeypatch.setattr(application_classification_service, "site_domain_mappings", lambda: [])
+
+    assert classify_application(domain="e7a37f2d.hvcdn.to")["category"] == "Video Streaming"
+    assert classify_application(domain="za.tv.global.mi.com")["category"] == "Video Streaming"
+    assert classify_application(domain="androidtvwatsonfe-pa.googleapis.com")["category"] == "Video Streaming"
+    assert classify_application(domain="mon16-normal-alisg.tiktokv.com")["category"] == "Social Media"
+    assert classify_application(domain="api.locketcamera.com")["category"] == "Social Media"
+    assert classify_application(domain="amplitude.life360.com")["category"] == "Communication & Collaboration"
+    assert classify_application(domain="app-measurement.com")["category"] == "Cloud Infrastructure"
+    assert classify_application(domain="haproxy-ingress-bumblebee.life360.com.cdn.cloudflare.net")["category"] == "Cloud Infrastructure"
+
+
 def test_signature_provider_match_supports_asn(monkeypatch):
     monkeypatch.setattr(
         application_classification_service,

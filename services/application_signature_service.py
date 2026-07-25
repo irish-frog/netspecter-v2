@@ -1,6 +1,7 @@
 import fnmatch
 import ipaddress
 import json
+import hashlib
 from datetime import datetime, timedelta
 
 from netspecter_db import query, run_sql
@@ -43,7 +44,7 @@ def classify_metadata(signatures, app_name="", domain="", sni="", destination_ip
 
 
 def classify_metadata_cached(signatures, app_name="", domain="", sni="", destination_ip="", asn="", provider="", protocol="", port=None, ttl_hours=168):
-    cache_key = _cache_key(app_name, domain, sni, destination_ip, asn, provider, protocol, port)
+    cache_key = _cache_key(app_name, domain, sni, destination_ip, asn, provider, protocol, port, signatures)
     cached = _cached_classification(cache_key)
     if cached:
         return cached
@@ -238,7 +239,7 @@ def _store_classification(cache_key, result, domain, sni, destination_ip, asn, p
     )
 
 
-def _cache_key(app_name, domain, sni, destination_ip, asn, provider, protocol, port):
+def _cache_key(app_name, domain, sni, destination_ip, asn, provider, protocol, port, signatures=None):
     parts = [
         str(app_name or "").strip().lower(),
         _normalise_host(domain),
@@ -249,7 +250,28 @@ def _cache_key(app_name, domain, sni, destination_ip, asn, provider, protocol, p
         str(protocol or "").strip().lower(),
         str(_int_or_none(port) or ""),
     ]
+    if signatures is not None:
+        parts.append(_signature_fingerprint(signatures))
     return "|".join(parts)
+
+
+def _signature_fingerprint(signatures):
+    payload = [
+        {
+            "app": item.get("app"),
+            "category": item.get("category"),
+            "domains": item.get("domains"),
+            "asn": item.get("asn"),
+            "destination_ips": item.get("destination_ips"),
+            "ports": item.get("ports"),
+            "protocols": item.get("protocols"),
+            "priority": item.get("priority"),
+            "confidence": item.get("confidence"),
+        }
+        for item in signatures
+    ]
+    text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
 
 
 def _int_or_none(value):

@@ -29,7 +29,7 @@
       "display_order": 30,
       "color": "#5ba8ff",
       "applications": ["WhatsApp", "Discord", "Slack", "Telegram", "Signal", "Microsoft Teams", "Teams", "Zoom", "Google Meet", "Meet", "Webex", "Cisco Webex", "TeamViewer Meeting"],
-      "domains": ["*.whatsapp.com", "*.whatsapp.net", "*.discord.com", "*.discordapp.com", "*.discordcdn.com", "*.slack.com", "*.telegram.org", "*.signal.org", "*.teams.microsoft.com", "*.teams.live.com", "*.trouter.io", "*.skype.com", "*.lync.com", "*.zoom.us", "*.meet.google.com", "*.webex.com", "*.teamviewer.com"]
+      "domains": ["*.whatsapp.com", "*.whatsapp.net", "*.discord.com", "*.discordapp.com", "*.discordcdn.com", "*.slack.com", "*.telegram.org", "*.signal.org", "*.teams.microsoft.com", "*.teams.live.com", "*.trouter.io", "*.skype.com", "*.lync.com", "*.zoom.us", "*.meet.google.com", "*.webex.com", "*.teamviewer.com", "*.life360.com"]
     },
     {
       "name": "Office & Productivity",
@@ -101,7 +101,7 @@
       "display_order": 70,
       "color": "#f97316",
       "applications": ["Facebook", "Instagram", "TikTok", "X", "Twitter / X", "Twitter", "Reddit", "Pinterest", "Threads", "LinkedIn", "Snapchat"],
-      "domains": ["*.facebook.com", "*.fbcdn.net", "*.instagram.com", "*.cdninstagram.com", "*.tiktok.com", "*.tiktokcdn.com", "*.x.com", "*.twitter.com", "*.reddit.com", "*.pinterest.com", "*.threads.net", "*.linkedin.com", "*.snapchat.com"]
+      "domains": ["*.facebook.com", "*.fbcdn.net", "*.instagram.com", "*.cdninstagram.com", "*.tiktok.com", "*.tiktokv.com", "*.tiktokcdn.com", "*.locketcamera.com", "*.x.com", "*.twitter.com", "*.reddit.com", "*.pinterest.com", "*.threads.net", "*.linkedin.com", "*.snapchat.com"]
     },
     {
       "name": "Video Streaming",
@@ -110,8 +110,8 @@
       "icon": "film",
       "display_order": 80,
       "color": "#ef4444",
-      "applications": ["Netflix", "YouTube", "Plex", "Disney+", "Disney Plus", "Prime Video", "Amazon Prime Video", "Twitch", "Vimeo", "Showmax", "Apple TV+"],
-      "domains": ["*.netflix.com", "*.nflxvideo.net", "*.youtube.com", "*.googlevideo.com", "*.ytimg.com", "*.plex.tv", "*.disneyplus.com", "*.primevideo.com", "*.twitch.tv", "*.ttvnw.net", "*.vimeo.com", "*.showmax.com", "*.tv.apple.com"]
+      "applications": ["Netflix", "YouTube", "Plex", "Disney+", "Disney Plus", "Prime Video", "Amazon Prime Video", "Twitch", "Vimeo", "Showmax", "Apple TV+", "HVCDN", "Xiaomi TV Services", "Android TV"],
+      "domains": ["*.netflix.com", "*.nflxvideo.net", "*.youtube.com", "*.googlevideo.com", "*.ytimg.com", "*.hvcdn.to", "*.tv.global.mi.com", "androidtvwatsonfe-pa.googleapis.com", "ccp-lh.googleusercontent.com", "*.plex.tv", "*.disneyplus.com", "*.primevideo.com", "*.twitch.tv", "*.ttvnw.net", "*.vimeo.com", "*.showmax.com", "*.tv.apple.com"]
     },
     {
       "name": "Music Streaming",
@@ -151,7 +151,7 @@
       "display_order": 120,
       "color": "#06b6d4",
       "applications": ["Microsoft Azure", "Azure", "AWS", "Amazon Web Services", "Google Cloud", "GCP", "Oracle Cloud", "DigitalOcean", "Cloudflare", "Akamai", "Fastly"],
-      "domains": ["*.azure.com", "*.azurewebsites.net", "*.azureedge.net", "*.blob.core.windows.net", "*.queue.core.windows.net", "*.table.core.windows.net", "*.file.core.windows.net", "*.amazonaws.com", "*.aws.amazon.com", "cloud.google.com", "*.cloud.google.com", "*.googleapis.com", "*.oraclecloud.com", "*.digitalocean.com", "*.cloudflare.com", "*.akamai.net", "*.fastly.net"]
+      "domains": ["*.azure.com", "*.azurewebsites.net", "*.azureedge.net", "*.blob.core.windows.net", "*.queue.core.windows.net", "*.table.core.windows.net", "*.file.core.windows.net", "*.amazonaws.com", "*.aws.amazon.com", "cloud.google.com", "*.cloud.google.com", "*.googleapis.com", "*.gstatic.com", "clients3.google.com", "connectivitycheck.gstatic.com", "app-measurement.com", "firebaselogging-pa.googleapis.com", "*.oraclecloud.com", "*.digitalocean.com", "*.cloudflare.com", "*.cloudflare.net", "*.akamai.net", "*.fastly.net"]
     },
     {
       "name": "Hardware Vendor Services",
@@ -171,7 +171,7 @@
       "display_order": 125,
       "color": "#60a5fa",
       "applications": ["Microsoft CDN", "Cloudflare CDN", "Akamai CDN", "Fastly CDN", "CDN"],
-      "domains": ["*.msedge.net", "*.azureedge.net", "*.akamaized.net", "*.cloudfront.net", "*.akamaihd.net", "*.fastly.net"]
+      "domains": ["*.msedge.net", "*.azureedge.net", "*.akamaized.net", "*.cloudfront.net", "*.akamaihd.net", "*.akamai.net", "*.cloudflare.net", "*.fastly.net"]
     },
     {
       "name": "Microsoft Cloud Services",
