@@ -5279,6 +5279,9 @@ def api_history():
 @app.route("/history")
 def history():
     ip = request.args.get("ip", "").strip()[:80]
+    selected_period = request.args.get("period", "1h").strip().lower()
+    if selected_period not in {"1h", "24h", "7d", "30d", "60d"}:
+        selected_period = "1h"
 
     title = "Network History"
     subtitle = "Network-wide traffic history"
@@ -5311,6 +5314,7 @@ def history():
     </div>
     <div class="ns-chart-panel">
       <canvas id="historyChart" aria-label="Traffic history chart" role="img"></canvas>
+      <div id="historyMeta" class="ns-polish-subtle" style="margin-top:10px;"></div>
       <div id="historyEmpty" class="ns-dashboard-empty" hidden>No traffic history for this selection yet.</div>
     </div>
   </section>
@@ -5328,6 +5332,13 @@ async function loadHistory(period) {{
   if (!res.ok) return;
 
   const data = await res.json();
+  const meta = document.getElementById("historyMeta");
+  if (meta) {{
+    const labels = Array.isArray(data.labels) ? data.labels : [];
+    const first = labels.length ? labels[0] : "-";
+    const last = labels.length ? labels[labels.length - 1] : "-";
+    meta.textContent = labels.length + " buckets loaded: " + first + " to " + last;
+  }}
 
   const ctx = document.getElementById("historyChart");
   if (!ctx) return;
@@ -5420,7 +5431,7 @@ async function loadHistory(period) {{
   }});
 }}
 
-loadHistory("1h");
+loadHistory("{h(selected_period)}");
 </script>
 """
     return shell(title, body, "History")
