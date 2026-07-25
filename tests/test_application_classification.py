@@ -321,6 +321,23 @@ def test_common_streaming_social_and_tv_domains_are_built_in(monkeypatch):
     assert classify_application(domain="haproxy-ingress-bumblebee.life360.com.cdn.cloudflare.net")["category"] == "Cloud Infrastructure"
 
 
+def test_common_mobile_pc_unknown_domains_are_built_in(monkeypatch):
+    monkeypatch.setattr(application_classification_service, "site_domain_mappings", lambda: [])
+
+    assert classify_application(domain="gateway.icloud.com")["category"] == "File Sharing & Storage"
+    assert classify_application(domain="bag.itunes.apple.com")["category"] == "Music Streaming"
+    assert classify_application(domain="ca.iadsdk.apple.com")["category"] == "Software Updates"
+    assert classify_application(domain="dit.whatsapp.net")["category"] == "Communication & Collaboration"
+    assert classify_application(domain="g.whatsapp.net")["category"] == "Communication & Collaboration"
+    assert classify_application(domain="edge-mqtt.facebook.com")["category"] == "Social Media"
+    assert classify_application(domain="z-p42-chat-e2ee-ig.facebook.com")["category"] == "Social Media"
+    assert classify_application(domain="gateway.instagram.com")["category"] == "Social Media"
+    assert classify_application(domain="test-gateway.instagram.com")["category"] == "Social Media"
+    assert classify_application(domain="a68.dscg4.akamai.net")["category"] == "Cloud Infrastructure"
+    assert classify_application(domain="foo.googleusercontent.com")["category"] == "Cloud Infrastructure"
+    assert classify_application(domain="foo.gvt1.com")["category"] == "Software Updates"
+
+
 def test_signature_provider_match_supports_asn(monkeypatch):
     monkeypatch.setattr(
         application_classification_service,

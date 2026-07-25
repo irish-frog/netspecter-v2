@@ -28,7 +28,7 @@
       "icon": "users",
       "display_order": 30,
       "color": "#5ba8ff",
-      "applications": ["WhatsApp", "Discord", "Slack", "Telegram", "Signal", "Microsoft Teams", "Teams", "Zoom", "Google Meet", "Meet", "Webex", "Cisco Webex", "TeamViewer Meeting"],
+      "applications": ["WhatsApp", "Discord", "Slack", "Telegram", "Signal", "Microsoft Teams", "Teams", "Zoom", "Google Meet", "Meet", "Webex", "Cisco Webex", "TeamViewer Meeting", "Life360"],
       "domains": ["*.whatsapp.com", "*.whatsapp.net", "*.discord.com", "*.discordapp.com", "*.discordcdn.com", "*.slack.com", "*.telegram.org", "*.signal.org", "*.teams.microsoft.com", "*.teams.live.com", "*.trouter.io", "*.skype.com", "*.lync.com", "*.zoom.us", "*.meet.google.com", "*.webex.com", "*.teamviewer.com", "*.life360.com"]
     },
     {
@@ -100,8 +100,8 @@
       "icon": "share-nodes",
       "display_order": 70,
       "color": "#f97316",
-      "applications": ["Facebook", "Instagram", "TikTok", "X", "Twitter / X", "Twitter", "Reddit", "Pinterest", "Threads", "LinkedIn", "Snapchat"],
-      "domains": ["*.facebook.com", "*.fbcdn.net", "*.instagram.com", "*.cdninstagram.com", "*.tiktok.com", "*.tiktokv.com", "*.tiktokcdn.com", "*.locketcamera.com", "*.x.com", "*.twitter.com", "*.reddit.com", "*.pinterest.com", "*.threads.net", "*.linkedin.com", "*.snapchat.com"]
+      "applications": ["Facebook", "Instagram", "TikTok", "Locket", "X", "Twitter / X", "Twitter", "Reddit", "Pinterest", "Threads", "LinkedIn", "Snapchat"],
+      "domains": ["*.facebook.com", "*.fbcdn.net", "*.facebook.net", "*.instagram.com", "*.cdninstagram.com", "*.tiktok.com", "*.tiktokv.com", "*.tiktokcdn.com", "*.byteoversea.com", "*.ibytedtos.com", "*.locketcamera.com", "*.x.com", "*.twitter.com", "*.reddit.com", "*.pinterest.com", "*.threads.net", "*.linkedin.com", "*.snapchat.com"]
     },
     {
       "name": "Video Streaming",
@@ -111,7 +111,7 @@
       "display_order": 80,
       "color": "#ef4444",
       "applications": ["Netflix", "YouTube", "Plex", "Disney+", "Disney Plus", "Prime Video", "Amazon Prime Video", "Twitch", "Vimeo", "Showmax", "Apple TV+", "HVCDN", "Xiaomi TV Services", "Android TV"],
-      "domains": ["*.netflix.com", "*.nflxvideo.net", "*.youtube.com", "*.googlevideo.com", "*.ytimg.com", "*.hvcdn.to", "*.tv.global.mi.com", "androidtvwatsonfe-pa.googleapis.com", "ccp-lh.googleusercontent.com", "*.plex.tv", "*.disneyplus.com", "*.primevideo.com", "*.twitch.tv", "*.ttvnw.net", "*.vimeo.com", "*.showmax.com", "*.tv.apple.com"]
+      "domains": ["*.netflix.com", "*.nflxvideo.net", "*.nflxso.net", "*.nflxext.com", "*.youtube.com", "*.googlevideo.com", "*.ytimg.com", "*.youtubei.googleapis.com", "*.hvcdn.to", "*.tv.global.mi.com", "androidtvwatsonfe-pa.googleapis.com", "ccp-lh.googleusercontent.com", "*.mitv.tracking.miui.com", "*.plex.tv", "*.disneyplus.com", "*.disney-plus.net", "*.primevideo.com", "*.media-amazon.com", "*.twitch.tv", "*.ttvnw.net", "*.vimeo.com", "*.showmax.com", "*.tv.apple.com"]
     },
     {
       "name": "Music Streaming",
@@ -121,7 +121,7 @@
       "display_order": 90,
       "color": "#22c55e",
       "applications": ["Spotify", "Apple Music", "Deezer", "Tidal", "YouTube Music", "SoundCloud"],
-      "domains": ["*.spotify.com", "*.scdn.co", "*.music.apple.com", "*.deezer.com", "*.tidal.com", "*.music.youtube.com", "*.soundcloud.com"]
+      "domains": ["*.spotify.com", "*.spotifycdn.com", "*.scdn.co", "audio-ak-spotify-com.akamaized.net", "*.music.apple.com", "*.itunes.apple.com", "*.deezer.com", "*.tidal.com", "*.music.youtube.com", "*.soundcloud.com"]
     },
     {
       "name": "Remote Access",
@@ -140,8 +140,8 @@
       "icon": "shield-halved",
       "display_order": 110,
       "color": "#10b981",
-      "applications": ["SentinelOne", "Sophos", "Microsoft Defender", "Defender", "CrowdStrike", "Bitdefender", "Malwarebytes", "ESET", "Cisco Umbrella", "Umbrella"],
-      "domains": ["*.sentinelone.net", "*.sophos.com", "*.crowdstrike.com", "*.bitdefender.com", "*.malwarebytes.com", "*.eset.com", "*.umbrella.com", "*.wdcp.microsoft.com", "*.wd.microsoft.com", "*.wdcpalt.microsoft.com", "*.defender.microsoft.com", "*.security.microsoft.com", "*.smartscreen.microsoft.com"]
+      "applications": ["SentinelOne", "Sophos", "Microsoft Defender", "Defender", "CrowdStrike", "Bitdefender", "Malwarebytes", "ESET", "Cisco Umbrella", "Umbrella", "Apple Security", "Google Safe Browsing"],
+      "domains": ["*.sentinelone.net", "*.sophos.com", "*.crowdstrike.com", "*.bitdefender.com", "*.malwarebytes.com", "*.eset.com", "*.umbrella.com", "*.wdcp.microsoft.com", "*.wd.microsoft.com", "*.wdcpalt.microsoft.com", "*.defender.microsoft.com", "*.security.microsoft.com", "*.smartscreen.microsoft.com", "*.safebrowsing.googleapis.com", "*.safebrowsing.google.com", "*.gdmf.apple.com", "*.ocsp.apple.com"]
     },
     {
       "name": "Cloud Infrastructure",
@@ -150,8 +150,8 @@
       "icon": "cloud",
       "display_order": 120,
       "color": "#06b6d4",
-      "applications": ["Microsoft Azure", "Azure", "AWS", "Amazon Web Services", "Google Cloud", "GCP", "Oracle Cloud", "DigitalOcean", "Cloudflare", "Akamai", "Fastly"],
-      "domains": ["*.azure.com", "*.azurewebsites.net", "*.azureedge.net", "*.blob.core.windows.net", "*.queue.core.windows.net", "*.table.core.windows.net", "*.file.core.windows.net", "*.amazonaws.com", "*.aws.amazon.com", "cloud.google.com", "*.cloud.google.com", "*.googleapis.com", "*.gstatic.com", "clients3.google.com", "connectivitycheck.gstatic.com", "app-measurement.com", "firebaselogging-pa.googleapis.com", "*.oraclecloud.com", "*.digitalocean.com", "*.cloudflare.com", "*.cloudflare.net", "*.akamai.net", "*.fastly.net"]
+      "applications": ["Microsoft Azure", "Azure", "AWS", "Amazon Web Services", "Google Cloud", "GCP", "Firebase", "Oracle Cloud", "DigitalOcean", "Cloudflare", "Akamai", "Fastly"],
+      "domains": ["*.azure.com", "*.azurewebsites.net", "*.azureedge.net", "*.blob.core.windows.net", "*.queue.core.windows.net", "*.table.core.windows.net", "*.file.core.windows.net", "*.amazonaws.com", "*.aws.amazon.com", "cloud.google.com", "*.cloud.google.com", "*.googleapis.com", "*.gstatic.com", "*.googleusercontent.com", "clients3.google.com", "clients4.google.com", "connectivitycheck.gstatic.com", "app-measurement.com", "*.app-measurement.com", "firebaselogging-pa.googleapis.com", "*.firebaseio.com", "*.firebaseapp.com", "*.oraclecloud.com", "*.digitalocean.com", "*.cloudflare.com", "*.cloudflare.net", "*.akamai.net", "*.fastly.net"]
     },
     {
       "name": "Hardware Vendor Services",
@@ -191,7 +191,7 @@
       "display_order": 130,
       "color": "#64748b",
       "applications": ["Windows Update", "Apple Update", "Android Update", "Linux Repositories", "Browser Updates", "Driver Downloads", "Firmware Updates", "Software Updates"],
-      "domains": ["*.windowsupdate.com", "*.windowsupdate.microsoft.com", "*.update.microsoft.com", "*.download.windowsupdate.com", "*.delivery.mp.microsoft.com", "*.dl.delivery.mp.microsoft.com", "*.emdl.ws.microsoft.com", "*.do.dsp.mp.microsoft.com", "*.tsfe.trafficshaping.dsp.mp.microsoft.com", "*.download.microsoft.com", "*.officecdn.microsoft.com", "*.apple.com", "*.mzstatic.com", "*.android.com", "*.ubuntu.com", "*.debian.org", "*.centos.org", "*.redhat.com", "*.mozilla.org", "*.googlechromelabs.github.io"]
+      "domains": ["*.windowsupdate.com", "*.windowsupdate.microsoft.com", "*.update.microsoft.com", "*.download.windowsupdate.com", "*.delivery.mp.microsoft.com", "*.dl.delivery.mp.microsoft.com", "*.emdl.ws.microsoft.com", "*.do.dsp.mp.microsoft.com", "*.tsfe.trafficshaping.dsp.mp.microsoft.com", "*.download.microsoft.com", "*.officecdn.microsoft.com", "*.apple.com", "*.icloud.com", "*.icloud-content.com", "*.cdn-apple.com", "*.mzstatic.com", "*.itunes.apple.com", "*.android.com", "*.gvt1.com", "*.gvt2.com", "*.ubuntu.com", "*.debian.org", "*.centos.org", "*.redhat.com", "*.mozilla.org", "*.googlechromelabs.github.io"]
     },
     {
       "name": "Downloads",
