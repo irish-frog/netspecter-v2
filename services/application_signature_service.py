@@ -1,8 +1,9 @@
 import fnmatch
 import ipaddress
 import json
+from datetime import datetime, timedelta
 
-from netspecter_db import query
+from netspecter_db import query, run_sql
 
 
 def load_signatures(category_rows):
@@ -39,6 +40,68 @@ def classify_metadata(signatures, app_name="", domain="", sni="", destination_ip
         "source": "Signature",
         "signature_id": signature.get("id"),
     }
+
+
+def classify_metadata_cached(signatures, app_name="", domain="", sni="", destination_ip="", asn="", provider="", protocol="", port=None, ttl_hours=168):
+    cache_key = _cache_key(app_name, domain, sni, destination_ip, asn, provider, protocol, port)
+    cached = _cached_classification(cache_key)
+    if cached:
+        return cached
+    result = classify_metadata(signatures, app_name, domain, sni, destination_ip, asn, provider, protocol, port)
+    if result:
+        _store_classification(cache_key, result, domain, sni, destination_ip, asn, provider, protocol, port, ttl_hours)
+    return result
+
+
+def upsert_unknown_review(domain="", sni="", destination_ip="", asn="", provider="", protocol="", port=None, traffic_mb=0.0, devices_seen=0, first_seen="", last_seen=""):
+    review_key = _cache_key("", domain, sni, destination_ip, asn, provider, protocol, port)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    run_sql(
+        """
+        INSERT INTO unknown_traffic_review (
+            review_key, domain, sni, destination_ip, asn, provider, protocol, port,
+            traffic_mb, devices_seen, first_seen, last_seen, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(review_key) DO UPDATE SET
+            traffic_mb=traffic_mb + excluded.traffic_mb,
+            devices_seen=MAX(devices_seen, excluded.devices_seen),
+            first_seen=COALESCE(MIN(first_seen, excluded.first_seen), excluded.first_seen),
+            last_seen=COALESCE(MAX(last_seen, excluded.last_seen), excluded.last_seen),
+            updated_at=excluded.updated_at
+        """,
+        (
+            review_key,
+            _normalise_host(domain),
+            _normalise_host(sni),
+            str(destination_ip or "").strip(),
+            str(asn or "").strip(),
+            str(provider or "").strip(),
+            str(protocol or "").strip().lower(),
+            _int_or_none(port),
+            float(traffic_mb or 0),
+            int(devices_seen or 0),
+            first_seen or now,
+            last_seen or now,
+            now,
+            now,
+        ),
+    )
+    return review_key
+
+
+def unknown_review_rows(limit=25):
+    return query(
+        """
+        SELECT domain, sni, destination_ip, asn, provider, protocol, port,
+               traffic_mb, devices_seen, first_seen, last_seen, status
+        FROM unknown_traffic_review
+        WHERE status IN ('new', 'review')
+        ORDER BY traffic_mb DESC, last_seen DESC
+        LIMIT ?
+        """,
+        (max(1, min(100, int(limit or 25))),),
+    )
 
 
 def _normalise_signature(row):
@@ -113,6 +176,87 @@ def _match_score(signature, app_name, domain, sni, destination_ip, asn, provider
     if port_number is not None and str(port_number) in {str(value) for value in signature["ports"]}:
         score += 10
     return score
+
+
+def _cached_classification(cache_key):
+    rows = query(
+        """
+        SELECT primary_app, primary_category, confidence, priority, matched_signature_id,
+               optional_tags_json, expires_at
+        FROM classification_cache
+        WHERE cache_key=?
+        """,
+        (cache_key,),
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    expires_at = str(_row_value(row, "expires_at") or "")
+    if expires_at and expires_at < datetime.now().strftime("%Y-%m-%d %H:%M:%S"):
+        return None
+    return {
+        "app": _row_value(row, "primary_app", "Unknown"),
+        "category": _row_value(row, "primary_category", "Unknown"),
+        "confidence": int(_row_value(row, "confidence", 0) or 0),
+        "priority": int(_row_value(row, "priority", 0) or 0),
+        "tags": _json_list(_row_value(row, "optional_tags_json", "[]")),
+        "source": "Classification cache",
+        "signature_id": _row_value(row, "matched_signature_id"),
+    }
+
+
+def _store_classification(cache_key, result, domain, sni, destination_ip, asn, provider, protocol, port, ttl_hours):
+    now = datetime.now()
+    expires = now + timedelta(hours=max(1, int(ttl_hours or 168)))
+    run_sql(
+        """
+        INSERT OR REPLACE INTO classification_cache (
+            cache_key, domain, sni, destination_ip, asn, provider, protocol, port,
+            primary_app, primary_category, confidence, priority, matched_signature_id,
+            optional_tags_json, classified_at, expires_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            cache_key,
+            _normalise_host(domain),
+            _normalise_host(sni),
+            str(destination_ip or "").strip(),
+            str(asn or "").strip(),
+            str(provider or "").strip(),
+            str(protocol or "").strip().lower(),
+            _int_or_none(port),
+            result["app"],
+            result["category"],
+            int(result["confidence"]),
+            int(result["priority"]),
+            result.get("signature_id"),
+            json.dumps(result.get("tags") or []),
+            now.strftime("%Y-%m-%d %H:%M:%S"),
+            expires.strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+
+
+def _cache_key(app_name, domain, sni, destination_ip, asn, provider, protocol, port):
+    parts = [
+        str(app_name or "").strip().lower(),
+        _normalise_host(domain),
+        _normalise_host(sni),
+        str(destination_ip or "").strip(),
+        str(asn or "").strip().lower(),
+        str(provider or "").strip().lower(),
+        str(protocol or "").strip().lower(),
+        str(_int_or_none(port) or ""),
+    ]
+    return "|".join(parts)
+
+
+def _int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _domain_matches(pattern, domain):

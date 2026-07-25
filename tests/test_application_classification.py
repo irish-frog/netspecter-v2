@@ -241,6 +241,52 @@ def test_signature_domain_match_sets_single_primary_category(monkeypatch):
     assert result["confidence"] > 0
 
 
+def test_signature_provider_match_supports_asn(monkeypatch):
+    monkeypatch.setattr(
+        application_classification_service,
+        "load_signatures",
+        lambda _categories: [{
+            "id": 1,
+            "app": "Cloudflare",
+            "category": "Infrastructure",
+            "domains": [],
+            "asn": ["Cloudflare"],
+            "destination_ips": [],
+            "ports": [],
+            "protocols": [],
+            "tags": ["CDN"],
+            "confidence": 65,
+            "priority": 80,
+        }],
+    )
+    result = classify_application(provider="Cloudflare CDN", protocol="tcp", port=443)
+
+    assert result["primary_app"] == "Cloudflare"
+    assert result["primary_category"] == "Infrastructure"
+    assert "CDN" in result["optional_tags"]
+
+
+def test_category_totals_equal_exclusive_classified_traffic_when_overlapping(monkeypatch):
+    app_rows = [
+        {"application_name": "YouTube", "downloaded_mb": 120.0, "uploaded_mb": 0.0, "total_mb": 120.0, "devices": 2},
+        {"application_name": "Instagram", "downloaded_mb": 80.0, "uploaded_mb": 0.0, "total_mb": 80.0, "devices": 2},
+    ]
+
+    def fake_query(sql, params=()):
+        if "FROM estimated_app_traffic" in sql and "GROUP BY category" in sql:
+            return app_rows
+        return []
+
+    monkeypatch.setattr(application_classification_service, "query", fake_query)
+    monkeypatch.setattr(application_classification_service, "site_application_mappings", lambda: [])
+    summary = category_summary("2026-07-13", "2026-07-14", total_network_mb=100.0)
+    primary_rows = [row for row in summary["rows"] if row["category"] != "Unclassified / Other Network Traffic"]
+
+    assert sum(row["total_mb"] for row in primary_rows) == summary["matched_application_mb"]
+    assert summary["classified_application_mb"] == summary["total_network_mb"]
+    assert summary["classification_coverage_pct"] == 100.0
+
+
 def test_ai_services_are_not_grouped_into_other(monkeypatch):
     apps = ["OneDrive", "Outlook", "Microsoft Teams", "Microsoft 365", "Sage", "Facebook", "Netflix", "Spotify"]
     app_rows = [

@@ -8697,6 +8697,9 @@ def reporting_page():
     category_donut_style = "conic-gradient(" + ", ".join(donut_segments or ["#24364c 0% 100%"]) + ")"
     coverage_pct = float(category_report.get("classification_coverage_pct") or 0)
     match_rate_pct = float(category_report.get("classification_match_rate_pct") or coverage_pct)
+    dns_total = int(overview.get("dns_total") or 0)
+    dns_blocked = int(overview.get("dns_blocked") or 0)
+    blocked_pct = round((dns_blocked / dns_total * 100), 1) if dns_total else 0.0
     overlap_note = ""
     if category_report.get("classification_is_overlapping"):
         overlap_note = f" Multi-tag/application matches are non-exclusive; match rate is {match_rate_pct:.1f}%."
@@ -8743,8 +8746,8 @@ def reporting_page():
   <div class="ns-report-summary-grid">
     <div><span>Total traffic</span><b>{h(fmt_mb(overview.get("total_mb") or 0))}</b></div>
     <div><span>Active devices</span><b>{int(overview.get("active_devices") or 0):,}</b></div>
-    <div><span>DNS queries</span><b>{int(overview.get("dns_total") or 0):,}</b></div>
-    <div><span>Blocked requests</span><b>{int(overview.get("dns_blocked") or 0):,}</b></div>
+    <div><span>DNS queries</span><b>{dns_total:,}</b></div>
+    <div><span>Blocked requests</span><b>{dns_blocked:,} ({blocked_pct:.1f}%)</b></div>
   </div>
 </section>
 """

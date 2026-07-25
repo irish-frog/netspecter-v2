@@ -7,7 +7,7 @@ from pathlib import Path
 from netspecter_paths import ROOT
 from netspecter_config import CONFIG_PATH, cfg
 from netspecter_db import query
-from services.application_signature_service import classify_metadata, load_signatures
+from services.application_signature_service import classify_metadata_cached, load_signatures, unknown_review_rows
 from services.microsoft365_endpoints_service import CACHE_PATH as M365_ENDPOINT_CACHE_PATH
 from services.microsoft365_endpoints_service import cached_microsoft365_domain_mappings
 
@@ -88,12 +88,17 @@ def categories():
     return [row for row in load_category_config().get("categories", []) if row.get("enabled", True)]
 
 
-def classify_application(application_name="", domain="", destination_ip=""):
-    signature_match = classify_metadata(
+def classify_application(application_name="", domain="", destination_ip="", sni="", asn="", provider="", protocol="", port=None):
+    signature_match = classify_metadata_cached(
         load_signatures(categories()),
         app_name=application_name,
         domain=domain,
+        sni=sni,
         destination_ip=destination_ip,
+        asn=asn,
+        provider=provider,
+        protocol=protocol,
+        port=port,
     )
     if signature_match:
         return {
@@ -346,6 +351,10 @@ def unclassified_device_summary(start_time, end_time, filters=None, limit=8):
         })
     output.sort(key=lambda row: row["unclassified_mb"], reverse=True)
     return output[:max(1, int(limit or 8))]
+
+
+def unknown_traffic_summary(limit=25):
+    return unknown_review_rows(limit)
 
 
 def add_site_device_mappings(buckets, start_time, end_time, device_ids=None, application_filter=""):
