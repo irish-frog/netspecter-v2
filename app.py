@@ -11317,8 +11317,17 @@ document.querySelectorAll('[data-copy-nearest]').forEach(function(button) {{
         category_names = [row["name"] for row in application_categories()]
         current_mappings = c.get("site_application_mappings") if isinstance(c.get("site_application_mappings"), list) else []
         current_domain_mappings = c.get("site_domain_mappings") if isinstance(c.get("site_domain_mappings"), list) else []
+        prefill_domain = request.args.get("domain", "").strip().lower().rstrip(".")
+        prefill_app = request.args.get("application", "").strip()
+        prefill_category = request.args.get("category", "").strip()
         rows = list(current_mappings) or [{}]
         domain_rows = list(current_domain_mappings) or [{}]
+        if prefill_domain and valid_domain_pattern(prefill_domain) and not any(str(row.get("domain") or "").lower() == prefill_domain for row in domain_rows):
+            domain_rows.insert(0, {
+                "application": prefill_app or prefill_domain,
+                "category": prefill_category if prefill_category in category_names else "",
+                "domain": prefill_domain,
+            })
 
         def category_options(selected_category=""):
             return "".join(
@@ -11364,6 +11373,7 @@ document.querySelectorAll('[data-copy-nearest]').forEach(function(button) {{
 <div class="panel settings settings-card">
   <h2>Application Mapping Settings</h2>
   <p class="sub">Map local IPs or domain patterns to an application category for client overview reporting.</p>
+  <p class="sub">For CDN hostnames, use a wildcard pattern such as <code>*.hvcdn.to</code> so future subdomains are classified too.</p>
   <form method="post">
     {csrf_input()}
     <input type="hidden" name="section" value="applications">
