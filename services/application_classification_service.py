@@ -28,6 +28,7 @@ DEFAULT_SITE_APPLICATION_MAPPINGS = [
     {"application": "Nextcloud", "category": "File Sharing & Storage", "ip": "192.168.99.4"},
 ]
 DEVICE_IDENTITY_HINTS = [
+    ("File Sharing & Storage", "Nextcloud", ("nextcloud", "owncloud")),
     ("Video Streaming", "Media Device", ("tv", "android tv", "xiaomi-tv", "chromecast", "roku", "mi box", "media")),
     ("Gaming", "Game Console", ("xbox", "playstation", "ps5", "ps4", "nintendo", "switch")),
     ("Software Updates", "Windows Device", ("windows pc", "windows-pc")),
@@ -326,6 +327,7 @@ def unclassified_device_summary(start_time, end_time, filters=None, limit=8):
         f"""
         SELECT
             COALESCE(o.name, d.name, t.name, t.ip) AS name,
+            COALESCE(o.device_type, d.device_type, '') AS device_type,
             t.ip,
             d.mac,
             SUM(t.total_mb) AS total_mb,
@@ -363,6 +365,8 @@ def unclassified_device_summary(start_time, end_time, filters=None, limit=8):
         total_mb = float(row["total_mb"] or 0)
         classified_mb = float(row["classified_mb"] or 0)
         if row["ip"] in mapped_by_ip:
+            classified_mb = max(classified_mb, total_mb)
+        elif device_identity_hint(row["name"], row["device_type"]):
             classified_mb = max(classified_mb, total_mb)
         unclassified_mb = max(0.0, total_mb - classified_mb)
         if unclassified_mb <= 0.01:

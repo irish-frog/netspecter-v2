@@ -3,7 +3,7 @@ import sqlite3
 
 from services import reporting_service
 from services import application_classification_service
-from services.application_classification_service import categories, category_summary, classify_application, display_application_name
+from services.application_classification_service import categories, category_summary, classify_application, display_application_name, unclassified_device_summary
 from services import ai_attribution_service
 from services.ai_attribution_service import ai_attribution_summary, ai_service_for_domain, dns_time_window_correlations
 from services.report_pdf_service import reporting_pdf_response
@@ -267,6 +267,30 @@ def test_device_identity_hint_classifies_media_device_unattributed_traffic(monke
     assert video["application_names"] == ["Media Device"]
     assert summary["classification_coverage_pct"] == 100.0
     assert summary["unclassified_application_mb"] == 0.0
+
+
+def test_unclassified_device_summary_respects_device_identity_hint(monkeypatch):
+    def fake_query(sql, params=()):
+        if "FROM estimated_app_traffic" in sql:
+            return [{"classified_mb": 0.0}]
+        if "FROM (" in sql and "traffic_intervals" in sql:
+            return [{
+                "name": "Xiaomi-TV-Box",
+                "device_type": "Unknown",
+                "ip": "192.168.99.50",
+                "mac": "",
+                "downloaded_mb": 18000.0,
+                "uploaded_mb": 500.0,
+                "total_mb": 18500.0,
+                "classified_mb": 0.0,
+                "last_seen": "2026-07-25 09:00:00",
+            }]
+        return []
+
+    monkeypatch.setattr(application_classification_service, "query", fake_query)
+    monkeypatch.setattr(application_classification_service, "site_application_mappings", lambda: [])
+
+    assert unclassified_device_summary("2026-07-20", "2026-07-25", {"device_ids": ["192.168.99.50"]}) == []
 
 
 def test_signature_domain_match_sets_single_primary_category(monkeypatch):
