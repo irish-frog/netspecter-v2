@@ -7,6 +7,7 @@ from pathlib import Path
 from netspecter_paths import ROOT
 from netspecter_config import CONFIG_PATH, cfg
 from netspecter_db import query
+from services.application_signature_service import classify_metadata, load_signatures
 from services.microsoft365_endpoints_service import CACHE_PATH as M365_ENDPOINT_CACHE_PATH
 from services.microsoft365_endpoints_service import cached_microsoft365_domain_mappings
 
@@ -88,6 +89,24 @@ def categories():
 
 
 def classify_application(application_name="", domain="", destination_ip=""):
+    signature_match = classify_metadata(
+        load_signatures(categories()),
+        app_name=application_name,
+        domain=domain,
+        destination_ip=destination_ip,
+    )
+    if signature_match:
+        return {
+            "category": signature_match["category"],
+            "usage_group": usage_group_for_category(signature_match["category"]),
+            "color": color_for_category(signature_match["category"]),
+            "source": signature_match["source"],
+            "primary_app": signature_match["app"],
+            "primary_category": signature_match["category"],
+            "confidence": signature_match["confidence"],
+            "optional_tags": signature_match["tags"],
+        }
+
     app_text = str(application_name or "").strip().lower()
     domain_text = normalise_domain(domain)
     destination_text = str(destination_ip or "").strip()
@@ -182,6 +201,7 @@ def category_summary(start_time, end_time, filters=None, limit=8, total_network_
     network_total = float(total_network_mb or 0)
     if network_total <= 0:
         network_total = classified_total
+    exclusive_classified_total = min(classified_total, network_total) if network_total else classified_total
     for bucket in buckets.values():
         application_names = [
             name for name, _total in sorted(
@@ -195,8 +215,8 @@ def category_summary(start_time, end_time, filters=None, limit=8, total_network_
             "applications": len(application_names),
             "application_names": application_names,
             "share_classified_pct": round((bucket["total_mb"] / classified_total * 100), 1) if classified_total else 0,
-            "share_total_pct": round((bucket["total_mb"] / network_total * 100), 1) if network_total else 0,
-            "share_pct": round((bucket["total_mb"] / network_total * 100), 1) if network_total else 0,
+            "share_total_pct": min(100.0, round((bucket["total_mb"] / network_total * 100), 1)) if network_total else 0,
+            "share_pct": min(100.0, round((bucket["total_mb"] / network_total * 100), 1)) if network_total else 0,
         })
     output.sort(key=lambda row: row["total_mb"], reverse=True)
     max_rows = max(1, int(limit or 8))
@@ -250,10 +270,82 @@ def category_summary(start_time, end_time, filters=None, limit=8, total_network_
     return {
         "rows": top,
         "total_network_mb": network_total,
-        "classified_application_mb": classified_total,
+        "classified_application_mb": exclusive_classified_total,
+        "matched_application_mb": classified_total,
         "unclassified_application_mb": unclassified_mb,
-        "classification_coverage_pct": round((classified_total / network_total * 100), 1) if network_total else 0,
+        "classification_coverage_pct": min(100.0, round((exclusive_classified_total / network_total * 100), 1)) if network_total else 0,
+        "classification_match_rate_pct": round((classified_total / network_total * 100), 1) if network_total else 0,
+        "classification_is_overlapping": bool(network_total and classified_total > network_total),
     }
+
+
+def unclassified_device_summary(start_time, end_time, filters=None, limit=8):
+    filters = filters or {}
+    where = ["t.ts BETWEEN ? AND ?"]
+    params = [start_time, end_time]
+    device_ids = _clean_list(filters.get("device_ids"))
+    if device_ids:
+        placeholders = ",".join(["?"] * len(device_ids))
+        where.append(f"t.ip IN ({placeholders})")
+        params.extend(device_ids)
+
+    rows = query(
+        f"""
+        SELECT
+            COALESCE(o.name, d.name, t.name, t.ip) AS name,
+            t.ip,
+            d.mac,
+            SUM(t.total_mb) AS total_mb,
+            SUM(t.downloaded_mb) AS downloaded_mb,
+            SUM(t.uploaded_mb) AS uploaded_mb,
+            COALESCE(a.classified_mb, 0) AS classified_mb,
+            MAX(t.ts) AS last_seen
+        FROM traffic_intervals t
+        LEFT JOIN (
+            SELECT ip, MAX(name) AS name, MAX(mac) AS mac
+            FROM devices
+            GROUP BY ip
+        ) d ON d.ip=t.ip
+        LEFT JOIN (
+            SELECT ip, MAX(name) AS name
+            FROM device_overrides
+            GROUP BY ip
+        ) o ON o.ip=t.ip
+        LEFT JOIN (
+            SELECT ip, SUM(total_mb) AS classified_mb
+            FROM estimated_app_traffic
+            WHERE ts BETWEEN ? AND ?
+            GROUP BY ip
+        ) a ON a.ip=t.ip
+        WHERE {' AND '.join(where)}
+        GROUP BY t.ip
+        ORDER BY total_mb DESC
+        """,
+        (start_time, end_time, *params),
+    )
+
+    mapped_by_ip = {row["ip"]: row for row in site_application_mappings()}
+    output = []
+    for row in rows:
+        total_mb = float(row["total_mb"] or 0)
+        classified_mb = float(row["classified_mb"] or 0)
+        if row["ip"] in mapped_by_ip:
+            classified_mb = max(classified_mb, total_mb)
+        unclassified_mb = max(0.0, total_mb - classified_mb)
+        if unclassified_mb <= 0.01:
+            continue
+        output.append({
+            "name": row["name"],
+            "ip": row["ip"],
+            "mac": row["mac"],
+            "total_mb": total_mb,
+            "classified_mb": classified_mb,
+            "unclassified_mb": unclassified_mb,
+            "unclassified_pct": round((unclassified_mb / total_mb * 100), 1) if total_mb else 0,
+            "last_seen": row["last_seen"],
+        })
+    output.sort(key=lambda row: row["unclassified_mb"], reverse=True)
+    return output[:max(1, int(limit or 8))]
 
 
 def add_site_device_mappings(buckets, start_time, end_time, device_ids=None, application_filter=""):
@@ -439,6 +531,16 @@ def classify_site_domain(domain):
 
 def category_for_existing_application(application_name):
     return classify_application(application_name)
+
+
+def usage_group_for_category(category_name):
+    category = next((row for row in categories() if row["name"] == category_name), None)
+    return category["usage_group"] if category else "Unknown"
+
+
+def color_for_category(category_name):
+    category = next((row for row in categories() if row["name"] == category_name), None)
+    return category["color"] if category else "#94a3b8"
 
 
 def classify_category_name(category_name):

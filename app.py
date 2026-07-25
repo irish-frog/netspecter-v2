@@ -8514,6 +8514,7 @@ def reporting_page():
     domain_options = report_context["domain_options"]
     category_report = report_context["category_report"]
     category_rows = report_context["category_rows"]
+    unclassified_devices = report_context.get("unclassified_devices") or []
     report_type_key = str(request.args.get("report_type") or "management").strip().lower()
     report_type_title = "Internet Report" if report_type_key == "internet" else "Management Overview Report"
     period_key = str(request.args.get("period") or report_context.get("period") or "30d").lower()
@@ -8583,6 +8584,23 @@ def reporting_page():
 """
         if not rows_html:
             rows_html = '<tr><td colspan="4">No application traffic recorded for this period.</td></tr>'
+        return rows_html
+
+    def unclassified_device_report_rows():
+        rows_html = ""
+        for index, row in enumerate((unclassified_devices or [])[:5], 1):
+            rows_html += f"""
+<tr>
+  <td>{index}</td>
+  <td>{h(row["name"] or row["ip"])}</td>
+  <td>{h(row["ip"] or "")}</td>
+  <td>{h(fmt_mb(row["unclassified_mb"] or 0))}</td>
+  <td>{h(fmt_mb(row["total_mb"] or 0))}</td>
+  <td>{h(row["unclassified_pct"] or 0)}%</td>
+</tr>
+"""
+        if not rows_html:
+            rows_html = '<tr><td colspan="6">No unclassified device traffic estimate for this period.</td></tr>'
         return rows_html
 
     def fmt_metric(value, suffix="", decimals=1):
@@ -8678,6 +8696,10 @@ def reporting_page():
             break
     category_donut_style = "conic-gradient(" + ", ".join(donut_segments or ["#24364c 0% 100%"]) + ")"
     coverage_pct = float(category_report.get("classification_coverage_pct") or 0)
+    match_rate_pct = float(category_report.get("classification_match_rate_pct") or coverage_pct)
+    overlap_note = ""
+    if category_report.get("classification_is_overlapping"):
+        overlap_note = f" Multi-tag/application matches are non-exclusive; match rate is {match_rate_pct:.1f}%."
     category_legend = ""
     for row in classified_category_rows[:7]:
         share = float(row.get("share_classified_pct") or 0)
@@ -8740,13 +8762,21 @@ def reporting_page():
         preview_sections += f"""
 <section class="ns-report-a4-section">
   <h2>Application Categories</h2>
-  <p>Application categories — classified traffic. Classification coverage: {coverage_pct:.1f}%.</p>
+  <p>Application categories use exclusive primary classification. Coverage: {coverage_pct:.1f}%. Unknown traffic: {max(0.0, 100.0 - coverage_pct):.1f}%.{h(overlap_note)}</p>
 </section>
 <section class="ns-report-a4-section">
   <h2>Top Applications by Data Used</h2>
   <table class="ns-report-a4-table">
     <thead><tr><th>Application</th><th>Category</th><th>Data Used</th><th>Devices</th></tr></thead>
     <tbody>{top_application_report_rows()}</tbody>
+  </table>
+</section>
+<section class="ns-report-a4-section">
+  <h2>Unclassified Traffic by Device</h2>
+  <p>Estimate based on total device traffic minus application-attributed traffic.</p>
+  <table class="ns-report-a4-table">
+    <thead><tr><th>Number</th><th>Device</th><th>IP Address</th><th>Unclassified</th><th>Total Traffic</th><th>Unclassified %</th></tr></thead>
+    <tbody>{unclassified_device_report_rows()}</tbody>
   </table>
 </section>
 """
@@ -8880,7 +8910,7 @@ def reporting_page():
           <div class="ns-report-donut"><div><b>{h(fmt_mb(overview.get("total_mb") or 0))}</b><span>Total Traffic</span></div></div>
           <div>{category_legend}</div>
         </div>
-        <div class="ns-report-coverage">Application categories — classified traffic. Classification coverage: {coverage_pct:.1f}%.</div>
+        <div class="ns-report-coverage">Primary classification coverage: {coverage_pct:.1f}%. Unknown traffic: {max(0.0, 100.0 - coverage_pct):.1f}%.{h(overlap_note)}</div>
       </section>
       <section class="ns-polish-panel ns-report-panel">
         <h2>Report Contents</h2>
@@ -11955,3 +11985,4 @@ if __name__ == "__main__":
         host=str(c.get("web_host", "0.0.0.0") or "0.0.0.0"),
         port=int(c.get("web_port", 5050) or 5050),
     )
+

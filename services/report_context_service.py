@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 from netspecter_db import query
 from services.ai_attribution_service import ai_attribution_summary
-from services.application_classification_service import category_summary
+from services.application_classification_service import category_summary, unclassified_device_summary
 from services.reporting_service import (
     get_activity_timeline,
     get_application_summary,
@@ -194,6 +194,7 @@ def build_reporting_context_from_request(args):
         "domain_options": list_domains(start_time, end_time, 100),
         "category_report": category_report,
         "category_rows": category_report["rows"],
+        "unclassified_devices": unclassified_device_summary(start_time, end_time, filters, 8),
         "ai_summary": ai_attribution_summary(filters, start_time, end_time),
         "findings": build_rule_based_findings(overview),
         "selected_users": [],

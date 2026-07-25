@@ -260,6 +260,97 @@ def init_traffic_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_ts_ip ON remote_traffic_intervals(ts, ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_ts_ip_remote ON remote_traffic_intervals(ts, ip, remote_ip)")
     con.execute("""
+        CREATE TABLE IF NOT EXISTS application_signatures (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            app TEXT NOT NULL,
+            category TEXT NOT NULL,
+            domains_json TEXT DEFAULT '[]',
+            asn_json TEXT DEFAULT '[]',
+            destination_ips_json TEXT DEFAULT '[]',
+            ports_json TEXT DEFAULT '[]',
+            protocols_json TEXT DEFAULT '[]',
+            tags_json TEXT DEFAULT '[]',
+            confidence INTEGER DEFAULT 70,
+            priority INTEGER DEFAULT 50,
+            enabled INTEGER DEFAULT 1,
+            source TEXT DEFAULT 'local',
+            created_at TEXT,
+            updated_at TEXT
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_app_signatures_enabled_priority ON application_signatures(enabled, priority)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_app_signatures_app ON application_signatures(app)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS classification_cache (
+            cache_key TEXT PRIMARY KEY,
+            domain TEXT,
+            sni TEXT,
+            destination_ip TEXT,
+            asn TEXT,
+            provider TEXT,
+            protocol TEXT,
+            port INTEGER,
+            primary_app TEXT,
+            primary_category TEXT,
+            confidence INTEGER DEFAULT 0,
+            priority INTEGER DEFAULT 0,
+            matched_signature_id INTEGER,
+            optional_tags_json TEXT DEFAULT '[]',
+            classified_at TEXT NOT NULL,
+            expires_at TEXT
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_classification_cache_domain ON classification_cache(domain)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_classification_cache_destination ON classification_cache(destination_ip)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS classified_flow_rollups (
+            bucket TEXT NOT NULL,
+            day TEXT NOT NULL,
+            source_ip TEXT NOT NULL,
+            destination_ip TEXT,
+            domain TEXT,
+            sni TEXT,
+            protocol TEXT,
+            port INTEGER,
+            primary_app TEXT NOT NULL,
+            primary_category TEXT NOT NULL,
+            confidence INTEGER DEFAULT 0,
+            bytes_in INTEGER DEFAULT 0,
+            bytes_out INTEGER DEFAULT 0,
+            total_mb REAL DEFAULT 0,
+            optional_tags_json TEXT DEFAULT '[]',
+            first_seen TEXT,
+            last_seen TEXT,
+            PRIMARY KEY (bucket, source_ip, destination_ip, domain, sni, protocol, port, primary_app)
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_classified_flow_day_category ON classified_flow_rollups(day, primary_category)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_classified_flow_source_day ON classified_flow_rollups(source_ip, day)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS unknown_traffic_review (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            review_key TEXT NOT NULL UNIQUE,
+            domain TEXT,
+            sni TEXT,
+            destination_ip TEXT,
+            asn TEXT,
+            provider TEXT,
+            protocol TEXT,
+            port INTEGER,
+            traffic_mb REAL DEFAULT 0,
+            devices_seen INTEGER DEFAULT 0,
+            first_seen TEXT,
+            last_seen TEXT,
+            suggested_app TEXT,
+            suggested_category TEXT,
+            suggested_confidence INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'new',
+            created_at TEXT,
+            updated_at TEXT
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_unknown_review_status_volume ON unknown_traffic_review(status, traffic_mb)")
+    con.execute("""
         CREATE TABLE IF NOT EXISTS remote_traffic_hourly_rollups (
             hour TEXT NOT NULL,
             day TEXT NOT NULL,

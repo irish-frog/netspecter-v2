@@ -209,6 +209,38 @@ def test_site_device_mapping_adds_nextcloud_to_category_summary(monkeypatch):
     assert unclassified["total_mb"] == 115.0
 
 
+def test_category_summary_caps_primary_coverage_when_matches_overlap(monkeypatch):
+    app_rows = [
+        {"application_name": "YouTube", "downloaded_mb": 120.0, "uploaded_mb": 0.0, "total_mb": 120.0, "devices": 2},
+        {"application_name": "Instagram", "downloaded_mb": 80.0, "uploaded_mb": 0.0, "total_mb": 80.0, "devices": 2},
+    ]
+
+    def fake_query(sql, params=()):
+        if "FROM estimated_app_traffic" in sql and "GROUP BY category" in sql:
+            return app_rows
+        return []
+
+    monkeypatch.setattr(application_classification_service, "query", fake_query)
+    monkeypatch.setattr(application_classification_service, "site_application_mappings", lambda: [])
+    summary = category_summary("2026-07-13", "2026-07-14", total_network_mb=100.0)
+
+    assert summary["classification_coverage_pct"] == 100.0
+    assert summary["classification_match_rate_pct"] == 200.0
+    assert summary["classification_is_overlapping"] is True
+    assert summary["classified_application_mb"] == 100.0
+    assert summary["matched_application_mb"] == 200.0
+    assert summary["unclassified_application_mb"] == 0.0
+
+
+def test_signature_domain_match_sets_single_primary_category(monkeypatch):
+    monkeypatch.setattr(application_classification_service, "site_domain_mappings", lambda: [])
+    result = classify_application(domain="video.googlevideo.com")
+
+    assert result["primary_app"] == "YouTube"
+    assert result["primary_category"] == "Video Streaming"
+    assert result["confidence"] > 0
+
+
 def test_ai_services_are_not_grouped_into_other(monkeypatch):
     apps = ["OneDrive", "Outlook", "Microsoft Teams", "Microsoft 365", "Sage", "Facebook", "Netflix", "Spotify"]
     app_rows = [
