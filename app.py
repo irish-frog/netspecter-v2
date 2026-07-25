@@ -9340,7 +9340,7 @@ def reporting_pdf():
     return Response(
         data,
         mimetype="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers=attachment_headers(filename),
     )
 
 
@@ -9353,12 +9353,21 @@ def reporting_excel():
     return Response(
         data,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers=attachment_headers(filename),
     )
 
 
 def safe_report_date(value):
     return re.sub(r"[^0-9]+", "", str(value or ""))[:12] or "report"
+
+
+def attachment_headers(filename):
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", str(filename or "download")).strip("-") or "download"
+    quoted_name = quote(safe_name)
+    return {
+        "Content-Disposition": f"attachment; filename={safe_name}; filename*=UTF-8''{quoted_name}",
+        "X-Content-Type-Options": "nosniff",
+    }
 
 
 def reporting_xlsx_response(context, sections=None):
