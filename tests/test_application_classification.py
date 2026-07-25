@@ -293,6 +293,12 @@ def test_unclassified_device_summary_respects_device_identity_hint(monkeypatch):
     assert unclassified_device_summary("2026-07-20", "2026-07-25", {"device_ids": ["192.168.99.50"]}) == []
 
 
+def test_unclassified_device_summary_selects_device_type_columns():
+    source = inspect.getsource(application_classification_service.unclassified_device_summary)
+    assert "MAX(device_type) AS device_type" in source
+    assert "COALESCE(o.device_type, d.device_type" in source
+
+
 def test_signature_domain_match_sets_single_primary_category(monkeypatch):
     monkeypatch.setattr(application_classification_service, "site_domain_mappings", lambda: [])
     result = classify_application(domain="video.googlevideo.com")

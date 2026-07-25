@@ -337,12 +337,12 @@ def unclassified_device_summary(start_time, end_time, filters=None, limit=8):
             MAX(t.ts) AS last_seen
         FROM ({traffic_history_source_sql()}) t
         LEFT JOIN (
-            SELECT ip, MAX(name) AS name, MAX(mac) AS mac
+            SELECT ip, MAX(name) AS name, MAX(mac) AS mac, MAX(device_type) AS device_type
             FROM devices
             GROUP BY ip
         ) d ON d.ip=t.ip
         LEFT JOIN (
-            SELECT ip, MAX(name) AS name
+            SELECT ip, MAX(name) AS name, MAX(device_type) AS device_type
             FROM device_overrides
             GROUP BY ip
         ) o ON o.ip=t.ip
