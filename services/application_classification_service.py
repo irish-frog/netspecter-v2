@@ -27,6 +27,11 @@ _SITE_MAPPING_CACHE = {
 DEFAULT_SITE_APPLICATION_MAPPINGS = [
     {"application": "Nextcloud", "category": "File Sharing & Storage", "ip": "192.168.99.4"},
 ]
+DEVICE_IDENTITY_HINTS = [
+    ("Video Streaming", "Media Device", ("tv", "android tv", "xiaomi-tv", "chromecast", "roku", "mi box", "media")),
+    ("Gaming", "Game Console", ("xbox", "playstation", "ps5", "ps4", "nintendo", "switch")),
+    ("Software Updates", "Windows Device", ("windows pc", "windows-pc")),
+]
 
 
 def traffic_history_source_sql():
@@ -217,6 +222,13 @@ def category_summary(start_time, end_time, filters=None, limit=8, total_network_
         device_ids=device_ids,
         application_filter=application,
     )
+    if not application:
+        classified_total += add_device_identity_mappings(
+            buckets,
+            start_time,
+            end_time,
+            device_ids=device_ids,
+        )
 
     output = []
     network_total = float(total_network_mb or 0)
@@ -433,6 +445,92 @@ def add_site_device_mappings(buckets, start_time, end_time, device_ids=None, app
         bucket["applications"][app_name] = bucket["applications"].get(app_name, 0.0) + mapped_total
         added_total += mapped_total
     return added_total
+
+
+def add_device_identity_mappings(buckets, start_time, end_time, device_ids=None):
+    device_ids = set(device_ids or [])
+    where = ["t.ts BETWEEN ? AND ?"]
+    params = [start_time, end_time]
+    if device_ids:
+        placeholders = ",".join(["?"] * len(device_ids))
+        where.append(f"t.ip IN ({placeholders})")
+        params.extend(device_ids)
+    rows = query(
+        f"""
+        SELECT
+            COALESCE(o.name, d.name, t.name, t.ip) AS name,
+            COALESCE(o.device_type, d.device_type, '') AS device_type,
+            t.ip,
+            SUM(t.downloaded_mb) AS downloaded_mb,
+            SUM(t.uploaded_mb) AS uploaded_mb,
+            SUM(t.total_mb) AS total_mb
+        FROM ({traffic_history_source_sql()}) t
+        LEFT JOIN devices d ON d.ip=t.ip
+        LEFT JOIN device_overrides o ON o.ip=t.ip
+        WHERE {' AND '.join(where)}
+        GROUP BY t.ip
+        """,
+        tuple(params),
+    )
+    added_total = 0.0
+    mapped_site_ips = {row["ip"] for row in site_application_mappings()}
+    for row in rows:
+        ip = str(row["ip"] or "")
+        if ip in mapped_site_ips:
+            continue
+        total_mb = float(row["total_mb"] or 0)
+        if total_mb <= 0:
+            continue
+        existing = _first_row(query(
+            """
+            SELECT SUM(downloaded_mb) AS downloaded_mb,
+                   SUM(uploaded_mb) AS uploaded_mb,
+                   SUM(total_mb) AS total_mb
+            FROM estimated_app_traffic
+            WHERE ts BETWEEN ? AND ? AND ip=?
+            """,
+            (start_time, end_time, ip),
+        ))
+        existing_total = float(_row_value(existing, "total_mb", 0) or 0)
+        unattributed_total = max(0.0, total_mb - existing_total)
+        if unattributed_total <= 0.01:
+            continue
+        hint = device_identity_hint(row["name"], row["device_type"])
+        if not hint:
+            continue
+        category_name, app_name = hint
+        classified = classify_category_name(category_name)
+        if not classified:
+            continue
+        downloaded_mb = max(0.0, float(row["downloaded_mb"] or 0) - float(_row_value(existing, "downloaded_mb", 0) or 0))
+        uploaded_mb = max(0.0, float(row["uploaded_mb"] or 0) - float(_row_value(existing, "uploaded_mb", 0) or 0))
+        bucket = buckets.setdefault(category_name, {
+            "category": category_name,
+            "usage_group": classified["usage_group"],
+            "classification_source": "Device identity hint",
+            "color": classified["color"],
+            "downloaded_mb": 0.0,
+            "uploaded_mb": 0.0,
+            "total_mb": 0.0,
+            "devices": 0,
+            "applications": {},
+        })
+        bucket["classification_source"] = "Device identity hint"
+        bucket["downloaded_mb"] += min(downloaded_mb, unattributed_total)
+        bucket["uploaded_mb"] += min(uploaded_mb, unattributed_total)
+        bucket["total_mb"] += unattributed_total
+        bucket["devices"] += 1
+        bucket["applications"][app_name] = bucket["applications"].get(app_name, 0.0) + unattributed_total
+        added_total += unattributed_total
+    return added_total
+
+
+def device_identity_hint(name="", device_type=""):
+    text = f"{name or ''} {device_type or ''}".lower()
+    for category_name, app_name, needles in DEVICE_IDENTITY_HINTS:
+        if any(needle in text for needle in needles):
+            return category_name, app_name
+    return None
 
 
 def display_application_name(application_name):

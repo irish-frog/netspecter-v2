@@ -232,6 +232,43 @@ def test_category_summary_caps_primary_coverage_when_matches_overlap(monkeypatch
     assert summary["unclassified_application_mb"] == 0.0
 
 
+def test_device_identity_hint_classifies_media_device_unattributed_traffic(monkeypatch):
+    def fake_query(sql, params=()):
+        if "FROM estimated_app_traffic" in sql and "GROUP BY category" in sql:
+            return []
+        if "FROM estimated_app_traffic" in sql and "ip=?" in sql:
+            return [{"downloaded_mb": 0.0, "uploaded_mb": 0.0, "total_mb": 0.0}]
+        if "traffic_history_source_sql" not in sql and "FROM (" in sql and "traffic_intervals" in sql:
+            return [{
+                "name": "Xiaomi-TV-Box",
+                "device_type": "Media Device",
+                "ip": "192.168.99.50",
+                "downloaded_mb": 18000.0,
+                "uploaded_mb": 500.0,
+                "total_mb": 18500.0,
+            }]
+        if "FROM (" in sql and "traffic_intervals" in sql:
+            return [{
+                "name": "Xiaomi-TV-Box",
+                "device_type": "Media Device",
+                "ip": "192.168.99.50",
+                "downloaded_mb": 18000.0,
+                "uploaded_mb": 500.0,
+                "total_mb": 18500.0,
+            }]
+        return []
+
+    monkeypatch.setattr(application_classification_service, "query", fake_query)
+    monkeypatch.setattr(application_classification_service, "site_application_mappings", lambda: [])
+    summary = category_summary("2026-07-20", "2026-07-25", {"device_ids": ["192.168.99.50"]}, total_network_mb=18500.0)
+
+    video = next(row for row in summary["rows"] if row["category"] == "Video Streaming")
+    assert video["total_mb"] == 18500.0
+    assert video["application_names"] == ["Media Device"]
+    assert summary["classification_coverage_pct"] == 100.0
+    assert summary["unclassified_application_mb"] == 0.0
+
+
 def test_signature_domain_match_sets_single_primary_category(monkeypatch):
     monkeypatch.setattr(application_classification_service, "site_domain_mappings", lambda: [])
     result = classify_application(domain="video.googlevideo.com")
