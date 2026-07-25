@@ -4,6 +4,7 @@ import sqlite3
 from services import reporting_service
 from services import application_classification_service
 from services.application_classification_service import categories, category_summary, classify_application, display_application_name, unclassified_device_summary
+from services import application_signature_service
 from services import ai_attribution_service
 from services.ai_attribution_service import ai_attribution_summary, ai_service_for_domain, dns_time_window_correlations
 from services.report_pdf_service import reporting_pdf_response
@@ -336,6 +337,32 @@ def test_common_mobile_pc_unknown_domains_are_built_in(monkeypatch):
     assert classify_application(domain="a68.dscg4.akamai.net")["category"] == "Cloud Infrastructure"
     assert classify_application(domain="foo.googleusercontent.com")["category"] == "Cloud Infrastructure"
     assert classify_application(domain="foo.gvt1.com")["category"] == "Software Updates"
+
+
+def test_saved_signatures_do_not_disable_builtin_category_signatures(monkeypatch):
+    monkeypatch.setattr(
+        application_signature_service,
+        "query",
+        lambda *args, **kwargs: [{
+            "id": 1,
+            "app": "Custom App",
+            "category": "Business Systems",
+            "domains_json": "[\"custom.example\"]",
+            "asn_json": "[]",
+            "destination_ips_json": "[]",
+            "ports_json": "[]",
+            "protocols_json": "[]",
+            "tags_json": "[]",
+            "confidence": 90,
+            "priority": 90,
+            "enabled": 1,
+        }],
+    )
+    signatures = application_signature_service.load_signatures(categories())
+
+    assert application_signature_service.classify_metadata(signatures, domain="custom.example")["category"] == "Business Systems"
+    assert application_signature_service.classify_metadata(signatures, domain="e7a37f2d.hvcdn.to")["category"] == "Video Streaming"
+    assert application_signature_service.classify_metadata(signatures, domain="dit.whatsapp.net")["category"] == "Communication & Collaboration"
 
 
 def test_signature_provider_match_supports_asn(monkeypatch):

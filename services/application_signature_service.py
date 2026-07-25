@@ -8,6 +8,7 @@ from netspecter_db import query, run_sql
 
 
 def load_signatures(category_rows):
+    signatures = _signatures_from_categories(category_rows)
     rows = query(
         """
         SELECT id, app, category, domains_json, asn_json, destination_ips_json,
@@ -18,8 +19,8 @@ def load_signatures(category_rows):
         """
     )
     if rows:
-        return [_normalise_signature(row) for row in rows]
-    return _signatures_from_categories(category_rows)
+        signatures.extend(_normalise_signature(row) for row in rows)
+    return sorted(signatures, key=lambda item: (-int(item["priority"]), -int(item["confidence"]), item["app"].lower()))
 
 
 def classify_metadata(signatures, app_name="", domain="", sni="", destination_ip="", asn="", provider="", protocol="", port=None):
