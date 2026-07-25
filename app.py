@@ -5181,18 +5181,35 @@ def api_history():
     if period == "1h":
         bucket_expr = "substr(ts, 1, 16)"
         since_clause = "ts >= datetime('now','localtime','-1 hour')"
+        history_table = "traffic_intervals"
     elif period == "24h":
-        bucket_expr = "substr(ts, 1, 13) || ':00'"
-        since_clause = "ts >= datetime('now','localtime','-24 hours')"
+        bucket_expr = "substr(hour, 1, 13) || ':00'"
+        since_clause = "hour >= datetime('now','localtime','-24 hours')"
+        history_table = "traffic_history_union"
     elif period == "7d":
         bucket_expr = "day"
         since_clause = "day >= date('now','localtime','-7 days')"
+        history_table = "traffic_history_union"
     elif period == "60d":
         bucket_expr = "day"
         since_clause = "day >= date('now','localtime','-60 days')"
+        history_table = "traffic_history_union"
     else:
         bucket_expr = "day"
         since_clause = "day >= date('now','localtime','-30 days')"
+        history_table = "traffic_history_union"
+
+    history_source_sql = """
+        SELECT ip, downloaded_mb, uploaded_mb, total_mb, day, ts, substr(ts, 1, 13) || ':00' AS hour
+        FROM traffic_intervals
+        UNION ALL
+        SELECT ip, downloaded_mb, uploaded_mb, total_mb, day, hour AS ts, hour
+        FROM traffic_hourly_rollups
+        WHERE hour NOT IN (
+            SELECT DISTINCT substr(ts, 1, 13) || ':00'
+            FROM traffic_intervals
+        )
+    """
 
     if ip:
         rows = cached_query(
@@ -5204,7 +5221,7 @@ def api_history():
                 SUM(downloaded_mb) AS downloaded,
                 SUM(uploaded_mb) AS uploaded,
                 SUM(total_mb) AS total
-            FROM traffic_intervals
+            FROM {history_table if history_table != "traffic_history_union" else f"({history_source_sql})"}
             WHERE ip=?
               AND {since_clause}
             GROUP BY bucket
@@ -5222,7 +5239,7 @@ def api_history():
                 SUM(downloaded_mb) AS downloaded,
                 SUM(uploaded_mb) AS uploaded,
                 SUM(total_mb) AS total
-            FROM traffic_intervals
+            FROM {history_table if history_table != "traffic_history_union" else f"({history_source_sql})"}
             WHERE {since_clause}
             GROUP BY bucket
             ORDER BY bucket ASC
