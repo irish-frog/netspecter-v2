@@ -111,6 +111,20 @@ def categories():
 
 
 def classify_application(application_name="", domain="", destination_ip="", sni="", asn="", provider="", protocol="", port=None, persistent_cache=True):
+    domain_text = normalise_domain(domain)
+    if is_reverse_dns_lookup_domain(domain_text):
+        category_name = "Network Infrastructure"
+        return {
+            "category": category_name,
+            "usage_group": "Infrastructure",
+            "color": color_for_category(category_name),
+            "source": "DNS reverse lookup",
+            "primary_app": "DNS Reverse Lookup",
+            "primary_category": category_name,
+            "confidence": 98,
+            "optional_tags": ["System Services"],
+        }
+
     signature_match = classify_metadata_cached(
         load_signatures_cached(categories()),
         app_name=application_name,
@@ -136,7 +150,6 @@ def classify_application(application_name="", domain="", destination_ip="", sni=
         }
 
     app_text = str(application_name or "").strip().lower()
-    domain_text = normalise_domain(domain)
     destination_text = str(destination_ip or "").strip()
 
     if app_text:
@@ -739,6 +752,19 @@ def ip_matches(category, destination_ip):
 def normalise_domain(value):
     text = str(value or "").strip().lower().rstrip(".")
     return text[2:] if text.startswith("*.") else text
+
+
+def is_reverse_dns_lookup_domain(value):
+    text = normalise_domain(value)
+    return text == "in-addr.arpa" or text.endswith(".in-addr.arpa") or text == "ip6.arpa" or text.endswith(".ip6.arpa")
+
+
+def reverse_dns_exclusion_sql(column="domain"):
+    return (
+        f"({column} IS NULL OR (LOWER({column}) NOT IN ('in-addr.arpa', 'ip6.arpa') "
+        f"AND LOWER({column}) NOT LIKE '%.in-addr.arpa' "
+        f"AND LOWER({column}) NOT LIKE '%.ip6.arpa'))"
+    )
 
 
 def normalise_domain_pattern(value):

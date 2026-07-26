@@ -52,6 +52,7 @@ from netspecter_ids import (
 )
 from netspecter_anomaly import prune_anomalies, run_anomaly_cycle
 from services.microsoft365_endpoints_service import cached_microsoft365_domain_mappings
+from services.application_classification_service import is_reverse_dns_lookup_domain
 from services.classification_resolver_service import (
     Flow,
     classify_flow,
@@ -1113,6 +1114,8 @@ def app_from_domain(domain):
     d = str(domain or "").lower().strip(".")
     if not d:
         return "Other"
+    if is_reverse_dns_lookup_domain(d):
+        return "DNS Reverse Lookup"
     if d == "x.com" or d.endswith(".x.com"):
         return "Twitter / X"
     m365_app = microsoft365_app_from_domain(d)
@@ -3105,7 +3108,8 @@ def import_adguard_querylog():
             first_seen = min(current[1], ts) if current else ts
             last_seen = max(current[2], ts) if current else ts
             device_updates[ip] = (name, first_seen, last_seen)
-        remember_estimated_app_targets(c, client, domain, item.get("answer") or [], ts, blocked)
+        if not is_reverse_dns_lookup_domain(domain):
+            remember_estimated_app_targets(c, client, domain, item.get("answer") or [], ts, blocked)
         dns_resolution_rows.extend(dns_answer_rows(ip or client, domain, item.get("answer") or [], ts))
 
         if cutoff and ts <= cutoff:

@@ -126,7 +126,7 @@ from services.report_export_service import structured_report_text
 from services.report_context_service import build_reporting_context_from_request
 from services.report_pdf_service import reporting_pdf_response
 from services.ai_attribution_service import ai_attribution_summary
-from services.application_classification_service import categories as application_categories, valid_domain_pattern
+from services.application_classification_service import categories as application_categories, reverse_dns_exclusion_sql, valid_domain_pattern
 from services.application_signature_service import create_application_signature
 from services.suricata_classification_service import reclassify_unknown_queue
 from services.microsoft365_endpoints_service import microsoft365_endpoint_cache_status, refresh_microsoft365_endpoints
@@ -1737,15 +1737,19 @@ def is_noise(domain):
     return any(x in d for x in NOISE_DOMAINS)
 
 
+def user_activity_domain_filter(column="domain"):
+    return reverse_dns_exclusion_sql(column)
+
+
 def top_categories(limit=8):
     start_day = range_start_day()
     return cached_query(
         f"top_categories:{start_day}:{limit}",
         60,
-        """
+        f"""
         SELECT category, COUNT(*) AS total
         FROM dns_querylog
-        WHERE day>=?
+        WHERE day>=? AND {user_activity_domain_filter()}
         GROUP BY category
         ORDER BY total DESC
         LIMIT ?
@@ -4161,10 +4165,10 @@ def device_drawer_payload(ip, period="1d", history_type=""):
         (ip, start_day),
     )
     apps = optional_query(
-        """
+        f"""
         SELECT category, COUNT(*) AS total, MAX(ts) AS last_seen
         FROM dns_querylog
-        WHERE client=? AND day>=?
+        WHERE client=? AND day>=? AND {user_activity_domain_filter()}
         GROUP BY category
         ORDER BY total DESC
         LIMIT 5
@@ -4172,10 +4176,10 @@ def device_drawer_payload(ip, period="1d", history_type=""):
         (ip, start_day),
     )
     domains = optional_query(
-        """
+        f"""
         SELECT domain, COUNT(*) AS total, MAX(ts) AS last_seen
         FROM dns_querylog
-        WHERE client=? AND day>=?
+        WHERE client=? AND day>=? AND {user_activity_domain_filter()}
         GROUP BY domain
         ORDER BY last_seen DESC
         LIMIT 5
@@ -4624,7 +4628,7 @@ def app_domains_for_device(ip, category):
         f"""
         SELECT domain, COUNT(*) AS total
         FROM dns_querylog
-        WHERE client IN ({placeholders}) AND category=? AND day>=?
+        WHERE client IN ({placeholders}) AND category=? AND day>=? AND {user_activity_domain_filter()}
         GROUP BY domain
         ORDER BY total DESC
         LIMIT 200
@@ -4952,7 +4956,7 @@ def device(ip):
         f"""
         SELECT domain, category, COUNT(*) AS total
         FROM dns_querylog
-        WHERE client IN ({placeholders}) AND day >= ?
+        WHERE client IN ({placeholders}) AND day >= ? AND {user_activity_domain_filter()}
         GROUP BY domain, category
         ORDER BY total DESC
         LIMIT 60
@@ -5720,7 +5724,7 @@ def applications():
                 COUNT(DISTINCT domain) AS domains,
                 MAX(ts) AS last_seen
             FROM dns_querylog
-            WHERE day>=?
+            WHERE day>=? AND {user_activity_domain_filter()}
             GROUP BY category
         ),
         usage AS (
@@ -5765,14 +5769,14 @@ def applications():
     device_count_rows = cached_query(
         f"applications_device_count:{start_day}",
         HEAVY_PAGE_CACHE_SECONDS,
-        "SELECT COUNT(DISTINCT client) AS total FROM dns_querylog WHERE day>=?",
+        f"SELECT COUNT(DISTINCT client) AS total FROM dns_querylog WHERE day>=? AND {user_activity_domain_filter()}",
         (start_day,),
     )
     total_devices = int(device_count_rows[0]["total"] or 0) if device_count_rows else 0
     domain_count_rows = cached_query(
         f"applications_domain_count:{start_day}",
         HEAVY_PAGE_CACHE_SECONDS,
-        "SELECT COUNT(DISTINCT domain) AS total FROM dns_querylog WHERE day>=?",
+        f"SELECT COUNT(DISTINCT domain) AS total FROM dns_querylog WHERE day>=? AND {user_activity_domain_filter()}",
         (start_day,),
     )
     total_domains = int(domain_count_rows[0]["total"] or 0) if domain_count_rows else 0
@@ -6172,7 +6176,7 @@ def application_detail(category):
             WHERE day>=? AND category=?
             GROUP BY ip
         ) m ON m.ip = COALESCE(d.ip, l.client)
-        WHERE l.day>=? AND l.category=?
+        WHERE l.day>=? AND l.category=? AND {user_activity_domain_filter('l.domain')}
         GROUP BY l.client
         ORDER BY {sort_col} {direction_sql}
         LIMIT 200
@@ -6183,10 +6187,10 @@ def application_detail(category):
     domain_rows = cached_query(
         f"application_detail_domains:{start_day}:{category}",
         30,
-        """
+        f"""
         SELECT domain, COUNT(*) AS total, COUNT(DISTINCT client) AS devices, MAX(ts) AS last_seen
         FROM dns_querylog
-        WHERE day>=? AND category=?
+        WHERE day>=? AND category=? AND {user_activity_domain_filter()}
         GROUP BY domain
         ORDER BY total DESC
         LIMIT 100
@@ -6355,7 +6359,7 @@ def blocked():
     device_filter = request.args.get("device", "").strip()
     category_filter = request.args.get("category", "").strip()
     domain_filter = request.args.get("domain", "").strip()
-    where = ["day>=?", "blocked=1"]
+    where = ["day>=?", "blocked=1", user_activity_domain_filter()]
     params = [start_day]
     if device_filter:
         where.append("client=?")
@@ -6410,10 +6414,10 @@ def blocked():
     category_rows = cached_query(
         f"blocked_categories:{start_day}",
         HEAVY_PAGE_CACHE_SECONDS,
-        """
+        f"""
         SELECT category
         FROM dns_querylog
-        WHERE day>=? AND blocked=1
+        WHERE day>=? AND blocked=1 AND {user_activity_domain_filter()}
         GROUP BY category
         ORDER BY category COLLATE NOCASE
         """,

@@ -2,6 +2,7 @@ import time
 from datetime import datetime, timedelta
 
 from netspecter_db import query
+from services.application_classification_service import reverse_dns_exclusion_sql
 
 
 SLOW_QUERY_MS = 500
@@ -201,6 +202,7 @@ def get_top_users(filters, start_time, end_time, limit=5):
               {assignment_clause}
               AND q.ts BETWEEN ? AND ?
               AND q.domain LIKE ?
+              AND {reverse_dns_exclusion_sql('q.domain')}
               {dns_device_clause}
             GROUP BY u.id, u.display_name
             ORDER BY requests DESC
@@ -296,7 +298,7 @@ def get_top_devices(filters, start_time, end_time, limit=10):
                 FROM device_overrides
                 GROUP BY ip
             ) o ON o.ip=q.client
-            WHERE q.ts BETWEEN ? AND ? AND q.domain LIKE ? {where}
+            WHERE q.ts BETWEEN ? AND ? AND q.domain LIKE ? AND {reverse_dns_exclusion_sql('q.domain')} {where}
             GROUP BY q.client
             ORDER BY requests DESC
             LIMIT ?
@@ -347,7 +349,7 @@ def get_dns_summary(filters, start_time, end_time, limit=DEFAULT_LIMIT):
         f"""
         SELECT domain, category, blocked, COUNT(*) AS requests, COUNT(DISTINCT client) AS clients
         FROM dns_querylog
-        WHERE ts BETWEEN ? AND ? {where}
+        WHERE ts BETWEEN ? AND ? AND {reverse_dns_exclusion_sql()} {where}
         GROUP BY domain, category, blocked
         ORDER BY requests DESC
         LIMIT ?
@@ -472,10 +474,10 @@ def list_applications(start_time, end_time, limit=100):
 
 def list_domains(start_time, end_time, limit=100):
     return _timed_query(
-        """
+        f"""
         SELECT domain, COUNT(*) AS requests
         FROM dns_querylog
-        WHERE ts BETWEEN ? AND ? AND domain IS NOT NULL AND domain != ''
+        WHERE ts BETWEEN ? AND ? AND domain IS NOT NULL AND domain != '' AND {reverse_dns_exclusion_sql()}
         GROUP BY domain
         ORDER BY requests DESC
         LIMIT ?

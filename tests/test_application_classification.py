@@ -3,7 +3,7 @@ import sqlite3
 
 from services import reporting_service
 from services import application_classification_service
-from services.application_classification_service import categories, category_summary, classify_application, display_application_name, unclassified_device_summary
+from services.application_classification_service import categories, category_summary, classify_application, display_application_name, is_reverse_dns_lookup_domain, reverse_dns_exclusion_sql, unclassified_device_summary
 from services import application_signature_service
 from services import ai_attribution_service
 from services.ai_attribution_service import ai_attribution_summary, ai_service_for_domain, dns_time_window_correlations
@@ -358,6 +358,18 @@ def test_common_unknown_domains_get_specific_dns_app_names():
     assert app_from_domain("api.locketcamera.com") == "Locket"
     assert app_from_domain("gateway.icloud.com") == "iCloud Drive"
     assert app_from_domain("foo.gvt1.com") == "Android Update"
+
+
+def test_reverse_dns_lookup_domains_are_infrastructure():
+    assert is_reverse_dns_lookup_domain("1.99.168.192.in-addr.arpa")
+    assert is_reverse_dns_lookup_domain("b.a.9.8.ip6.arpa.")
+    assert app_from_domain("1.99.168.192.in-addr.arpa") == "DNS Reverse Lookup"
+    result = classify_application(domain="1.99.168.192.in-addr.arpa")
+    assert result["category"] == "Network Infrastructure"
+    assert result["usage_group"] == "Infrastructure"
+    assert result["primary_app"] == "DNS Reverse Lookup"
+    assert not is_reverse_dns_lookup_domain("example.com")
+    assert "in-addr.arpa" in reverse_dns_exclusion_sql()
 
 
 def test_saved_signatures_do_not_disable_builtin_category_signatures(monkeypatch):
