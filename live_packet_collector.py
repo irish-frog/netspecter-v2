@@ -3000,6 +3000,13 @@ def flush_loop():
 
         con = None
         try:
+            traffic_detail_started = time.monotonic()
+            live_speed_writes = 0
+            device_writes = 0
+            interval_inserts = 0
+            estimated_inserts = 0
+            destination_writes = 0
+            destination_classify_elapsed = 0.0
             with timed_db_write("traffic_counter_batch") as con:
                 for ip, cur in deltas.items():
                     rx_delta = cur["rx"]
@@ -3028,6 +3035,7 @@ def flush_loop():
                         """,
                         (ip, mac, rx_Bps, tx_Bps, total_Bps, now),
                     )
+                    live_speed_writes += 1
 
                     con.execute(
                         """
@@ -3049,6 +3057,7 @@ def flush_loop():
                         """,
                         (ip, name, mac, vendor, dtype, now, now),
                     )
+                    device_writes += 1
 
                     interval_rx_mb = rx_delta / 1024 / 1024
                     interval_tx_mb = tx_delta / 1024 / 1024
@@ -3073,6 +3082,7 @@ def flush_loop():
                                 now,
                             ),
                         )
+                        interval_inserts += 1
 
                 for (category, ip), cur in estimated_deltas.items():
                     interval_rx_mb = cur["rx"] / 1024 / 1024
@@ -3087,11 +3097,27 @@ def flush_loop():
                             """,
                             (ip, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
                         )
+                        estimated_inserts += 1
 
                 for (category, ip, destination), cur in remote_destination_deltas.items():
+                    classify_started = time.monotonic()
                     write_destination_delta(con, ip, destination, cur, day, now, category)
+                    destination_classify_elapsed += time.monotonic() - classify_started
+                    destination_writes += 1
                 for (ip, destination), cur in classification_destination_deltas.items():
+                    classify_started = time.monotonic()
                     write_destination_delta(con, ip, destination, cur, day, now, "Unknown")
+                    destination_classify_elapsed += time.monotonic() - classify_started
+                    destination_writes += 1
+            traffic_detail_elapsed = time.monotonic() - traffic_detail_started
+            if traffic_detail_elapsed >= 0.2:
+                print(
+                    "Traffic counter batch detail: "
+                    f"devices={len(deltas)} live_speed_writes={live_speed_writes} device_writes={device_writes} "
+                    f"traffic_rows={interval_inserts} estimated_rows={estimated_inserts} "
+                    f"destination_rows={destination_writes} destination_classify={destination_classify_elapsed:.3f}s "
+                    f"total={traffic_detail_elapsed:.3f}s"
+                )
             nft_previous_counters = next_previous_counters
             nft_previous_estimated_counters = next_previous_estimated_counters
             nft_previous_classification_counters = next_previous_classification_counters

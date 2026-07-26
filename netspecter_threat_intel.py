@@ -117,6 +117,40 @@ def ensure_schema(con):
     con.execute("CREATE INDEX IF NOT EXISTS idx_threat_corr_ts ON threat_correlations(ts)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_threat_corr_reputation ON threat_correlations(reputation)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_threat_corr_indicator ON threat_correlations(indicator)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_threat_indicators_indicator_active ON threat_indicators(indicator, active)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_id_ts ON ids_events(id, ts)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_dest_src ON ids_events(dest_ip, src_ip)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_hostname ON ids_events(hostname)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_tls_sni ON ids_events(tls_sni)")
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS processing_checkpoints (
+            name TEXT PRIMARY KEY,
+            last_id INTEGER DEFAULT 0,
+            last_ts TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+
+def checkpoint(con, name):
+    row = con.execute("SELECT last_id, last_ts FROM processing_checkpoints WHERE name=?", (name,)).fetchone()
+    return {"last_id": int(row[0] or 0), "last_ts": row[1]} if row else {"last_id": 0, "last_ts": None}
+
+
+def update_checkpoint(con, name, last_id, last_ts=""):
+    con.execute(
+        """
+        INSERT INTO processing_checkpoints(name, last_id, last_ts, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(name) DO UPDATE SET
+            last_id=excluded.last_id,
+            last_ts=excluded.last_ts,
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        (name, int(last_id or 0), last_ts or ""),
+    )
 
 
 def enabled_sources(config):
@@ -399,68 +433,49 @@ def safe_event_key(prefix, *parts):
 
 
 def correlate_once(connect_db, config):
+    batch_size = max(100, min(5000, int(config.get("threat_intel_batch_size", 1000) or 1000)))
+    started = time.monotonic()
     con = connect_db()
     ensure_schema(con)
+    cp = checkpoint(con, "threat_intel_ids_events")
+    start_id = cp["last_id"]
+    sql_started = time.monotonic()
     indicators = load_active_indicators(con)
     inserted = 0
-    since_days = int(config.get("threat_intel_correlation_days", 14) or 14)
-    cutoff = (datetime.now() - timedelta(days=since_days)).strftime("%Y-%m-%d %H:%M:%S")
-
     ids_rows = con.execute(
         """
-        SELECT id, ts, src_ip, dest_ip, query, hostname, signature
+        SELECT id, ts, src_ip, dest_ip, query, hostname, tls_sni, signature, event_type
         FROM ids_events
-        WHERE ts>=?
-        ORDER BY id DESC
-        LIMIT 2000
+        WHERE id > ?
+        ORDER BY id ASC
+        LIMIT ?
         """,
-        (cutoff,),
+        (start_id, batch_size),
     ).fetchall()
+    sql_elapsed = time.monotonic() - sql_started
+    max_id = start_id
+    max_ts = cp.get("last_ts") or ""
     for row in ids_rows:
-        domain = row[4] or row[5] or ""
+        max_id = max(max_id, int(row[0] or 0))
+        max_ts = row[1] or max_ts
+        domain = row[4] or row[5] or row[6] or ""
         rep = reputation_for(row[3], domain, indicators)
         if rep["reputation"] == "Unknown":
             continue
         key = safe_event_key("ids", row[0], rep.get("indicator"))
-        inserted += insert_correlation(con, key, row[1], rep, src_ip=row[2], dest_ip=row[3], domain=domain, reason=row[6])
-
-    dns_rows = con.execute(
-        """
-        SELECT id, ts, client, domain
-        FROM dns_querylog
-        WHERE ts>=?
-        ORDER BY id DESC
-        LIMIT 3000
-        """,
-        (cutoff,),
-    ).fetchall()
-    for row in dns_rows:
-        rep = reputation_for("", row[3], indicators)
-        if rep["reputation"] == "Unknown":
-            continue
-        key = safe_event_key("dns", row[0], rep.get("indicator"))
-        inserted += insert_correlation(con, key, row[1], rep, src_ip=row[2], domain=row[3], device_ip=row[2])
-
-    remote_rows = con.execute(
-        """
-        SELECT r.remote_ip, MAX(r.ts), SUM(r.total_mb), l.country, l.country_code
-        FROM remote_traffic_intervals r
-        LEFT JOIN remote_ip_locations l ON l.remote_ip=r.remote_ip
-        WHERE r.ts>=?
-        GROUP BY r.remote_ip
-        LIMIT 3000
-        """,
-        (cutoff,),
-    ).fetchall()
-    for row in remote_rows:
-        rep = reputation_for(row[0], "", indicators)
-        if rep["reputation"] == "Unknown":
-            continue
-        key = safe_event_key("remote", row[0], rep.get("indicator"))
-        inserted += insert_correlation(con, key, row[1], rep, dest_ip=row[0], total_mb=row[2] or 0, country=row[3] or row[4] or "")
-
+        inserted += insert_correlation(con, key, row[1], rep, src_ip=row[2], dest_ip=row[3], domain=domain, reason=row[7])
+    if max_id > start_id:
+        update_checkpoint(con, "threat_intel_ids_events", max_id, max_ts)
+    commit_started = time.monotonic()
     con.commit()
+    commit_elapsed = time.monotonic() - commit_started
     con.close()
+    total_elapsed = time.monotonic() - started
+    print(
+        "Threat correlation batch: "
+        f"start_id={start_id} end_id={max_id} rows={len(ids_rows)} matches={inserted} "
+        f"sql={sql_elapsed:.3f}s txn={total_elapsed:.3f}s commit={commit_elapsed:.3f}s"
+    )
     return inserted
 
 

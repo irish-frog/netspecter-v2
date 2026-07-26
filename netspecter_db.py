@@ -866,8 +866,21 @@ def init_db(force=False):
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_application ON ids_events(application)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_day_type ON ids_events(day, event_type)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_alert_status ON ids_events(alert_status)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_id_ts ON ids_events(id, ts)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_dest_src ON ids_events(dest_ip, src_ip)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_hostname ON ids_events(hostname)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_tls_sni ON ids_events(tls_sni)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_alert_rollup ON ids_events(signature_id, src_ip, dest_ip, query, protocol)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_metadata_enrichment ON ids_events(id, event_type, src_ip, dest_ip)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_threat_indicators_indicator_active ON threat_indicators(indicator, active)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS processing_checkpoints (
+            name TEXT PRIMARY KEY,
+            last_id INTEGER DEFAULT 0,
+            last_ts TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     con.execute("""
         CREATE TABLE IF NOT EXISTS classification_enrichment_state (
             source TEXT PRIMARY KEY,

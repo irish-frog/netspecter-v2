@@ -35,6 +35,14 @@ def hour_int(dt):
 def schema_sql():
     return [
         """
+        CREATE TABLE IF NOT EXISTS processing_checkpoints (
+            name TEXT PRIMARY KEY,
+            last_id INTEGER DEFAULT 0,
+            last_ts TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
         CREATE TABLE IF NOT EXISTS anomaly_device_daily (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             day TEXT NOT NULL,
@@ -109,12 +117,33 @@ def schema_sql():
         "CREATE INDEX IF NOT EXISTS idx_anomaly_events_day ON anomaly_events(day)",
         "CREATE INDEX IF NOT EXISTS idx_anomaly_events_status ON anomaly_events(status)",
         "CREATE INDEX IF NOT EXISTS idx_anomaly_events_device ON anomaly_events(device_ip)",
+        "CREATE INDEX IF NOT EXISTS idx_ids_events_id_ts ON ids_events(id, ts)",
+        "CREATE INDEX IF NOT EXISTS idx_ids_events_day_type ON ids_events(day, event_type)",
     ]
 
 
 def ensure_schema(con):
     for sql in schema_sql():
         con.execute(sql)
+
+
+def checkpoint(con, name):
+    row = con.execute("SELECT last_id, last_ts FROM processing_checkpoints WHERE name=?", (name,)).fetchone()
+    return {"last_id": int(row[0] or 0), "last_ts": row[1]} if row else {"last_id": 0, "last_ts": None}
+
+
+def update_checkpoint(con, name, last_id, last_ts=""):
+    con.execute(
+        """
+        INSERT INTO processing_checkpoints(name, last_id, last_ts, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(name) DO UPDATE SET
+            last_id=excluded.last_id,
+            last_ts=excluded.last_ts,
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        (name, int(last_id or 0), last_ts or ""),
+    )
 
 
 def safe_json_list(value):
@@ -363,13 +392,88 @@ def detect_for_day(con, day, config):
 
 
 def run_anomaly_cycle(connect_db, config, target_day=None):
-    day = target_day or day_text(datetime.now())
+    started = datetime.now()
+    batch_started = __import__("time").monotonic()
+    batch_size = max(100, min(5000, int(config.get("anomaly_ids_batch_size", 1000) or 1000)))
     con = connect_db()
     ensure_schema(con)
-    aggregate_day(con, day)
-    count = detect_for_day(con, day, config)
+    if target_day:
+        touched = aggregate_day(con, target_day)
+        count = detect_for_day(con, target_day, config)
+        con.commit()
+        con.close()
+        return count
+    cp = checkpoint(con, "anomaly_ids_events")
+    start_id = cp["last_id"]
+    sql_started = __import__("time").monotonic()
+    rows = con.execute(
+        """
+        SELECT id, ts, day, src_ip, dest_port, app_proto, protocol, event_type
+        FROM ids_events
+        WHERE id > ?
+        ORDER BY id ASC
+        LIMIT ?
+        """,
+        (start_id, batch_size),
+    ).fetchall()
+    sql_elapsed = __import__("time").monotonic() - sql_started
+    max_id = start_id
+    max_ts = cp.get("last_ts") or ""
+    touched_days = set()
+    hourly_updates = 0
+    daily_updates = 0
+    for row in rows:
+        event_id, ts, day, src_ip, dest_port, app_proto, protocol, event_type = row
+        max_id = max(max_id, int(event_id or 0))
+        max_ts = ts or max_ts
+        dt = parse_ts(ts)
+        if not dt:
+            continue
+        day_value = day or day_text(dt)
+        hour = hour_int(dt)
+        ip = str(src_ip or "").strip()
+        if not ip:
+            continue
+        touched_days.add(day_value)
+        is_alert = 1 if str(event_type or "") == "alert" else 0
+        proto = str(app_proto or protocol or "").strip()
+        port = str(dest_port or "").strip()
+        con.execute(
+            """
+            INSERT INTO anomaly_device_daily (day, device_ip, ids_alerts, ports_json, protocols_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(day, device_ip) DO UPDATE SET
+                ids_alerts=anomaly_device_daily.ids_alerts + excluded.ids_alerts,
+                updated_at=excluded.updated_at
+            """,
+            (day_value, ip, is_alert, "[]", "[]", now_text()),
+        )
+        daily_updates += 1
+        con.execute(
+            """
+            INSERT INTO anomaly_device_hourly (day, hour, device_ip, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(day, hour, device_ip) DO UPDATE SET updated_at=excluded.updated_at
+            """,
+            (day_value, hour, ip, now_text()),
+        )
+        hourly_updates += 1
+    count = 0
+    for day_value in sorted(touched_days):
+        count += detect_for_day(con, day_value, config)
+    if max_id > start_id:
+        update_checkpoint(con, "anomaly_ids_events", max_id, max_ts)
+    commit_started = __import__("time").monotonic()
     con.commit()
+    commit_elapsed = __import__("time").monotonic() - commit_started
     con.close()
+    elapsed = __import__("time").monotonic() - batch_started
+    print(
+        "Anomaly batch: "
+        f"start_id={start_id} end_id={max_id} rows={len(rows)} days={len(touched_days)} "
+        f"daily_updates={daily_updates} hourly_updates={hourly_updates} events={count} "
+        f"sql={sql_elapsed:.3f}s txn={elapsed:.3f}s commit={commit_elapsed:.3f}s"
+    )
     return count
 
 
