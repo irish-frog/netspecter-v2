@@ -609,6 +609,9 @@ def reclassify_default_ids_alerts(connect_db):
                 severity=4,
                 alert_status=CASE WHEN COALESCE(alert_status, 'open')='open' THEN 'ignored' ELSE alert_status END
             WHERE event_type='alert' AND signature=?
+              AND (category!='Diagnostic capture event'
+                   OR severity IS NOT 4
+                   OR COALESCE(alert_status, 'open')='open')
             """,
             (signature,),
         )
@@ -616,39 +619,69 @@ def reclassify_default_ids_alerts(connect_db):
     for signature in sorted(DEFAULT_INFORMATIONAL_SIGNATURES):
         before = con.total_changes
         con.execute(
-            "UPDATE ids_events SET category='STUN / NAT traversal', severity=4 WHERE event_type='alert' AND signature=?",
+            """
+            UPDATE ids_events
+            SET category='STUN / NAT traversal', severity=4
+            WHERE event_type='alert' AND signature=?
+              AND (category!='STUN / NAT traversal' OR severity IS NOT 4)
+            """,
             (signature,),
         )
         changed += con.total_changes - before
     before = con.total_changes
     con.execute(
-        "UPDATE ids_events SET category='User-Agent observation', severity=4 WHERE event_type='alert' AND signature LIKE ?",
+        """
+        UPDATE ids_events
+        SET category='User-Agent observation', severity=4
+        WHERE event_type='alert' AND signature LIKE ?
+          AND (category!='User-Agent observation' OR severity IS NOT 4)
+        """,
         ("ET USER_AGENTS%",),
     )
     changed += con.total_changes - before
     before = con.total_changes
     con.execute(
-        "UPDATE ids_events SET category='Gaming', application='Steam', severity=4 WHERE event_type='alert' AND signature=?",
+        """
+        UPDATE ids_events
+        SET category='Gaming', application='Steam', severity=4
+        WHERE event_type='alert' AND signature=?
+          AND (category!='Gaming' OR application!='Steam' OR severity IS NOT 4)
+        """,
         ("ET USER_AGENTS Steam HTTP Client User-Agent",),
     )
     changed += con.total_changes - before
     before = con.total_changes
     con.execute(
-        "UPDATE ids_events SET category='STUN / NAT traversal', severity=4 WHERE event_type='alert' AND signature LIKE ?",
+        """
+        UPDATE ids_events
+        SET category='STUN / NAT traversal', severity=4
+        WHERE event_type='alert' AND signature LIKE ?
+          AND (category!='STUN / NAT traversal' OR severity IS NOT 4)
+        """,
         ("ET INFO Session Traversal Utilities for NAT%",),
     )
     changed += con.total_changes - before
     for prefix in EXTERNAL_IP_LOOKUP_PATTERNS:
         before = con.total_changes
         con.execute(
-            "UPDATE ids_events SET category='External IP discovery', severity=4 WHERE event_type='alert' AND signature LIKE ?",
+            """
+            UPDATE ids_events
+            SET category='External IP discovery', severity=4
+            WHERE event_type='alert' AND signature LIKE ?
+              AND (category!='External IP discovery' OR severity IS NOT 4)
+            """,
             (prefix + "%",),
         )
         changed += con.total_changes - before
     for signature in sorted(LOW_PRIORITY_SIGNATURES):
         before = con.total_changes
         con.execute(
-            "UPDATE ids_events SET category='Low-priority DNS observation', severity=3 WHERE event_type='alert' AND signature=?",
+            """
+            UPDATE ids_events
+            SET category='Low-priority DNS observation', severity=3
+            WHERE event_type='alert' AND signature=?
+              AND (category!='Low-priority DNS observation' OR severity IS NOT 3)
+            """,
             (signature,),
         )
         changed += con.total_changes - before

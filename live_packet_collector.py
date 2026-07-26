@@ -293,6 +293,9 @@ live_traffic_today = {"day": "", "downloaded_mb": 0.0, "uploaded_mb": 0.0, "tota
 estimated_app_targets = {}
 estimated_targets_lock = threading.Lock()
 last_dns_map_refresh = 0.0
+last_suricata_import = 0.0
+last_ids_default_reclassify = 0.0
+last_unknown_reclassify = 0.0
 oui_vendor_cache = None
 GEOLOCATION_REFRESH_SECONDS = 3600
 DNS_MAP_REFRESH_SECONDS = 300
@@ -1860,13 +1863,18 @@ def process_ids_auto_blocks(config):
 
 
 def import_suricata_eve(config):
+    global last_ids_default_reclassify, last_unknown_reclassify
     try:
         result = ingest_eve_incremental(connect_db, SURICATA_EVE_LOG)
         if result.get("inserted"):
             print(f"Suricata eve.json imported rows: {result['inserted']}")
-            changed = reclassify_default_ids_alerts(connect_db)
-            if changed:
-                print(f"Suricata IDS alert severities reclassified: {changed}")
+            now_mono = time.monotonic()
+            reclassify_interval = positive_int(config.get("ids_default_reclassify_interval_seconds", 1800), 1800, 60)
+            if now_mono - last_ids_default_reclassify >= reclassify_interval:
+                last_ids_default_reclassify = now_mono
+                changed = reclassify_default_ids_alerts(connect_db)
+                if changed:
+                    print(f"Suricata IDS alert severities reclassified: {changed}")
         if result.get("bad_json"):
             print(f"Suricata eve.json skipped malformed rows: {result['bad_json']}")
         enrichment = run_suricata_classification_enrichment()
@@ -1876,12 +1884,16 @@ def import_suricata_eve(config):
                 f"{enrichment['classified']} classified, {enrichment['unknown']} unknown "
                 f"from {enrichment['processed']} metadata rows"
             )
-        reclassified = run_unknown_queue_reclassification()
-        if reclassified.get("classified"):
-            print(
-                "Unknown traffic reclassification: "
-                f"{reclassified['classified']} classified from {reclassified['processed']} queued destinations"
-            )
+        now_mono = time.monotonic()
+        unknown_interval = positive_int(config.get("unknown_reclassify_interval_seconds", 300), 300, 30)
+        if now_mono - last_unknown_reclassify >= unknown_interval:
+            last_unknown_reclassify = now_mono
+            reclassified = run_unknown_queue_reclassification()
+            if reclassified.get("classified"):
+                print(
+                    "Unknown traffic reclassification: "
+                    f"{reclassified['classified']} classified from {reclassified['processed']} queued destinations"
+                )
     except Exception as error:
         print(f"Suricata eve.json import failed: {error}")
 
@@ -3196,6 +3208,7 @@ def import_adguard_querylog():
 
 def adguard_querylog_loop():
     """Background loop for AdGuard DNS querylog importing."""
+    global last_suricata_import
     init_db()
 
     while True:
@@ -3206,7 +3219,11 @@ def adguard_querylog_loop():
         try:
             run_timed_step("AdGuard/client names", refresh_adguard_client_names, c)
             run_timed_step("UniFi/client import", refresh_unifi_clients, c)
-            run_timed_step("Suricata/eve import", import_suricata_eve, c)
+            suricata_interval = positive_int(c.get("suricata_import_interval_seconds", 60), 60, 15)
+            now_mono = time.monotonic()
+            if now_mono - last_suricata_import >= suricata_interval:
+                last_suricata_import = now_mono
+                run_timed_step("Suricata/eve import", import_suricata_eve, c)
             auto_blocked = run_timed_step("IDS/auto block", process_ids_auto_blocks, c)
             if auto_blocked:
                 print(f"IDS automatic blocks applied: {auto_blocked}")
