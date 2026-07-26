@@ -515,9 +515,16 @@ def ingest_eve_incremental(connect_db, eve_path, batch_size=500):
     if not path.exists():
         return {"inserted": 0, "error": "Suricata eve.json was not found."}
     stat = path.stat()
+    state_started = time.monotonic()
     con = connect_db()
-    con.row_factory = sqlite3.Row
-    state = con.execute("SELECT * FROM ids_eve_state WHERE id=1").fetchone()
+    try:
+        con.row_factory = sqlite3.Row
+        state = con.execute("SELECT * FROM ids_eve_state WHERE id=1").fetchone()
+    finally:
+        con.close()
+    state_elapsed = time.monotonic() - state_started
+    if state_elapsed >= 0.2:
+        print(f"DB read section suricata_eve_state: elapsed={state_elapsed:.3f}s")
     inode = int(getattr(stat, "st_ino", 0) or 0)
     size = int(stat.st_size)
     offset = 0
@@ -526,9 +533,15 @@ def ingest_eve_incremental(connect_db, eve_path, batch_size=500):
     inserted = 0
     bad_json = 0
     rows = []
+    new_offset = offset
+    parse_started = time.monotonic()
     with path.open("r", encoding="utf-8", errors="replace") as handle:
         handle.seek(offset)
-        for line in handle:
+        while True:
+            line = handle.readline()
+            if not line:
+                break
+            new_offset = handle.tell()
             try:
                 normalized = normalize_eve_event(json.loads(line))
             except json.JSONDecodeError:
@@ -539,21 +552,34 @@ def ingest_eve_incremental(connect_db, eve_path, batch_size=500):
             if normalized:
                 rows.append(normalized)
             if len(rows) >= batch_size:
-                inserted += insert_events(con, rows)
-                rows = []
-        new_offset = handle.tell()
-    if rows:
-        inserted += insert_events(con, rows)
-    con.execute(
-        """
-        INSERT INTO ids_eve_state (id, inode, offset, path, updated_at)
-        VALUES (1, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET inode=excluded.inode, offset=excluded.offset, path=excluded.path, updated_at=excluded.updated_at
-        """,
-        (inode, new_offset, str(path), int(time.time())),
-    )
-    con.commit()
-    con.close()
+                break
+    parse_elapsed = time.monotonic() - parse_started
+    if parse_elapsed >= 0.2:
+        print(f"Suricata eve parse batch: rows={len(rows)} bad_json={bad_json} elapsed={parse_elapsed:.3f}s")
+    write_started = time.monotonic()
+    con = connect_db()
+    try:
+        if rows:
+            inserted += insert_events(con, rows)
+        con.execute(
+            """
+            INSERT INTO ids_eve_state (id, inode, offset, path, updated_at)
+            VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET inode=excluded.inode, offset=excluded.offset, path=excluded.path, updated_at=excluded.updated_at
+            """,
+            (inode, new_offset, str(path), int(time.time())),
+        )
+        commit_started = time.monotonic()
+        con.commit()
+        commit_elapsed = time.monotonic() - commit_started
+    finally:
+        con.close()
+    write_elapsed = time.monotonic() - write_started
+    if write_elapsed >= 0.2 or commit_elapsed >= 0.2:
+        print(
+            "DB write section suricata_eve_ingest: "
+            f"rows={len(rows)} txn={write_elapsed:.3f}s commit={commit_elapsed:.3f}s"
+        )
     return {"inserted": inserted, "bad_json": bad_json, "offset": new_offset, "inode": inode}
 
 

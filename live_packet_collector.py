@@ -22,6 +22,7 @@ Important:
 """
 
 import atexit
+from contextlib import contextmanager
 import fnmatch
 import ipaddress
 import json
@@ -576,38 +577,24 @@ def refresh_adguard_client_names(config):
 
     if not names:
         return
-    con = None
-    lock_acquired = False
     try:
         updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        lock_acquired = db_write_lock.acquire(timeout=0.2)
-        if not lock_acquired:
-            print("AdGuard client name database update skipped: writer busy")
-            return
-        con = connect_db(timeout=0.5, busy_timeout_ms=250)
-        con.executemany(
-            "UPDATE devices SET name=? WHERE ip=?",
-            [(name, ip) for ip, name in names.items()],
-        )
-        # Older builds could auto-lock a discovered device while its label was still its IP.
-        con.executemany(
-            """
-            UPDATE device_overrides
-            SET name=?, updated_at=?
-            WHERE ip=? AND (name IS NULL OR TRIM(name)='' OR name=ip)
-            """,
-            [(name, updated_at, ip) for ip, name in names.items()],
-        )
-        con.commit()
+        with timed_db_write("adguard_client_names") as con:
+            con.executemany(
+                "UPDATE devices SET name=? WHERE ip=?",
+                [(name, ip) for ip, name in names.items()],
+            )
+            # Older builds could auto-lock a discovered device while its label was still its IP.
+            con.executemany(
+                """
+                UPDATE device_overrides
+                SET name=?, updated_at=?
+                WHERE ip=? AND (name IS NULL OR TRIM(name)='' OR name=ip)
+                """,
+                [(name, updated_at, ip) for ip, name in names.items()],
+            )
     except Exception as e:
-        if con:
-            con.rollback()
         print(f"AdGuard client name database update failed: {e}")
-    finally:
-        if con:
-            con.close()
-        if lock_acquired:
-            db_write_lock.release()
 
 
 def remember_adguard_client_activity(client, ts):
@@ -911,10 +898,8 @@ def refresh_unifi_clients(config):
             if not clients or offset >= total:
                 break
         if device_rows:
-            con = None
             try:
-                with db_write_lock:
-                    con = connect_db(timeout=2, busy_timeout_ms=1000)
+                with timed_db_write("unifi_client_import") as con:
                     con.executemany(
                         """
                         INSERT INTO devices (ip, name, mac, vendor, device_type, status, first_seen, last_seen)
@@ -939,15 +924,9 @@ def refresh_unifi_clients(config):
                             """,
                             override_rows,
                         )
-                    con.commit()
             except Exception as error:
-                if con:
-                    con.rollback()
                 print(f"UniFi client database update failed: {error}")
                 return
-            finally:
-                if con:
-                    con.close()
         unifi_clients_refreshed_at = now_monotonic
         print(f"UniFi connected clients imported: {imported} ({named_imported} named)")
     except Exception as e:
@@ -956,18 +935,21 @@ def refresh_unifi_clients(config):
 
 def connect_db(timeout=30, busy_timeout_ms=30000):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    busy_timeout_ms = max(30000, int(busy_timeout_ms or 30000))
+    timeout = max(30, float(timeout or 30))
     con = sqlite3.connect(DB_PATH, timeout=timeout)
     con.row_factory = sqlite3.Row
-    con.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+    con.execute(f"PRAGMA busy_timeout={busy_timeout_ms}")
+    con.execute("PRAGMA journal_mode=WAL")
     attached = {row[1] for row in con.execute("PRAGMA database_list").fetchall()}
     if "dnsdb" not in attached:
         con.execute(f"ATTACH DATABASE '{str(DNS_DB_PATH).replace(chr(39), chr(39) + chr(39))}' AS dnsdb")
         con.execute("PRAGMA dnsdb.journal_mode=WAL")
-        con.execute(f"PRAGMA dnsdb.busy_timeout={int(busy_timeout_ms)}")
+        con.execute(f"PRAGMA dnsdb.busy_timeout={busy_timeout_ms}")
     if "trafficdb" not in attached:
         con.execute(f"ATTACH DATABASE '{str(TRAFFIC_DB_PATH).replace(chr(39), chr(39) + chr(39))}' AS trafficdb")
         con.execute("PRAGMA trafficdb.journal_mode=WAL")
-        con.execute(f"PRAGMA trafficdb.busy_timeout={int(busy_timeout_ms)}")
+        con.execute(f"PRAGMA trafficdb.busy_timeout={busy_timeout_ms}")
     return con
 
 
@@ -1001,6 +983,36 @@ def note_database_write_success():
     with db_contention_lock:
         db_contention_failures = 0
         db_contention_until = 0.0
+
+
+@contextmanager
+def timed_db_write(label, timeout=30, busy_timeout_ms=30000):
+    lock_started = time.monotonic()
+    db_write_lock.acquire()
+    lock_wait = time.monotonic() - lock_started
+    con = None
+    txn_started = time.monotonic()
+    try:
+        con = connect_db(timeout=timeout, busy_timeout_ms=busy_timeout_ms)
+        yield con
+        commit_started = time.monotonic()
+        con.commit()
+        commit_elapsed = time.monotonic() - commit_started
+        total_elapsed = time.monotonic() - txn_started
+        if lock_wait >= 0.2 or total_elapsed >= 0.2 or commit_elapsed >= 0.2:
+            print(
+                f"DB write section {label}: "
+                f"lock_wait={lock_wait:.3f}s txn={total_elapsed:.3f}s commit={commit_elapsed:.3f}s"
+            )
+        note_database_write_success()
+    except Exception:
+        if con:
+            con.rollback()
+        raise
+    finally:
+        if con:
+            con.close()
+        db_write_lock.release()
 
 
 def log_slow_loop(name, elapsed, threshold=2.0):
@@ -1295,18 +1307,11 @@ def run_sql(sql, params=(), timeout=30, busy_timeout_ms=30000, retries=4):
         return
 
     for attempt in range(retries):
-        con = None
         try:
-            with db_write_lock:
-                con = connect_db(timeout=timeout, busy_timeout_ms=busy_timeout_ms)
+            with timed_db_write("run_sql", timeout=timeout, busy_timeout_ms=busy_timeout_ms) as con:
                 con.execute(sql, params)
-                con.commit()
-                con.close()
-            note_database_write_success()
             return
         except sqlite3.OperationalError as e:
-            if con:
-                con.close()
             if "database is locked" in str(e).lower() and attempt < retries - 1:
                 time.sleep(0.25 * (attempt + 1))
                 continue
@@ -1954,49 +1959,33 @@ def import_suricata_eve(config):
 
 
 def run_suricata_classification_enrichment(batch_size=500):
-    con = None
     try:
         if database_contention_remaining() > 0:
             return {"processed": 0, "classified": 0, "unknown": 0}
-        con = connect_db(timeout=2, busy_timeout_ms=1000)
-        result = enrich_from_suricata_metadata(con, batch_size=batch_size)
-        con.commit()
-        note_database_write_success()
+        with timed_db_write("suricata_metadata_classification") as con:
+            result = enrich_from_suricata_metadata(con, batch_size=batch_size)
         return result
     except Exception as error:
-        if con:
-            con.rollback()
         if "database is locked" in str(error).lower():
             note_database_contention("Suricata metadata classification", error)
             return {"processed": 0, "classified": 0, "unknown": 0, "error": str(error)}
         print(f"Suricata metadata classification failed: {error}")
         return {"processed": 0, "classified": 0, "unknown": 0, "error": str(error)}
-    finally:
-        if con:
-            con.close()
 
 
 def run_unknown_queue_reclassification(batch_size=200):
-    con = None
     try:
         if database_contention_remaining() > 0:
             return {"processed": 0, "classified": 0}
-        con = connect_db(timeout=2, busy_timeout_ms=1000)
-        result = reclassify_unknown_queue(con, batch_size=batch_size)
-        con.commit()
-        note_database_write_success()
+        with timed_db_write("unknown_queue_reclassification") as con:
+            result = reclassify_unknown_queue(con, batch_size=batch_size)
         return result
     except Exception as error:
-        if con:
-            con.rollback()
         if "database is locked" in str(error).lower():
             note_database_contention("Unknown traffic reclassification", error)
             return {"processed": 0, "classified": 0, "error": str(error)}
         print(f"Unknown traffic reclassification failed: {error}")
         return {"processed": 0, "classified": 0, "error": str(error)}
-    finally:
-        if con:
-            con.close()
 
 
 def write_heartbeat(status="OK", note="", fast=False):
@@ -3010,127 +2999,110 @@ def flush_loop():
             continue
 
         con = None
-        lock_acquired = False
         try:
-            lock_acquired = db_write_lock.acquire(timeout=1.0)
-            if not lock_acquired:
-                note_database_contention("Counter batch", "collector database writer busy")
-                time.sleep(interval)
-                continue
-            con = connect_db(timeout=2, busy_timeout_ms=1000)
-            for ip, cur in deltas.items():
-                rx_delta = cur["rx"]
-                tx_delta = cur["tx"]
+            with timed_db_write("traffic_counter_batch") as con:
+                for ip, cur in deltas.items():
+                    rx_delta = cur["rx"]
+                    tx_delta = cur["tx"]
 
-                rx_Bps = rx_delta / elapsed
-                tx_Bps = tx_delta / elapsed
-                total_Bps = rx_Bps + tx_Bps
+                    rx_Bps = rx_delta / elapsed
+                    tx_Bps = tx_delta / elapsed
+                    total_Bps = rx_Bps + tx_Bps
 
-                mac = macs.get(ip, "")
-                vendor = vendor_from_mac(mac)
-                dtype = classify_device(vendor)
-                name = adguard_name_for_ip(ip) or ip
+                    mac = macs.get(ip, "")
+                    vendor = vendor_from_mac(mac)
+                    dtype = classify_device(vendor)
+                    name = adguard_name_for_ip(ip) or ip
 
-                con.execute(
-                    """
-                    INSERT INTO live_device_speed
-                        (ip, mac, rx_bps, tx_bps, total_bps, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(ip) DO UPDATE SET
-                        mac=excluded.mac,
-                        rx_bps=excluded.rx_bps,
-                        tx_bps=excluded.tx_bps,
-                        total_bps=excluded.total_bps,
-                        updated_at=excluded.updated_at
-                    """,
-                    (ip, mac, rx_Bps, tx_Bps, total_Bps, now),
-                )
-
-                con.execute(
-                    """
-                    INSERT INTO devices
-                        (ip, name, mac, vendor, device_type, status, first_seen, last_seen)
-                    VALUES (?, ?, ?, ?, ?, 'Active', ?, ?)
-                    ON CONFLICT(ip) DO UPDATE SET
-                        mac=CASE WHEN excluded.mac != '' THEN excluded.mac ELSE devices.mac END,
-                        vendor=CASE WHEN excluded.mac != '' THEN excluded.vendor ELSE devices.vendor END,
-                        device_type=CASE
-                            WHEN devices.device_type IS NULL
-                              OR devices.device_type=''
-                              OR devices.device_type='Unknown'
-                            THEN excluded.device_type
-                            ELSE devices.device_type
-                        END,
-                        name=CASE WHEN excluded.name != excluded.ip THEN excluded.name ELSE devices.name END,
-                        last_seen=excluded.last_seen
-                    """,
-                    (ip, name, mac, vendor, dtype, now, now),
-                )
-
-                interval_rx_mb = rx_delta / 1024 / 1024
-                interval_tx_mb = tx_delta / 1024 / 1024
-                interval_total_mb = interval_rx_mb + interval_tx_mb
-
-                if interval_total_mb > 0:
                     con.execute(
                         """
-                        INSERT INTO traffic_intervals
-                            (ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO live_device_speed
+                            (ip, mac, rx_bps, tx_bps, total_bps, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(ip) DO UPDATE SET
+                            mac=excluded.mac,
+                            rx_bps=excluded.rx_bps,
+                            tx_bps=excluded.tx_bps,
+                            total_bps=excluded.total_bps,
+                            updated_at=excluded.updated_at
                         """,
-                        (
-                            ip,
-                            name,
-                            mac,
-                            interval_rx_mb,
-                            interval_tx_mb,
-                            interval_total_mb,
-                            (rx_delta + tx_delta) / elapsed * 8,
-                            day,
-                            now,
-                        ),
+                        (ip, mac, rx_Bps, tx_Bps, total_Bps, now),
                     )
 
-            for (category, ip), cur in estimated_deltas.items():
-                interval_rx_mb = cur["rx"] / 1024 / 1024
-                interval_tx_mb = cur["tx"] / 1024 / 1024
-                interval_total_mb = interval_rx_mb + interval_tx_mb
-                if interval_total_mb > 0:
                     con.execute(
                         """
-                        INSERT INTO estimated_app_traffic
-                            (ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO devices
+                            (ip, name, mac, vendor, device_type, status, first_seen, last_seen)
+                        VALUES (?, ?, ?, ?, ?, 'Active', ?, ?)
+                        ON CONFLICT(ip) DO UPDATE SET
+                            mac=CASE WHEN excluded.mac != '' THEN excluded.mac ELSE devices.mac END,
+                            vendor=CASE WHEN excluded.mac != '' THEN excluded.vendor ELSE devices.vendor END,
+                            device_type=CASE
+                                WHEN devices.device_type IS NULL
+                                  OR devices.device_type=''
+                                  OR devices.device_type='Unknown'
+                                THEN excluded.device_type
+                                ELSE devices.device_type
+                            END,
+                            name=CASE WHEN excluded.name != excluded.ip THEN excluded.name ELSE devices.name END,
+                            last_seen=excluded.last_seen
                         """,
-                        (ip, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
+                        (ip, name, mac, vendor, dtype, now, now),
                     )
 
-            for (category, ip, destination), cur in remote_destination_deltas.items():
-                write_destination_delta(con, ip, destination, cur, day, now, category)
-            for (ip, destination), cur in classification_destination_deltas.items():
-                write_destination_delta(con, ip, destination, cur, day, now, "Unknown")
-            con.commit()
+                    interval_rx_mb = rx_delta / 1024 / 1024
+                    interval_tx_mb = tx_delta / 1024 / 1024
+                    interval_total_mb = interval_rx_mb + interval_tx_mb
+
+                    if interval_total_mb > 0:
+                        con.execute(
+                            """
+                            INSERT INTO traffic_intervals
+                                (ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                ip,
+                                name,
+                                mac,
+                                interval_rx_mb,
+                                interval_tx_mb,
+                                interval_total_mb,
+                                (rx_delta + tx_delta) / elapsed * 8,
+                                day,
+                                now,
+                            ),
+                        )
+
+                for (category, ip), cur in estimated_deltas.items():
+                    interval_rx_mb = cur["rx"] / 1024 / 1024
+                    interval_tx_mb = cur["tx"] / 1024 / 1024
+                    interval_total_mb = interval_rx_mb + interval_tx_mb
+                    if interval_total_mb > 0:
+                        con.execute(
+                            """
+                            INSERT INTO estimated_app_traffic
+                                (ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (ip, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
+                        )
+
+                for (category, ip, destination), cur in remote_destination_deltas.items():
+                    write_destination_delta(con, ip, destination, cur, day, now, category)
+                for (ip, destination), cur in classification_destination_deltas.items():
+                    write_destination_delta(con, ip, destination, cur, day, now, "Unknown")
             nft_previous_counters = next_previous_counters
             nft_previous_estimated_counters = next_previous_estimated_counters
             nft_previous_classification_counters = next_previous_classification_counters
             nft_active_ips = next_active_ips
-            note_database_write_success()
         except sqlite3.OperationalError as e:
-            if con:
-                con.rollback()
             if "database is locked" in str(e).lower():
                 note_database_contention("Counter batch write", e)
             else:
                 print(f"Counter batch write failed: {e}")
         except Exception as e:
-            if con:
-                con.rollback()
             print(f"Counter batch write failed: {e}")
-        finally:
-            if con:
-                con.close()
-            if lock_acquired:
-                db_write_lock.release()
 
         log_slow_loop("Packet collector", time.monotonic() - cycle_started, threshold=2.5)
         time.sleep(interval)
@@ -3236,10 +3208,8 @@ def import_adguard_querylog():
         print(f"AdGuard querylog write skipped: database contention backoff {contention_remaining:.0f}s remaining")
         return
 
-    con = None
     try:
-        with db_write_lock:
-            con = connect_db(timeout=2, busy_timeout_ms=1000)
+        with timed_db_write("adguard_dns_querylog") as con:
             for ip, (name, first_seen, last_seen) in device_updates.items():
                 con.execute(
                     """
@@ -3273,20 +3243,13 @@ def import_adguard_querylog():
                     """,
                     dns_resolution_rows,
                 )
-            con.commit()
-        note_database_write_success()
         imported_dns_keys.update(pending_dns_keys)
     except Exception as e:
-        if con:
-            con.rollback()
         if "database is locked" in str(e).lower():
             note_database_contention("DNS querylog batch insert", e)
             return
         print(f"DNS querylog batch insert failed: {e}")
         return
-    finally:
-        if con:
-            con.close()
 
     if dns_rows:
         print(f"AdGuard querylog imported rows: {len(dns_rows)}; DNS answers: {len(dns_resolution_rows)}")
@@ -3324,8 +3287,7 @@ def adguard_querylog_loop():
             incident_interval = positive_int(c.get("incident_build_interval_seconds", 120), 120, 30)
             if now_mono - last_incident_build >= incident_interval:
                 last_incident_build = now_mono
-                with db_write_lock:
-                    created = run_timed_step("Incidents/build", build_incidents_once, connect_db, c)
+                created = run_timed_step("Incidents/build", build_incidents_once, connect_db, c)
                 if created:
                     print(f"Security incidents created: {created}")
             run_timed_step("AdGuard/querylog import", import_adguard_querylog)
@@ -3352,9 +3314,11 @@ def internet_quality_loop():
             summary = collect_quality_summary(c)
             live_snapshot.update_quality(summary)
             if database_contention_remaining() <= 0:
-                with db_write_lock:
-                    insert_quality_summary(connect_db, summary)
-                note_database_write_success()
+                started_write = time.monotonic()
+                insert_quality_summary(connect_db, summary)
+                elapsed_write = time.monotonic() - started_write
+                if elapsed_write >= 0.2:
+                    print(f"DB write section internet_quality: txn={elapsed_write:.3f}s")
             print(f"Internet quality summary: {summary['status']} - {summary['diagnosis']}")
         except Exception as e:
             if "database is locked" in str(e).lower():
@@ -3374,8 +3338,7 @@ def config_change_monitor_loop():
         interval = positive_int(c.get("config_change_monitor_interval_seconds", 300), 300, 60)
         started = time.monotonic()
         try:
-            with db_write_lock:
-                result = monitor_once(connect_db, c)
+            result = run_timed_step("Config monitor", monitor_once, connect_db, c)
             if result.get("changed"):
                 print(f"Config monitor snapshot changed; events={result.get('events', 0)}")
         except Exception as e:
@@ -3398,12 +3361,10 @@ def threat_intel_loop():
         now_monotonic = time.monotonic()
         try:
             if now_monotonic - last_refresh >= refresh_seconds:
-                with db_write_lock:
-                    results = refresh_feeds(connect_db, c)
+                results = run_timed_step("Threat intel refresh", refresh_feeds, connect_db, c)
                 print(f"Threat intel feed refresh: {results}")
                 last_refresh = now_monotonic
-            with db_write_lock:
-                matches = correlate_once(connect_db, c)
+            matches = run_timed_step("Threat intel correlate", correlate_once, connect_db, c)
             if matches:
                 print(f"Threat intel correlations inserted: {matches}")
         except Exception as e:
@@ -3420,8 +3381,7 @@ def anomaly_baseline_loop():
         interval = positive_int(c.get("anomaly_interval_seconds", 3600), 3600, 300)
         started = time.monotonic()
         try:
-            with db_write_lock:
-                created = run_anomaly_cycle(connect_db, c)
+            created = run_timed_step("Anomaly baseline", run_anomaly_cycle, connect_db, c)
             if created:
                 print(f"Anomaly baseline events recorded: {created}")
         except Exception as e:
