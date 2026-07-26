@@ -8,9 +8,11 @@
   An inline network visibility and security appliance.
 </p>
 
-NetSpecter is an inline Debian-based appliance that provides network visibility, DNS analytics, service monitoring, internet-quality history, IDS detection, incident tracking, licence registration, and appliance health monitoring through one web interface.
+NetSpecter v2 is an inline Debian-based appliance that provides network visibility, DNS analytics, service monitoring, internet-quality history, IDS detection, incident tracking, licence registration, and appliance health monitoring through one web interface.
 
 It is designed for networks that need clearer visibility without replacing the router or firewall.
+
+This repository is for **NetSpecter v2 only**. It is not the original NetSpecter project and its install requirements are different.
 
 ## The NetSpecter Appliance
 
@@ -22,15 +24,17 @@ Printable STL files for the rack brackets and LCD back cover are in [hardware/so
 
 ## Security Warning
 
-NetSpecter is a LAN appliance. Do not expose the NetSpecter web interface, API, LCD endpoint, Gatus, AdGuard Home, SSH, or any appliance management port directly to the public internet.
+NetSpecter is a LAN appliance. Do not expose the NetSpecter web interface, LCD endpoint, Gatus, AdGuard Home, SSH, or any appliance management port directly to the public internet.
 
 Use NetSpecter only on trusted local networks or through a private VPN. Do not port-forward NetSpecter from the router, place it in a public DMZ, or publish it through a reverse proxy unless you fully understand and control the risk.
+
+NetSpecter v2 does not ship the experimental third-party AI integration API. The only HTTP APIs enabled by default are internal/local appliance endpoints used by the web UI, health checks, and optional LCD display.
 
 ## Which Version Should You Use?
 
 NetSpecter v2 is the feature-rich appliance build. It adds more monitoring, IDS, incident, backup, telemetry, and health features than the original NetSpecter.
 
-For older architecture, simpler home deployments, or very small networks that do not need the extra v2 feature set, use the [original NetSpecter](https://github.com/irish-frog/netspecter) instead.
+For older architecture, simpler home deployments, or very small networks that do not need the extra v2 feature set, use the [original NetSpecter](https://github.com/irish-frog/netspecter) instead. Do not mix the original NetSpecter README or requirements with this v2 installer.
 
 ## What NetSpecter Does
 
@@ -61,6 +65,23 @@ NetSpecter is installed inline as a transparent bridge. It requires two physical
 
 DNS analytics require clients to use AdGuard Home on the NetSpecter appliance as DNS. See the [Bridge Configuration](docs/NETWORK-BRIDGE.md) and [AdGuard DNS](docs/ADGUARD.md) guides for the full setup path.
 
+## NetSpecter v2 Requirements
+
+Use these requirements for this repository. If another document says otherwise, check that it is not for the original NetSpecter project.
+
+| Requirement | NetSpecter v2 |
+|---|---|
+| Operating system | Fresh Debian 13 Trixie recommended |
+| User | Run installer as `root`; do not use `sudo` if your appliance does not have it |
+| Network | Two physical Ethernet ports for the supported inline bridge deployment |
+| IP address | Static LAN IP recommended before install |
+| CPU | 4 cores recommended; 2 cores minimum for light use |
+| RAM | 8 GB recommended; 4 GB minimum |
+| Storage | 64 GB SSD recommended; 32 GB SSD minimum |
+| Internet during install | Required for packages, Python dependencies, AdGuard Home, and optional tools |
+
+The installer creates `/opt/netspecter`, `/etc/netspecter`, `/var/lib/netspecter`, and `/var/log/netspecter`. After installation, use `/opt/netspecter` for updates and service maintenance.
+
 ## Quick Install
 
 Fresh Debian 13 appliance, run as `root`:
@@ -68,9 +89,9 @@ Fresh Debian 13 appliance, run as `root`:
 ```bash
 apt update
 apt install -y git curl nano
-cd /root
-git clone https://github.com/irish-frog/netspecter-v2.git
-cd netspecter-v2
+cd /opt
+git clone https://github.com/irish-frog/netspecter-v2.git netspecter
+cd /opt/netspecter
 bash ./install.sh
 ```
 
@@ -81,6 +102,8 @@ https://YOUR-NETSPECTER-IP:9443
 ```
 
 On a fresh install, NetSpecter opens the first-time registration screen. This creates the local administrator account, registers the appliance with NetLic, stores the issued licence key locally, and then opens the dashboard.
+
+If you already cloned to `/root/netspecter-v2`, that is fine for testing, but the supported installed runtime path is still `/opt/netspecter`.
 
 For full preparation, bridge configuration, and service setup, see the [Installation Guide](docs/INSTALL.md).
 
@@ -112,8 +135,8 @@ For full preparation, bridge configuration, and service setup, see the [Installa
 
 | Use case | CPU | RAM | Storage | Network |
 |---|---:|---:|---:|---|
-| Minimum | 2 cores | 4 GB | 32 GB SSD | 2 Ethernet ports |
-| Recommended | 4 cores | 8 GB | 64 GB SSD | 2 reliable Ethernet ports |
+| Minimum light use | 2 cores | 4 GB | 32 GB SSD | 2 Ethernet ports |
+| Recommended SMB appliance | 4 cores | 8 GB | 64 GB SSD | 2 reliable Ethernet ports |
 | IDS and longer retention | 4-8 cores | 8-16 GB | 128 GB SSD or larger | Intel i210/i350/i225/i226 or similar |
 
 Use an SSD, not a USB flash drive. Two physical ports are required for the supported bridge deployment. Better NICs and CPU are recommended for high-speed links or heavy IDS usage.
@@ -122,7 +145,7 @@ Use an SSD, not a USB flash drive. Two physical ports are required for the suppo
 
 | Service | Purpose |
 |---|---|
-| `netspecter-web.service` | Internal web UI and API on port 5050, available on the LAN through HTTPS on port 9443 |
+| `netspecter-web.service` | Internal web UI on port 5050, available on the LAN through HTTPS on port 9443 |
 | `netspecter-collector.service` | Bridge traffic collector and data importers |
 | `netspecter-monitor.timer` | Monitor sync and alert processing |
 | `netspecter-speedtest.timer` | Scheduled speed tests |
