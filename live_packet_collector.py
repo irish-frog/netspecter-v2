@@ -52,6 +52,14 @@ from netspecter_ids import (
 )
 from netspecter_anomaly import prune_anomalies, run_anomaly_cycle
 from services.microsoft365_endpoints_service import cached_microsoft365_domain_mappings
+from services.classification_resolver_service import (
+    Flow,
+    classify_flow,
+    dns_answer_rows,
+    upsert_unknown_traffic,
+    write_classified_flow_fact,
+)
+from services.suricata_classification_service import enrich_from_suricata_metadata, reclassify_unknown_queue
 from netspecter_config_monitor import monitor_once, prune_config_changes
 from netspecter_db import init_db as init_shared_db
 from netspecter_incidents import build_incidents_once, prune_incidents
@@ -279,6 +287,7 @@ NFT_CHAIN = "forward"
 nft_config_signature = None
 nft_previous_counters = {}
 nft_previous_estimated_counters = {}
+nft_previous_classification_counters = {}
 nft_active_ips = set()
 live_traffic_today = {"day": "", "downloaded_mb": 0.0, "uploaded_mb": 0.0, "total_mb": 0.0}
 estimated_app_targets = {}
@@ -291,6 +300,7 @@ DNS_MAP_DOMAIN_LIMIT = 80
 DNS_MAP_IP_LIMIT = 180
 DNS_MAP_GEO_LOOKUPS_PER_RUN = 3
 ESTIMATED_APP_NFT_TARGET_LIMIT = 200
+CLASSIFICATION_NFT_TARGET_LIMIT = 300
 NFT_SIGNATURE_REFRESH_SECONDS = 900
 ADGUARD_CLIENT_REFRESH_SECONDS = 300
 UNIFI_CLIENT_REFRESH_SECONDS = 1800
@@ -930,6 +940,7 @@ def refresh_unifi_clients(config):
 def connect_db(timeout=30, busy_timeout_ms=30000):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB_PATH, timeout=timeout)
+    con.row_factory = sqlite3.Row
     con.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
     attached = {row[1] for row in con.execute("PRAGMA database_list").fetchall()}
     if "dnsdb" not in attached:
@@ -1858,8 +1869,55 @@ def import_suricata_eve(config):
                 print(f"Suricata IDS alert severities reclassified: {changed}")
         if result.get("bad_json"):
             print(f"Suricata eve.json skipped malformed rows: {result['bad_json']}")
+        enrichment = run_suricata_classification_enrichment()
+        if enrichment.get("processed"):
+            print(
+                "Suricata metadata classification: "
+                f"{enrichment['classified']} classified, {enrichment['unknown']} unknown "
+                f"from {enrichment['processed']} metadata rows"
+            )
+        reclassified = run_unknown_queue_reclassification()
+        if reclassified.get("classified"):
+            print(
+                "Unknown traffic reclassification: "
+                f"{reclassified['classified']} classified from {reclassified['processed']} queued destinations"
+            )
     except Exception as error:
         print(f"Suricata eve.json import failed: {error}")
+
+
+def run_suricata_classification_enrichment(batch_size=500):
+    con = None
+    try:
+        con = connect_db(timeout=2, busy_timeout_ms=1000)
+        result = enrich_from_suricata_metadata(con, batch_size=batch_size)
+        con.commit()
+        return result
+    except Exception as error:
+        if con:
+            con.rollback()
+        print(f"Suricata metadata classification failed: {error}")
+        return {"processed": 0, "classified": 0, "unknown": 0, "error": str(error)}
+    finally:
+        if con:
+            con.close()
+
+
+def run_unknown_queue_reclassification(batch_size=200):
+    con = None
+    try:
+        con = connect_db(timeout=2, busy_timeout_ms=1000)
+        result = reclassify_unknown_queue(con, batch_size=batch_size)
+        con.commit()
+        return result
+    except Exception as error:
+        if con:
+            con.rollback()
+        print(f"Unknown traffic reclassification failed: {error}")
+        return {"processed": 0, "classified": 0, "error": str(error)}
+    finally:
+        if con:
+            con.close()
 
 
 def write_heartbeat(status="OK", note="", fast=False):
@@ -1927,6 +1985,10 @@ def prune_history(config=None):
         )
         con.execute(
             "DELETE FROM dns_resolved_ips WHERE resolved_ts < datetime('now', 'localtime', ?)",
+            (dns_cutoff,),
+        )
+        con.execute(
+            "DELETE FROM dns_resolution_events WHERE expires_at < datetime('now', 'localtime', ?)",
             (dns_cutoff,),
         )
         con.execute(
@@ -2055,11 +2117,58 @@ def rollup_and_prune_raw_traffic(config=None):
             """,
             (raw_cutoff,),
         )
+        con.execute(
+            """
+            INSERT INTO classified_flow_rollups
+                (bucket, day, source_ip, destination_ip, domain, sni, protocol, port,
+                 primary_app, primary_category, confidence, bytes_in, bytes_out,
+                 total_mb, optional_tags_json, first_seen, last_seen)
+            SELECT
+                substr(ts, 1, 13) || ':00' AS bucket,
+                day,
+                local_ip AS source_ip,
+                remote_ip AS destination_ip,
+                CASE WHEN evidence_source IN ('dns_resolution', 'http_host') THEN application ELSE '' END AS domain,
+                CASE WHEN evidence_source='tls_sni' THEN application ELSE '' END AS sni,
+                protocol,
+                port,
+                COALESCE(NULLIF(application, ''), category) AS primary_app,
+                category AS primary_category,
+                CASE
+                    WHEN confidence='high' THEN 90
+                    WHEN confidence='medium' THEN 65
+                    WHEN confidence='low' THEN 35
+                    ELSE 0
+                END AS confidence,
+                0 AS bytes_in,
+                SUM(bytes) AS bytes_out,
+                SUM(bytes) / 1024.0 / 1024.0 AS total_mb,
+                json_array(evidence_source, confidence) AS optional_tags_json,
+                MIN(ts) AS first_seen,
+                MAX(ts) AS last_seen
+            FROM classified_flow_facts
+            WHERE ts < datetime('now', 'localtime', ?)
+            GROUP BY bucket, day, source_ip, destination_ip, domain, sni, protocol, port, primary_app, primary_category, confidence
+            ON CONFLICT(bucket, source_ip, destination_ip, domain, sni, protocol, port, primary_app) DO UPDATE SET
+                primary_category=excluded.primary_category,
+                confidence=excluded.confidence,
+                bytes_in=excluded.bytes_in,
+                bytes_out=excluded.bytes_out,
+                total_mb=excluded.total_mb,
+                optional_tags_json=excluded.optional_tags_json,
+                first_seen=excluded.first_seen,
+                last_seen=excluded.last_seen
+            """,
+            (raw_cutoff,),
+        )
         con.execute("DELETE FROM traffic_intervals WHERE ts < datetime('now', 'localtime', ?)", (raw_cutoff,))
         con.execute("DELETE FROM traffic_samples WHERE ts < datetime('now', 'localtime', ?)", (raw_cutoff,))
+        con.execute("DELETE FROM classified_flow_facts WHERE ts < datetime('now', 'localtime', ?)", (raw_cutoff,))
         con.execute("DELETE FROM traffic_hourly_rollups WHERE day < date('now', 'localtime', ?)", (rollup_cutoff,))
         con.execute("DELETE FROM estimated_app_hourly_rollups WHERE day < date('now', 'localtime', ?)", (rollup_cutoff,))
         con.execute("DELETE FROM remote_traffic_hourly_rollups WHERE day < date('now', 'localtime', ?)", (rollup_cutoff,))
+        con.execute("DELETE FROM classified_flow_rollups WHERE day < date('now', 'localtime', ?)", (rollup_cutoff,))
+        con.execute("DELETE FROM classified_flow_facts WHERE day < date('now', 'localtime', ?)", (rollup_cutoff,))
         con.commit()
         con.execute("PRAGMA wal_checkpoint(PASSIVE)")
     except Exception as e:
@@ -2254,6 +2363,57 @@ def active_estimated_app_targets():
         )
 
 
+def active_classification_targets(config=None):
+    """Return recent DNS client/destination pairs for lightweight byte classification."""
+    c = config or cfg()
+    limit = min(positive_int(c.get("classification_nft_target_limit", CLASSIFICATION_NFT_TARGET_LIMIT), CLASSIFICATION_NFT_TARGET_LIMIT, 1), 1000)
+    try:
+        network = lan_network(c)
+    except ValueError:
+        return tuple()
+    rows = []
+    con = None
+    try:
+        con = connect_db(timeout=1, busy_timeout_ms=500)
+        rows = con.execute(
+            """
+            SELECT client_ip, resolved_ip, MAX(expires_at) AS expires_at, MAX(ts) AS last_seen
+            FROM dns_resolution_events
+            WHERE expires_at >= datetime('now', 'localtime')
+              AND client_ip IS NOT NULL AND client_ip != ''
+              AND resolved_ip IS NOT NULL AND resolved_ip != ''
+            GROUP BY client_ip, resolved_ip
+            ORDER BY MAX(ts) DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    except Exception as error:
+        print(f"Classification target refresh failed: {error}")
+        return tuple()
+    finally:
+        if con:
+            con.close()
+
+    targets = []
+    for row in rows:
+        client = str(row["client_ip"] if hasattr(row, "keys") else row[0]).strip()
+        destination = str(row["resolved_ip"] if hasattr(row, "keys") else row[1]).strip()
+        try:
+            client_ip = ipaddress.ip_address(client)
+            destination_ip = ipaddress.ip_address(destination)
+        except ValueError:
+            continue
+        if client_ip.version != 4 or destination_ip.version != 4:
+            continue
+        if client_ip not in network:
+            continue
+        if destination_ip in network or destination_ip.is_unspecified:
+            continue
+        targets.append((client, destination))
+    return tuple(sorted(set(targets)))
+
+
 def public_ipv4(value):
     try:
         ip = ipaddress.ip_address(str(value or "").strip())
@@ -2425,16 +2585,17 @@ def nft_signature(config=None):
         tuple(sorted(ignored_ips(c))),
         tuple(sorted(set(banned_ips))),
         active_estimated_app_targets(),
+        active_classification_targets(c),
     )
 
 
 def install_nft_counters(config=None):
     """Create bridge traffic counters and any configured IDS endpoint drop rules."""
-    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_active_ips, live_traffic_today
+    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_previous_classification_counters, nft_active_ips, live_traffic_today
     started = time.monotonic()
     c = config or cfg()
     signature = nft_signature(c)
-    interface, network_text, ignored, banned_ips, app_targets = signature
+    interface, network_text, ignored, banned_ips, app_targets, classification_targets = signature
     network = ipaddress.ip_network(network_text)
     ignored_set = set(ignored)
     hosts = [str(ip) for ip in network.hosts() if str(ip) not in ignored_set]
@@ -2490,6 +2651,16 @@ def install_nft_counters(config=None):
         lines.append(
             f'    ip daddr {client} ip saddr {destination} counter comment "netspecter:estimated:{category}:rx:{client}:{destination}"'
         )
+    app_target_pairs = {(client, destination) for _category, client, destination in app_targets}
+    for client, destination in classification_targets:
+        if (client, destination) in app_target_pairs:
+            continue
+        lines.append(
+            f'    ip saddr {client} ip daddr {destination} counter comment "netspecter:classify:tx:{client}:{destination}"'
+        )
+        lines.append(
+            f'    ip daddr {client} ip saddr {destination} counter comment "netspecter:classify:rx:{client}:{destination}"'
+        )
     lines.extend(["  }", "}"])
     result = subprocess.run(
         ["nft", "-f", "-"],
@@ -2505,17 +2676,19 @@ def install_nft_counters(config=None):
     nft_config_signature = signature
     nft_previous_counters = {}
     nft_previous_estimated_counters = {}
+    nft_previous_classification_counters = {}
     nft_active_ips = set()
     print(
         f"nftables traffic counters installed for {network_text} on bridge traffic ({interface}); "
-        f"{len(app_targets)} monitored app attribution target(s); {len(banned_ips)} IDS banned endpoint(s)"
+        f"{len(app_targets)} monitored app attribution target(s); "
+        f"{len(classification_targets)} classification target(s); {len(banned_ips)} IDS banned endpoint(s)"
     )
     log_slow_loop("nftables counter install", time.monotonic() - started, threshold=2.0)
 
 
 def remove_nft_counters():
     """Remove NetSpecter's private counter table during an orderly shutdown."""
-    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_active_ips, live_traffic_today
+    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_previous_classification_counters, nft_active_ips, live_traffic_today
     if nft_config_signature is None:
         return
     subprocess.run(
@@ -2527,6 +2700,7 @@ def remove_nft_counters():
     nft_config_signature = None
     nft_previous_counters = {}
     nft_previous_estimated_counters = {}
+    nft_previous_classification_counters = {}
     nft_active_ips = set()
     print("NetSpecter nftables traffic counters removed")
 
@@ -2538,7 +2712,7 @@ def shutdown_collector(signum, _frame):
 
 
 def read_nft_counters():
-    """Return device totals and DNS-attributed app totals from nftables."""
+    """Return device totals and lightweight destination totals from nftables."""
     result = subprocess.run(
         ["nft", "-j", "list", "chain", NFT_FAMILY, NFT_TABLE, NFT_CHAIN],
         text=True,
@@ -2552,6 +2726,7 @@ def read_nft_counters():
     payload = json.loads(result.stdout)
     counters = {}
     estimated_counters = {}
+    classification_counters = {}
     for item in payload.get("nftables", []):
         rule = item.get("rule") if isinstance(item, dict) else None
         if not rule:
@@ -2569,7 +2744,9 @@ def read_nft_counters():
             counters[(parts[1], parts[2])] = total_bytes
         elif len(parts) == 6 and parts[1] == "estimated" and parts[3] in ("rx", "tx"):
             estimated_counters[(parts[2], parts[3], parts[4], parts[5])] = total_bytes
-    return counters, estimated_counters
+        elif len(parts) == 5 and parts[1] == "classify" and parts[2] in ("rx", "tx"):
+            classification_counters[(parts[2], parts[3], parts[4])] = total_bytes
+    return counters, estimated_counters, classification_counters
 
 
 def read_arp_macs():
@@ -2585,6 +2762,35 @@ def read_arp_macs():
     return macs
 
 
+def write_destination_delta(con, ip, destination, cur, day, now, default_category="Unknown"):
+    interval_rx_mb = cur["rx"] / 1024 / 1024
+    interval_tx_mb = cur["tx"] / 1024 / 1024
+    interval_total_mb = interval_rx_mb + interval_tx_mb
+    if interval_total_mb <= 0:
+        return
+    flow = Flow(
+        ts=now,
+        local_ip=ip,
+        remote_ip=destination,
+        bytes=int(cur["rx"] + cur["tx"]),
+        protocol="tcp",
+    )
+    classification = classify_flow(con, flow)
+    category = classification.category if classification else default_category
+    con.execute(
+        """
+        INSERT INTO remote_traffic_intervals
+            (ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (ip, destination, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
+    )
+    if classification:
+        write_classified_flow_fact(con, flow, classification)
+    else:
+        upsert_unknown_traffic(con, flow)
+
+
 def flush_loop():
     """
     Kernel-counter database update loop.
@@ -2596,7 +2802,7 @@ def flush_loop():
     - Updates devices
     - Inserts additive traffic_intervals rows
     """
-    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_active_ips, live_traffic_today
+    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_previous_classification_counters, nft_active_ips, live_traffic_today
     init_db()
     last_flush_at = time.monotonic()
     last_signature_check = 0
@@ -2616,7 +2822,7 @@ def flush_loop():
                     install_nft_counters(c)
                 nft_config_refresh_event.clear()
 
-            current_counters, current_estimated_counters = read_nft_counters()
+            current_counters, current_estimated_counters, current_classification_counters = read_nft_counters()
             flush_at = time.monotonic()
             elapsed = max(flush_at - last_flush_at, 0.001)
             last_flush_at = flush_at
@@ -2648,6 +2854,16 @@ def flush_loop():
                     estimated_deltas[(category, ip)][direction] += delta
                     remote_destination_deltas.setdefault((category, ip, destination), {"rx": 0, "tx": 0})
                     remote_destination_deltas[(category, ip, destination)][direction] += delta
+            classification_destination_deltas = {}
+            next_previous_classification_counters = dict(nft_previous_classification_counters)
+            for (direction, ip, destination), total_bytes in current_classification_counters.items():
+                key = (direction, ip, destination)
+                previous = nft_previous_classification_counters.get(key, 0)
+                delta = max(total_bytes - previous, 0)
+                next_previous_classification_counters[key] = total_bytes
+                if delta:
+                    classification_destination_deltas.setdefault((ip, destination), {"rx": 0, "tx": 0})
+                    classification_destination_deltas[(ip, destination)][direction] += delta
             write_heartbeat("OK", "nftables counters running", fast=True)
         except Exception as e:
             print(f"nftables traffic collection failed: {e}")
@@ -2799,21 +3015,13 @@ def flush_loop():
                     )
 
             for (category, ip, destination), cur in remote_destination_deltas.items():
-                interval_rx_mb = cur["rx"] / 1024 / 1024
-                interval_tx_mb = cur["tx"] / 1024 / 1024
-                interval_total_mb = interval_rx_mb + interval_tx_mb
-                if interval_total_mb > 0:
-                    con.execute(
-                        """
-                        INSERT INTO remote_traffic_intervals
-                            (ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (ip, destination, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
-                    )
+                write_destination_delta(con, ip, destination, cur, day, now, category)
+            for (ip, destination), cur in classification_destination_deltas.items():
+                write_destination_delta(con, ip, destination, cur, day, now, "Unknown")
             con.commit()
             nft_previous_counters = next_previous_counters
             nft_previous_estimated_counters = next_previous_estimated_counters
+            nft_previous_classification_counters = next_previous_classification_counters
             nft_active_ips = next_active_ips
         except sqlite3.OperationalError as e:
             if con:
@@ -2884,6 +3092,7 @@ def import_adguard_querylog():
 
     device_updates = {}
     dns_rows = []
+    dns_resolution_rows = []
     pending_dns_keys = []
 
     for item in rows:
@@ -2911,6 +3120,7 @@ def import_adguard_querylog():
             last_seen = max(current[2], ts) if current else ts
             device_updates[ip] = (name, first_seen, last_seen)
         remember_estimated_app_targets(c, client, domain, item.get("answer") or [], ts, blocked)
+        dns_resolution_rows.extend(dns_answer_rows(ip or client, domain, item.get("answer") or [], ts))
 
         if cutoff and ts <= cutoff:
             continue
@@ -2923,7 +3133,7 @@ def import_adguard_querylog():
         dns_rows.append((day, ts, client, domain, blocked, category))
         pending_dns_keys.append(key)
 
-    if not device_updates and not dns_rows:
+    if not device_updates and not dns_rows and not dns_resolution_rows:
         return
 
     con = None
@@ -2954,6 +3164,15 @@ def import_adguard_querylog():
                     """,
                     dns_rows,
                 )
+            if dns_resolution_rows:
+                con.executemany(
+                    """
+                    INSERT INTO dns_resolution_events
+                        (ts, client_ip, domain, resolved_ip, ttl, expires_at, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    dns_resolution_rows,
+                )
             con.commit()
         imported_dns_keys.update(pending_dns_keys)
     except Exception as e:
@@ -2966,7 +3185,7 @@ def import_adguard_querylog():
             con.close()
 
     if dns_rows:
-        print(f"AdGuard querylog imported rows: {len(dns_rows)}")
+        print(f"AdGuard querylog imported rows: {len(dns_rows)}; DNS answers: {len(dns_resolution_rows)}")
 
 
 def adguard_querylog_loop():

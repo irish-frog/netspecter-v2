@@ -56,6 +56,7 @@ DEFAULT_CONFIG = {
     "traffic_retention_days": 60,
     "raw_traffic_retention_hours": 6,
     "dns_retention_days": 60,
+    "classification_nft_target_limit": 300,
     "public_ip_cache_seconds": 1800,
     "remote_map_geo_lookups_per_run": 50,
     "dns_map_geo_lookups_per_run": 10,

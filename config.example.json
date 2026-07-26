@@ -9,6 +9,7 @@
   "traffic_retention_days": 60,
   "raw_traffic_retention_hours": 6,
   "dns_retention_days": 60,
+  "classification_nft_target_limit": 300,
   "fast_page_mode": true,
   "appliance_ip": "",
   "https_proxy_host": "0.0.0.0",

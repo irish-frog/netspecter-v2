@@ -127,6 +127,8 @@ from services.report_context_service import build_reporting_context_from_request
 from services.report_pdf_service import reporting_pdf_response
 from services.ai_attribution_service import ai_attribution_summary
 from services.application_classification_service import categories as application_categories, valid_domain_pattern
+from services.application_signature_service import create_application_signature
+from services.suricata_classification_service import reclassify_unknown_queue
 from services.microsoft365_endpoints_service import microsoft365_endpoint_cache_status, refresh_microsoft365_endpoints
 from netspecter_ui_helpers import (
     device_age_seconds,
@@ -1891,6 +1893,7 @@ def shell(title, body, active="Dashboard"):
             [
                 ("Devices", "/devices", "devices"),
                 ("Traffic", "/traffic", "traffic"),
+                ("Unknown Review", "/unknown-traffic", "network"),
                 ("History", "/history", "history"),
                 ("Application Activity", "/applications", "network"),
                 ("Speed Tests", "/speed-tests", "speedtest"),
@@ -5483,6 +5486,7 @@ def traffic():
       <div class="ns-filter-bar">
         {time_picker()}
         <input id="trafficSearch" type="search" placeholder="Filter device or IP" aria-label="Filter traffic rows" data-table-search="trafficTable">
+        <a class="ns-compact-button" href="/unknown-traffic">Unknown Review</a>
         <a class="ns-compact-button ns-compact-button--danger" href="/traffic/clear?range={range_key()}">Clear Traffic History</a>
       </div>
     </div>
@@ -9936,6 +9940,159 @@ def adguard_action():
         ag_post(endpoint, payload)
 
     return redirect("/adguard")
+
+
+@app.route("/unknown-traffic", methods=["GET", "POST"])
+def unknown_traffic_review():
+    notice = ""
+    notice_class = "setup-ok"
+    if request.method == "POST":
+        row_id = request.form.get("unknown_id", "").strip()
+        app_name = request.form.get("application", "").strip()
+        category = request.form.get("category", "").strip()
+        rule_type = request.form.get("rule_type", "ip").strip()
+        valid_categories = {row["name"] for row in application_categories()}
+        row = _unknown_queue_row(row_id)
+        if not row:
+            notice, notice_class = "Unknown traffic row was not found.", "setup-warning"
+        elif not app_name or category not in valid_categories:
+            notice, notice_class = "Choose an application name and valid category before saving a rule.", "setup-warning"
+        else:
+            domains = []
+            destination_ips = []
+            asn = []
+            ports = []
+            protocols = []
+            if rule_type == "domain":
+                domain = (row["sample_sni"] or row["sample_http_host"] or "").strip().lower().rstrip(".")
+                if domain and valid_domain_pattern(domain):
+                    domains.append(domain)
+            elif rule_type == "provider":
+                if row["asn"]:
+                    asn.append(row["asn"])
+                if row["provider"]:
+                    asn.append(row["provider"])
+            elif rule_type == "port":
+                if row["port"]:
+                    ports.append(str(row["port"]))
+                if row["protocol"]:
+                    protocols.append(row["protocol"])
+            else:
+                destination_ips.append(row["remote_ip"])
+
+            if not any([domains, destination_ips, asn, ports, protocols]):
+                notice, notice_class = "That row does not have enough evidence for the selected rule type.", "setup-warning"
+            else:
+                create_application_signature(
+                    app_name,
+                    category,
+                    domains=domains,
+                    asn=asn,
+                    destination_ips=destination_ips,
+                    ports=ports,
+                    protocols=protocols,
+                    tags=["Operator rule"],
+                    confidence=90 if rule_type in {"domain", "ip"} else 75,
+                    priority=95 if rule_type in {"domain", "ip"} else 65,
+                )
+                con = None
+                reclassified = {"classified": 0, "processed": 0}
+                try:
+                    con = connect_db()
+                    reclassified = reclassify_unknown_queue(con, batch_size=500)
+                    con.commit()
+                except Exception as error:
+                    if con:
+                        con.rollback()
+                    print(f"Unknown traffic immediate reclassification failed: {error}")
+                finally:
+                    if con:
+                        con.close()
+                notice = f"Rule saved. Reclassified {reclassified.get('classified', 0)} queued destination(s)."
+                notice_class = "setup-ok"
+
+    rows = query(
+        """
+        SELECT id, first_seen, last_seen, local_ip, remote_ip, port, protocol,
+               total_bytes, flow_count, asn, provider, sample_sni, sample_http_host, status
+        FROM unknown_traffic_queue
+        WHERE status IN ('new', 'review', 'enriched')
+        ORDER BY total_bytes DESC, last_seen DESC
+        LIMIT 100
+        """
+    )
+    category_options = "".join(f'<option value="{h(row["name"])}">{h(row["name"])}</option>' for row in application_categories())
+
+    def rule_options(row):
+        options = []
+        options.append(("ip", f"Destination IP {row['remote_ip']}"))
+        host = row["sample_sni"] or row["sample_http_host"]
+        if host:
+            options.append(("domain", f"Domain {host}"))
+        if row["provider"] or row["asn"]:
+            options.append(("provider", f"Provider {row['provider'] or row['asn']}"))
+        if row["port"] or row["protocol"]:
+            options.append(("port", f"Port/protocol {row['port'] or ''} {row['protocol'] or ''}".strip()))
+        return "".join(f'<option value="{h(value)}">{h(label)}</option>' for value, label in options)
+
+    def row_html(row):
+        host = row["sample_sni"] or row["sample_http_host"] or ""
+        mb = float(row["total_bytes"] or 0) / 1024 / 1024
+        suggested_app = host or row["provider"] or row["remote_ip"]
+        return f"""
+  <tr>
+    <td><b>{h(row['local_ip'])}</b><small>{h(row['first_seen'])} to {h(row['last_seen'])}</small></td>
+    <td><b>{h(row['remote_ip'])}</b><small>{h(host or row['provider'] or '')}</small></td>
+    <td>{h(row['port'] or '')} {h(row['protocol'] or '')}</td>
+    <td>{mb:.2f} MB<small>{int(row['flow_count'] or 0)} flow(s)</small></td>
+    <td>{h(row['status'])}</td>
+    <td>
+      <form method="post" class="ns-unknown-rule-form">
+        {csrf_input()}
+        <input type="hidden" name="unknown_id" value="{int(row['id'])}">
+        <input name="application" value="{h(suggested_app)}" placeholder="Application">
+        <select name="category"><option value="">Category</option>{category_options}</select>
+        <select name="rule_type">{rule_options(row)}</select>
+        <button class="ns-compact-button" type="submit">Save rule</button>
+      </form>
+    </td>
+  </tr>
+"""
+
+    table_rows = "".join(row_html(row) for row in rows) or '<tr><td colspan="6">No unknown traffic is waiting for review.</td></tr>'
+    notice_html = f'<div class="{notice_class}">{h(notice)}</div>' if notice else ""
+    body = f"""
+{topbar('Unknown Traffic')}
+<div class="settings-page">
+  {notice_html}
+  <div class="panel settings settings-card">
+    <h2>Unknown Traffic Review</h2>
+    <p class="sub">Convert repeated unknown destinations into reusable classification rules. Saved rules are applied immediately to the queued unknowns and used by future background classification.</p>
+    <table class="table compact">
+      <thead><tr><th>Local device</th><th>Destination</th><th>Port</th><th>Volume</th><th>Status</th><th>Rule</th></tr></thead>
+      <tbody>{table_rows}</tbody>
+    </table>
+  </div>
+</div>
+"""
+    return shell("Unknown Traffic", body, "Traffic")
+
+
+def _unknown_queue_row(row_id):
+    try:
+        ident = int(row_id)
+    except (TypeError, ValueError):
+        return None
+    rows = query(
+        """
+        SELECT id, first_seen, last_seen, local_ip, remote_ip, port, protocol,
+               total_bytes, flow_count, asn, provider, sample_sni, sample_http_host, status
+        FROM unknown_traffic_queue
+        WHERE id=?
+        """,
+        (ident,),
+    )
+    return rows[0] if rows else None
 
 
 def unifi_connector_bases(config):

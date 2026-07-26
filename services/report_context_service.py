@@ -168,6 +168,7 @@ def build_reporting_context_from_request(args):
     overview = reporting_overview(filters, start_time, end_time, filtered_traffic)
     category_total_mb = None if selected_application else filtered_traffic["total_mb"]
     category_report = category_summary(start_time, end_time, filters, 7, category_total_mb)
+    classified_flow_report = classified_flow_summary(filters, start_time, end_time)
     return {
         "start_time": start_time,
         "end_time": end_time,
@@ -195,6 +196,9 @@ def build_reporting_context_from_request(args):
         "domain_options": list_domains(start_time, end_time, 100),
         "category_report": category_report,
         "category_rows": category_report["rows"],
+        "classified_flow_report": classified_flow_report,
+        "unknown_destination_rows": top_unknown_destinations(filters, start_time, end_time, 8),
+        "unknown_traffic_trend": unknown_traffic_trend(filters, start_time, end_time),
         "unclassified_devices": unclassified_device_summary(start_time, end_time, filters, 8),
         "ai_summary": ai_attribution_summary(filters, start_time, end_time),
         "findings": build_rule_based_findings(overview),
@@ -322,6 +326,141 @@ def reporting_overview(filters, start_time, end_time, traffic):
     }
 
 
+def classified_flow_summary(filters, start_time, end_time):
+    filters = filters or {}
+    device_ids = _dedupe_values(filters.get("device_ids"))
+    where = ["ts BETWEEN ? AND ?"]
+    params = [start_time, end_time]
+    if device_ids:
+        placeholders = ",".join(["?"] * len(device_ids))
+        where.append(f"local_ip IN ({placeholders})")
+        params.extend(device_ids)
+    where_sql = " AND ".join(where)
+    source_sql = classified_flow_source_sql()
+    total_bytes = _scalar_float(
+        f"SELECT COALESCE(SUM(bytes), 0) FROM ({source_sql}) WHERE {where_sql}",
+        tuple(params),
+    )
+    unknown_bytes = _scalar_float(
+        f"""
+        SELECT COALESCE(SUM(bytes), 0)
+        FROM ({source_sql})
+        WHERE {where_sql} AND category='Unknown'
+        """,
+        tuple(params),
+    )
+    known_bytes = max(0.0, total_bytes - unknown_bytes)
+    category_rows = query(
+        f"""
+        SELECT category, COALESCE(SUM(bytes), 0) AS bytes
+        FROM ({source_sql})
+        WHERE {where_sql}
+        GROUP BY category
+        ORDER BY bytes DESC
+        LIMIT 12
+        """,
+        tuple(params),
+    )
+    app_rows = query(
+        f"""
+        SELECT application, category, evidence_source, confidence, COALESCE(SUM(bytes), 0) AS bytes
+        FROM ({source_sql})
+        WHERE {where_sql}
+        GROUP BY application, category, evidence_source, confidence
+        ORDER BY bytes DESC
+        LIMIT 12
+        """,
+        tuple(params),
+    )
+    return {
+        "total_bytes": int(total_bytes),
+        "known_bytes": int(known_bytes),
+        "unknown_bytes": int(unknown_bytes),
+        "known_pct": round((known_bytes / total_bytes * 100), 1) if total_bytes else 0.0,
+        "unknown_pct": round((unknown_bytes / total_bytes * 100), 1) if total_bytes else 0.0,
+        "category_rows": category_rows,
+        "application_rows": app_rows,
+    }
+
+
+def top_unknown_destinations(filters, start_time, end_time, limit=8):
+    filters = filters or {}
+    device_ids = _dedupe_values(filters.get("device_ids"))
+    where = ["last_seen >= ?", "first_seen <= ?", "status IN ('new', 'review')"]
+    params = [start_time, end_time]
+    if device_ids:
+        placeholders = ",".join(["?"] * len(device_ids))
+        where.append(f"local_ip IN ({placeholders})")
+        params.extend(device_ids)
+    return query(
+        f"""
+        SELECT local_ip, remote_ip, port, protocol, total_bytes, flow_count,
+               asn, provider, sample_sni, sample_http_host, first_seen, last_seen
+        FROM unknown_traffic_queue
+        WHERE {' AND '.join(where)}
+        ORDER BY total_bytes DESC, last_seen DESC
+        LIMIT ?
+        """,
+        tuple(params + [max(1, min(50, int(limit or 8)))]),
+    )
+
+
+def unknown_traffic_trend(filters, start_time, end_time):
+    filters = filters or {}
+    device_ids = _dedupe_values(filters.get("device_ids"))
+    where = ["ts BETWEEN ? AND ?"]
+    params = [start_time, end_time]
+    if device_ids:
+        placeholders = ",".join(["?"] * len(device_ids))
+        where.append(f"local_ip IN ({placeholders})")
+        params.extend(device_ids)
+    source_sql = classified_flow_source_sql()
+    return query(
+        f"""
+        SELECT day,
+               COALESCE(SUM(bytes), 0) AS total_bytes,
+               COALESCE(SUM(CASE WHEN category='Unknown' THEN bytes ELSE 0 END), 0) AS unknown_bytes
+        FROM ({source_sql})
+        WHERE {' AND '.join(where)}
+        GROUP BY day
+        ORDER BY day ASC
+        """,
+        tuple(params),
+    )
+
+
+def classified_flow_source_sql():
+    return """
+        SELECT ts, day, local_ip, remote_ip, port, protocol, bytes,
+               category, application, evidence_source, confidence
+        FROM classified_flow_facts
+        UNION ALL
+        SELECT bucket AS ts, day, source_ip AS local_ip, destination_ip AS remote_ip,
+               port, protocol, CAST(total_mb * 1024 * 1024 AS INTEGER) AS bytes,
+               primary_category AS category,
+               primary_app AS application,
+               CASE
+                   WHEN optional_tags_json LIKE '%dns_resolution%' THEN 'dns_resolution'
+                   WHEN optional_tags_json LIKE '%tls_sni%' THEN 'tls_sni'
+                   WHEN optional_tags_json LIKE '%http_host%' THEN 'http_host'
+                   WHEN optional_tags_json LIKE '%asn_provider%' THEN 'asn_provider'
+                   WHEN optional_tags_json LIKE '%port_protocol%' THEN 'port_protocol'
+                   ELSE 'rollup'
+               END AS evidence_source,
+               CASE
+                   WHEN confidence >= 80 THEN 'high'
+                   WHEN confidence >= 50 THEN 'medium'
+                   WHEN confidence > 0 THEN 'low'
+                   ELSE 'unknown'
+               END AS confidence
+        FROM classified_flow_rollups
+        WHERE bucket NOT IN (
+            SELECT DISTINCT substr(ts, 1, 13) || ':00'
+            FROM classified_flow_facts
+        )
+    """
+
+
 def _scalar(sql, params=()):
     rows = query(sql, params)
     if not rows:
@@ -331,3 +470,14 @@ def _scalar(sql, params=()):
         return int(row[0] or 0)
     except Exception:
         return int(next(iter(row), 0) or 0)
+
+
+def _scalar_float(sql, params=()):
+    rows = query(sql, params)
+    if not rows:
+        return 0.0
+    row = rows[0]
+    try:
+        return float(row[0] or 0)
+    except Exception:
+        return float(next(iter(row), 0) or 0)

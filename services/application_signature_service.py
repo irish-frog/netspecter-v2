@@ -7,8 +7,25 @@ from datetime import datetime, timedelta
 from netspecter_db import query, run_sql
 
 
+BUILTIN_PROVIDER_SIGNATURES = [
+    ("Microsoft / Azure", "Cloud Infrastructure", ["microsoft", "azure", "msft"], ["Microsoft", "Azure"], 58, 18),
+    ("Google / YouTube", "Cloud Infrastructure", ["google", "google llc", "youtube"], ["Google", "YouTube"], 58, 18),
+    ("Meta", "Social Media", ["meta", "facebook", "instagram", "whatsapp"], ["Meta", "Facebook"], 58, 18),
+    ("Cloudflare", "Cloud Infrastructure", ["cloudflare"], ["Cloudflare", "CDN"], 55, 16),
+    ("Akamai", "Cloud Infrastructure", ["akamai"], ["Akamai", "CDN"], 55, 16),
+    ("Amazon AWS", "Cloud Infrastructure", ["amazon", "aws", "cloudfront"], ["AWS", "CloudFront"], 55, 16),
+    ("Fastly", "Cloud Infrastructure", ["fastly"], ["Fastly", "CDN"], 55, 16),
+    ("Apple", "Software Updates", ["apple"], ["Apple"], 55, 16),
+    ("Netflix", "Video Streaming", ["netflix", "nflx"], ["Netflix"], 60, 20),
+    ("Valve / Steam", "Gaming", ["valve", "steam"], ["Steam"], 60, 20),
+    ("Discord", "Communication & Collaboration", ["discord"], ["Discord"], 60, 20),
+    ("AnyDesk", "Remote Access", ["anydesk"], ["Remote Access"], 62, 22),
+]
+
+
 def load_signatures(category_rows):
     signatures = _signatures_from_categories(category_rows)
+    signatures.extend(_builtin_provider_signatures(category_rows))
     rows = query(
         """
         SELECT id, app, category, domains_json, asn_json, destination_ips_json,
@@ -92,6 +109,43 @@ def upsert_unknown_review(domain="", sni="", destination_ip="", asn="", provider
     return review_key
 
 
+def create_application_signature(app, category, domains=None, asn=None, destination_ips=None, ports=None, protocols=None, tags=None, confidence=85, priority=70, source="operator"):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    run_sql(
+        """
+        INSERT INTO application_signatures (
+            app, category, domains_json, asn_json, destination_ips_json,
+            ports_json, protocols_json, tags_json, confidence, priority, enabled,
+            source, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+        """,
+        (
+            str(app or "").strip(),
+            str(category or "").strip(),
+            json.dumps(_clean_list(domains)),
+            json.dumps(_clean_list(asn)),
+            json.dumps(_clean_list(destination_ips)),
+            json.dumps([str(value).strip().lower() for value in _clean_list(ports)]),
+            json.dumps([str(value).strip().lower() for value in _clean_list(protocols)]),
+            json.dumps(_clean_list(tags)),
+            int(confidence or 85),
+            int(priority or 70),
+            str(source or "operator").strip(),
+            now,
+            now,
+        ),
+    )
+
+
+def _clean_list(values):
+    if values is None:
+        return []
+    if isinstance(values, str):
+        values = [item.strip() for item in values.split(",")]
+    return [str(item).strip() for item in values if str(item or "").strip()]
+
+
 def unknown_review_rows(limit=25):
     return query(
         """
@@ -143,6 +197,28 @@ def _signatures_from_categories(category_rows):
                 "domains": category.get("domains", []),
                 "destination_ips": category.get("destination_ips", []),
             })
+    return signatures
+
+
+def _builtin_provider_signatures(category_rows):
+    valid_categories = {str(row.get("name") or "") for row in category_rows}
+    signatures = []
+    for app, category, provider_needles, tags, confidence, priority in BUILTIN_PROVIDER_SIGNATURES:
+        if category not in valid_categories:
+            continue
+        signatures.append({
+            "id": None,
+            "app": app,
+            "category": category,
+            "domains": [],
+            "asn": provider_needles,
+            "destination_ips": [],
+            "ports": [],
+            "protocols": [],
+            "tags": tags,
+            "confidence": confidence,
+            "priority": priority,
+        })
     return signatures
 
 
