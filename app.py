@@ -1126,9 +1126,10 @@ def restart_collector():
 def source_checkout_root():
     candidates = [
         os.environ.get("NETSPECTER_SOURCE_ROOT"),
+        str(BASE_DIR),
+        "/opt/netspecter",
         str(Path.home() / "netspecter-v2"),
         str(Path.home() / "netspecter"),
-        str(BASE_DIR),
     ]
     for candidate in candidates:
         if not candidate:
@@ -1155,7 +1156,12 @@ def git_upstream_ref(source_root):
     rc, upstream, _err = git_command(source_root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
     if rc == 0 and upstream:
         return upstream
-    for fallback in ("origin/main", "v2/main"):
+    rc, branch, _err = git_command(source_root, "branch", "--show-current")
+    fallbacks = []
+    if rc == 0 and branch:
+        fallbacks.append(f"origin/{branch}")
+    fallbacks.extend(["origin/main", "v2/main"])
+    for fallback in dict.fromkeys(fallbacks):
         rc, _sha, _err = git_command(source_root, "rev-parse", "--verify", fallback)
         if rc == 0:
             return fallback
@@ -1176,7 +1182,7 @@ def update_status(force=False, fetch_remote=False):
 
     upstream = git_upstream_ref(source)
     if not upstream:
-        data = {"ok": False, "available": False, "detail": "Git upstream not configured."}
+        data = {"ok": False, "available": False, "detail": f"Git upstream not configured for {source}."}
         UPDATE_STATUS_CACHE.update({"ts": now, "data": data})
         return data
 

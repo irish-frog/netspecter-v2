@@ -473,6 +473,7 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn("def unifi_verify_tls(config):", collector)
         self.assertIn("def unifi_connector_bases(config):", collector)
         self.assertIn("UniFi connected clients imported: {imported} ({named_imported} named)", collector)
+
         self.assertIn("WHERE ip=? AND (name IS NULL OR TRIM(name)='' OR name=ip)", collector)
         self.assertIn('"X-API-Key": api_key', collector)
         self.assertIn("UNIFI_CLIENT_REFRESH_SECONDS = 300", collector)
@@ -493,6 +494,13 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn("netspecter-speedtest.timer", installer)
         self.assertIn("/usr/bin/speedtest-cli", schedule)
         self.assertIn('if runs == 0:', schedule)
+
+    def test_update_checker_prefers_installed_checkout_and_origin_branch(self):
+        source = (SOURCE_DIR / "app.py").read_text()
+        self.assertIn('str(BASE_DIR)', source)
+        self.assertIn('"/opt/netspecter"', source)
+        self.assertIn('fallbacks.append(f"origin/{branch}")', source)
+        self.assertIn('Git upstream not configured for {source}.', source)
 
     def test_common_pages_do_not_block_on_public_ip_and_devices_batch_live_speeds(self):
         source = (SOURCE_DIR / "app.py").read_text()
