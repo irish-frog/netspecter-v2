@@ -5,6 +5,7 @@
   "netspecter_url": "https://127.0.0.1:9443",
   "adguard_user": "admin",
   "adguard_pass": "",
+  "adguard_client_import_enabled": false,
   "lan_prefix": "192.168.1.",
   "traffic_retention_days": 60,
   "raw_traffic_retention_hours": 6,

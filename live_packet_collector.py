@@ -11,7 +11,7 @@ What this file does:
 - Saves measured traffic bytes for each collection interval.
 - Ignores the gateway/router so it does not appear as the top user.
 - Imports AdGuard Home DNS querylog into dns_querylog.
-- Imports AdGuard Home client names for friendly device labels.
+- Imports AdGuard Home DNS answers for classification evidence.
 - Classifies domains into application categories for Top Applications.
 - Estimates bytes for selected apps from device-specific delivery DNS answers.
 
@@ -174,7 +174,9 @@ DEFAULT_CONFIG = {
     "adguard_user": "admin",
     "adguard_pass": "",
     "adguard_querylog_interval_seconds": 15,
+    "adguard_client_import_enabled": False,
     "unifi_enabled": False,
+    "unifi_client_import_enabled": False,
     "unifi_connector_url": "",
     "unifi_site_id": "",
     "unifi_username": "",
@@ -538,6 +540,9 @@ def parse_adguard_client_names(payload):
 def refresh_adguard_client_names(config):
     """Refresh friendly labels infrequently; manual UI overrides remain authoritative."""
     global adguard_client_names, adguard_client_names_refreshed_at
+    if not config.get("adguard_client_import_enabled"):
+        return
+
     now_monotonic = time.monotonic()
     if now_monotonic - adguard_client_names_refreshed_at < ADGUARD_CLIENT_REFRESH_SECONDS:
         return
@@ -3221,7 +3226,8 @@ def adguard_querylog_loop():
         interval = positive_int(c.get("adguard_querylog_interval_seconds", 15), 15, 5)
 
         try:
-            run_timed_step("AdGuard/client names", refresh_adguard_client_names, c)
+            if c.get("adguard_client_import_enabled"):
+                run_timed_step("AdGuard/client names", refresh_adguard_client_names, c)
             now_mono = time.monotonic()
             unifi_interval = positive_int(c.get("unifi_import_interval_seconds", 300), 300, 60)
             if now_mono - last_unifi_import >= unifi_interval:
