@@ -2366,7 +2366,13 @@ def active_estimated_app_targets():
 def active_classification_targets(config=None):
     """Return recent DNS client/destination pairs for lightweight byte classification."""
     c = config or cfg()
-    limit = min(positive_int(c.get("classification_nft_target_limit", CLASSIFICATION_NFT_TARGET_LIMIT), CLASSIFICATION_NFT_TARGET_LIMIT, 1), 1000)
+    try:
+        requested_limit = int(c.get("classification_nft_target_limit", CLASSIFICATION_NFT_TARGET_LIMIT))
+    except (TypeError, ValueError):
+        requested_limit = CLASSIFICATION_NFT_TARGET_LIMIT
+    if requested_limit <= 0:
+        return tuple()
+    limit = min(max(1, requested_limit), 1000)
     try:
         network = lan_network(c)
     except ValueError:
