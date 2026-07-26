@@ -2848,12 +2848,20 @@ def flush_loop():
             interval_inserts = 0
             estimated_inserts = 0
             destination_writes = 0
-            destination_classify_elapsed = 0.0
+            traffic_step_timings = {
+                "prepare": 0.0,
+                "live_speed_write": 0.0,
+                "device_write": 0.0,
+                "traffic_fact_write": 0.0,
+                "estimated_write": 0.0,
+                "destination_write": 0.0,
+            }
             with timed_db_write("traffic_counter_batch") as con:
                 live_speed_rows = []
                 device_rows = []
                 traffic_rows = []
                 estimated_rows = []
+                step_started = time.monotonic()
                 for ip, cur in deltas.items():
                     rx_delta = cur["rx"]
                     tx_delta = cur["tx"]
@@ -2890,8 +2898,10 @@ def flush_loop():
                             now,
                         ))
                         interval_inserts += 1
+                traffic_step_timings["prepare"] += time.monotonic() - step_started
 
                 if live_speed_rows:
+                    step_started = time.monotonic()
                     con.executemany(
                         """
                         INSERT INTO live_device_speed
@@ -2906,7 +2916,9 @@ def flush_loop():
                         """,
                         live_speed_rows,
                     )
+                    traffic_step_timings["live_speed_write"] += time.monotonic() - step_started
                 if device_rows:
+                    step_started = time.monotonic()
                     con.executemany(
                         """
                         INSERT INTO devices
@@ -2927,7 +2939,9 @@ def flush_loop():
                         """,
                         device_rows,
                     )
+                    traffic_step_timings["device_write"] += time.monotonic() - step_started
                 if traffic_rows:
+                    step_started = time.monotonic()
                     con.executemany(
                         """
                         INSERT INTO traffic_intervals
@@ -2936,7 +2950,9 @@ def flush_loop():
                         """,
                         traffic_rows,
                     )
+                    traffic_step_timings["traffic_fact_write"] += time.monotonic() - step_started
 
+                step_started = time.monotonic()
                 for (category, ip), cur in estimated_deltas.items():
                     interval_rx_mb = cur["rx"] / 1024 / 1024
                     interval_tx_mb = cur["tx"] / 1024 / 1024
@@ -2944,8 +2960,10 @@ def flush_loop():
                     if interval_total_mb > 0:
                         estimated_rows.append((ip, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now))
                         estimated_inserts += 1
+                traffic_step_timings["prepare"] += time.monotonic() - step_started
 
                 if estimated_rows:
+                    step_started = time.monotonic()
                     con.executemany(
                         """
                         INSERT INTO estimated_app_traffic
@@ -2954,16 +2972,17 @@ def flush_loop():
                         """,
                         estimated_rows,
                     )
+                    traffic_step_timings["estimated_write"] += time.monotonic() - step_started
 
                 for (category, ip, destination), cur in remote_destination_deltas.items():
-                    classify_started = time.monotonic()
+                    step_started = time.monotonic()
                     write_destination_delta(con, ip, destination, cur, day, now, category)
-                    destination_classify_elapsed += time.monotonic() - classify_started
+                    traffic_step_timings["destination_write"] += time.monotonic() - step_started
                     destination_writes += 1
                 for (ip, destination), cur in classification_destination_deltas.items():
-                    classify_started = time.monotonic()
+                    step_started = time.monotonic()
                     write_destination_delta(con, ip, destination, cur, day, now, "Unknown")
-                    destination_classify_elapsed += time.monotonic() - classify_started
+                    traffic_step_timings["destination_write"] += time.monotonic() - step_started
                     destination_writes += 1
             traffic_detail_elapsed = time.monotonic() - traffic_detail_started
             if traffic_detail_elapsed >= 0.2:
@@ -2971,7 +2990,13 @@ def flush_loop():
                     "Traffic counter batch detail: "
                     f"devices={len(deltas)} live_speed_writes={live_speed_writes} device_writes={device_writes} "
                     f"traffic_rows={interval_inserts} estimated_rows={estimated_inserts} "
-                    f"destination_rows={destination_writes} destination_classify={destination_classify_elapsed:.3f}s "
+                    f"destination_rows={destination_writes} "
+                    f"prepare={traffic_step_timings['prepare']:.3f}s "
+                    f"live_speed_write={traffic_step_timings['live_speed_write']:.3f}s "
+                    f"device_write={traffic_step_timings['device_write']:.3f}s "
+                    f"traffic_fact_write={traffic_step_timings['traffic_fact_write']:.3f}s "
+                    f"estimated_write={traffic_step_timings['estimated_write']:.3f}s "
+                    f"destination_write={traffic_step_timings['destination_write']:.3f}s "
                     f"total={traffic_detail_elapsed:.3f}s"
                 )
             nft_previous_counters = next_previous_counters

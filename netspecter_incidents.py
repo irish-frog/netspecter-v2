@@ -377,19 +377,24 @@ def correlate_alert(con, incident_id, alert, config):
 
 def build_incidents_once(connect_db, config):
     severities = {int(v) for v in config.get("incident_trigger_severities", [1, 2])}
-    batch_size = max(1, min(int(config.get("incident_build_batch_size", 100) or 100), 500))
+    batch_size = max(1, min(int(config.get("incident_build_batch_size", 100) or 100), 1000))
     started = time.monotonic()
     con = connect_db()
     con.row_factory = None
     ensure_schema(con)
-    cp = checkpoint(con, "incident_builder_ids_events")
+    checkpoint_name = "incident_builder_last_processed_id"
+    cp = checkpoint(con, checkpoint_name)
+    if int(cp.get("last_id") or 0) <= 0:
+        legacy_cp = checkpoint(con, "incident_builder_ids_events")
+        if int(legacy_cp.get("last_id") or 0) > 0:
+            cp = legacy_cp
     last_id = int(cp.get("last_id") or 0)
     if last_id <= 0:
         anchor_row = con.execute("SELECT COALESCE(MAX(anchor_event_id), 0) FROM security_incidents").fetchone()
         anchor_id = int(anchor_row[0] or 0) if anchor_row else 0
         if anchor_id > 0:
             last_id = anchor_id
-            update_checkpoint(con, "incident_builder_ids_events", last_id, "")
+            update_checkpoint(con, checkpoint_name, last_id, "")
             con.commit()
     placeholders = ",".join("?" for _ in severities)
     query_started = time.monotonic()
@@ -403,7 +408,10 @@ def build_incidents_once(connect_db, config):
     )
     raw_rows = cur.fetchall()
     columns = [desc[0] for desc in cur.description]
+    sql_done = time.monotonic()
     created = 0
+    updated = 0
+    closed = 0
     processed = 0
     max_id = last_id
     max_ts = cp.get("last_ts") or ""
@@ -418,8 +426,10 @@ def build_incidents_once(connect_db, config):
         correlate_alert(con, incident_id, row, config)
         if was_created:
             created += 1
+        else:
+            updated += 1
     if processed:
-        update_checkpoint(con, "incident_builder_ids_events", max_id, max_ts)
+        update_checkpoint(con, checkpoint_name, max_id, max_ts)
     before_commit = time.monotonic()
     con.commit()
     committed = time.monotonic()
@@ -428,8 +438,11 @@ def build_incidents_once(connect_db, config):
     if total >= float(config.get("incident_build_log_threshold_seconds", 0.5) or 0.5):
         print(
             "Incident build detail: "
-            f"start_id={last_id} end_id={max_id} rows={processed} created={created} "
-            f"query={before_commit - query_started:.3f}s commit={committed - before_commit:.3f}s total={total:.3f}s"
+            f"rows_selected={processed} incidents_created={created} incidents_updated={updated} "
+            f"incidents_closed={closed} checkpoint_start={last_id} checkpoint_end={max_id} "
+            f"sql_time={sql_done - query_started:.3f}s "
+            f"txn_time={before_commit - sql_done:.3f}s "
+            f"commit_time={committed - before_commit:.3f}s total={total:.3f}s"
         )
     return created
 
