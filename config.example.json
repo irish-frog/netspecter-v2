@@ -49,6 +49,7 @@
   "mqtt_client_id": "netspecter",
   "mqtt_subscribe_topics": "",
   "unifi_enabled": false,
+  "unifi_client_import_enabled": false,
   "unifi_connector_url": "",
   "unifi_site_id": "",
   "unifi_username": "",

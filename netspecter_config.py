@@ -83,6 +83,7 @@ DEFAULT_CONFIG = {
     "mqtt_client_id": "netspecter",
     "mqtt_subscribe_topics": "",
     "unifi_enabled": False,
+    "unifi_client_import_enabled": False,
     "unifi_connector_url": "",
     "unifi_site_id": "",
     "unifi_username": "",
@@ -178,7 +179,7 @@ DEFAULT_CONFIG = {
 
 SENSITIVE_CONFIG_KEYS = {"adguard_pass", "unifi_password", "smtp_password", "snmp_community", "mqtt_password", "telegram_bot_token", "netlic_licence_key", "netlic_signing_secret"}
 INTEGRATION_SETTINGS_KEYS = {
-    "unifi_enabled", "unifi_connector_url", "unifi_site_id",
+    "unifi_enabled", "unifi_client_import_enabled", "unifi_connector_url", "unifi_site_id",
     "unifi_username", "unifi_password", "unifi_skip_tls_verify", "scheduled_speedtests_per_day",
     "remote_map_geo_lookups_per_run", "dns_map_geo_lookups_per_run",
     "ids_unknown_only", "ids_excluded_ips", "ids_exceptions", "ids_banned_ips", "ids_banned_domains", "ids_auto_ban_enabled",

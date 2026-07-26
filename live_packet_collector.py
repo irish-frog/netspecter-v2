@@ -809,7 +809,7 @@ def unifi_request(config, base, url, params=None):
 def refresh_unifi_clients(config):
     """Optionally import connected client inventory through the official UniFi API."""
     global unifi_clients_refreshed_at
-    if not config.get("unifi_enabled"):
+    if not config.get("unifi_enabled") or not config.get("unifi_client_import_enabled"):
         return
     now_monotonic = time.monotonic()
     if now_monotonic - unifi_clients_refreshed_at < UNIFI_CLIENT_REFRESH_SECONDS:
