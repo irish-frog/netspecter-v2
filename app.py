@@ -9871,6 +9871,7 @@ def unknown_traffic_review():
                total_bytes, flow_count, asn, provider, sample_sni, sample_http_host, status
         FROM unknown_traffic_queue
         WHERE status IN ('new', 'review', 'enriched')
+          AND COALESCE(total_bytes, 0) >= 5243
         ORDER BY total_bytes DESC, last_seen DESC
         LIMIT 100
         """
