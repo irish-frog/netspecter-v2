@@ -275,6 +275,9 @@ DEFAULT_CONFIG = {
 
 imported_dns_keys = set()
 db_write_lock = threading.RLock()
+db_contention_lock = threading.Lock()
+db_contention_until = 0.0
+db_contention_failures = 0
 nft_config_refresh_event = threading.Event()
 adguard_client_names = {}
 adguard_client_names_lock = threading.Lock()
@@ -313,6 +316,8 @@ CLASSIFICATION_NFT_TARGET_LIMIT = 300
 NFT_SIGNATURE_REFRESH_SECONDS = 900
 ADGUARD_CLIENT_REFRESH_SECONDS = 300
 UNIFI_CLIENT_REFRESH_SECONDS = 1800
+DB_CONTENTION_BACKOFF_BASE_SECONDS = 5
+DB_CONTENTION_BACKOFF_MAX_SECONDS = 60
 MICROSOFT365_MAPPING_CACHE = {"ts": 0.0, "enabled": None, "items": []}
 MONITORED_APP_DOMAIN_KEYS = {
     "Nextcloud": ("nextcloud.com", "owncloud.com"),
@@ -973,6 +978,31 @@ def positive_int(value, default, minimum=1):
         return max(minimum, int(default))
 
 
+def database_contention_remaining():
+    with db_contention_lock:
+        return max(0.0, db_contention_until - time.monotonic())
+
+
+def note_database_contention(context, error=None):
+    global db_contention_failures, db_contention_until
+    with db_contention_lock:
+        db_contention_failures += 1
+        backoff = min(
+            DB_CONTENTION_BACKOFF_MAX_SECONDS,
+            DB_CONTENTION_BACKOFF_BASE_SECONDS * db_contention_failures,
+        )
+        db_contention_until = max(db_contention_until, time.monotonic() + backoff)
+    detail = f": {error}" if error else ""
+    print(f"{context}: database busy; backing off writes for {backoff:.0f}s{detail}")
+
+
+def note_database_write_success():
+    global db_contention_failures, db_contention_until
+    with db_contention_lock:
+        db_contention_failures = 0
+        db_contention_until = 0.0
+
+
 def log_slow_loop(name, elapsed, threshold=2.0):
     if elapsed >= threshold:
         print(f"{name} loop took {elapsed:.2f}s")
@@ -1260,6 +1290,10 @@ def init_db():
 
 def run_sql(sql, params=(), timeout=30, busy_timeout_ms=30000, retries=4):
     """Run a database write safely."""
+    remaining = database_contention_remaining()
+    if remaining > 0:
+        return
+
     for attempt in range(retries):
         con = None
         try:
@@ -1268,6 +1302,7 @@ def run_sql(sql, params=(), timeout=30, busy_timeout_ms=30000, retries=4):
                 con.execute(sql, params)
                 con.commit()
                 con.close()
+            note_database_write_success()
             return
         except sqlite3.OperationalError as e:
             if con:
@@ -1275,6 +1310,9 @@ def run_sql(sql, params=(), timeout=30, busy_timeout_ms=30000, retries=4):
             if "database is locked" in str(e).lower() and attempt < retries - 1:
                 time.sleep(0.25 * (attempt + 1))
                 continue
+            if "database is locked" in str(e).lower():
+                note_database_contention("DB write", e)
+                return
             print(f"DB write failed: {e}")
             return
         except Exception as e:
@@ -1874,6 +1912,11 @@ def process_ids_auto_blocks(config):
 def import_suricata_eve(config):
     global last_ids_default_reclassify, last_unknown_reclassify
     try:
+        contention_remaining = database_contention_remaining()
+        if contention_remaining > 0:
+            print(f"Suricata/eve import skipped: database contention backoff {contention_remaining:.0f}s remaining")
+            return
+
         result = ingest_eve_incremental(connect_db, SURICATA_EVE_LOG)
         if result.get("inserted"):
             print(f"Suricata eve.json imported rows: {result['inserted']}")
@@ -1904,19 +1947,28 @@ def import_suricata_eve(config):
                     f"{reclassified['classified']} classified from {reclassified['processed']} queued destinations"
                 )
     except Exception as error:
-        print(f"Suricata eve.json import failed: {error}")
+        if "database is locked" in str(error).lower():
+            note_database_contention("Suricata eve.json import", error)
+        else:
+            print(f"Suricata eve.json import failed: {error}")
 
 
 def run_suricata_classification_enrichment(batch_size=500):
     con = None
     try:
+        if database_contention_remaining() > 0:
+            return {"processed": 0, "classified": 0, "unknown": 0}
         con = connect_db(timeout=2, busy_timeout_ms=1000)
         result = enrich_from_suricata_metadata(con, batch_size=batch_size)
         con.commit()
+        note_database_write_success()
         return result
     except Exception as error:
         if con:
             con.rollback()
+        if "database is locked" in str(error).lower():
+            note_database_contention("Suricata metadata classification", error)
+            return {"processed": 0, "classified": 0, "unknown": 0, "error": str(error)}
         print(f"Suricata metadata classification failed: {error}")
         return {"processed": 0, "classified": 0, "unknown": 0, "error": str(error)}
     finally:
@@ -1927,13 +1979,19 @@ def run_suricata_classification_enrichment(batch_size=500):
 def run_unknown_queue_reclassification(batch_size=200):
     con = None
     try:
+        if database_contention_remaining() > 0:
+            return {"processed": 0, "classified": 0}
         con = connect_db(timeout=2, busy_timeout_ms=1000)
         result = reclassify_unknown_queue(con, batch_size=batch_size)
         con.commit()
+        note_database_write_success()
         return result
     except Exception as error:
         if con:
             con.rollback()
+        if "database is locked" in str(error).lower():
+            note_database_contention("Unknown traffic reclassification", error)
+            return {"processed": 0, "classified": 0, "error": str(error)}
         print(f"Unknown traffic reclassification failed: {error}")
         return {"processed": 0, "classified": 0, "error": str(error)}
     finally:
@@ -2945,15 +3003,21 @@ def flush_loop():
             ),
         }, now)
 
+        contention_remaining = database_contention_remaining()
+        if contention_remaining > 0:
+            print(f"Counter batch skipped: database contention backoff {contention_remaining:.0f}s remaining")
+            time.sleep(interval)
+            continue
+
         con = None
         lock_acquired = False
         try:
-            lock_acquired = db_write_lock.acquire(timeout=0.2)
+            lock_acquired = db_write_lock.acquire(timeout=1.0)
             if not lock_acquired:
-                print("Counter batch skipped: collector database writer busy")
+                note_database_contention("Counter batch", "collector database writer busy")
                 time.sleep(interval)
                 continue
-            con = connect_db(timeout=0.5, busy_timeout_ms=250)
+            con = connect_db(timeout=2, busy_timeout_ms=1000)
             for ip, cur in deltas.items():
                 rx_delta = cur["rx"]
                 tx_delta = cur["tx"]
@@ -3050,10 +3114,14 @@ def flush_loop():
             nft_previous_estimated_counters = next_previous_estimated_counters
             nft_previous_classification_counters = next_previous_classification_counters
             nft_active_ips = next_active_ips
+            note_database_write_success()
         except sqlite3.OperationalError as e:
             if con:
                 con.rollback()
-            print(f"Counter batch write failed: {e}")
+            if "database is locked" in str(e).lower():
+                note_database_contention("Counter batch write", e)
+            else:
+                print(f"Counter batch write failed: {e}")
         except Exception as e:
             if con:
                 con.rollback()
@@ -3163,6 +3231,11 @@ def import_adguard_querylog():
     if not device_updates and not dns_rows and not dns_resolution_rows:
         return
 
+    contention_remaining = database_contention_remaining()
+    if contention_remaining > 0:
+        print(f"AdGuard querylog write skipped: database contention backoff {contention_remaining:.0f}s remaining")
+        return
+
     con = None
     try:
         with db_write_lock:
@@ -3201,10 +3274,14 @@ def import_adguard_querylog():
                     dns_resolution_rows,
                 )
             con.commit()
+        note_database_write_success()
         imported_dns_keys.update(pending_dns_keys)
     except Exception as e:
         if con:
             con.rollback()
+        if "database is locked" in str(e).lower():
+            note_database_contention("DNS querylog batch insert", e)
+            return
         print(f"DNS querylog batch insert failed: {e}")
         return
     finally:
@@ -3274,11 +3351,16 @@ def internet_quality_loop():
         try:
             summary = collect_quality_summary(c)
             live_snapshot.update_quality(summary)
-            with db_write_lock:
-                insert_quality_summary(connect_db, summary)
+            if database_contention_remaining() <= 0:
+                with db_write_lock:
+                    insert_quality_summary(connect_db, summary)
+                note_database_write_success()
             print(f"Internet quality summary: {summary['status']} - {summary['diagnosis']}")
         except Exception as e:
-            print(f"Internet quality collection failed: {e}")
+            if "database is locked" in str(e).lower():
+                note_database_contention("Internet quality collection", e)
+            else:
+                print(f"Internet quality collection failed: {e}")
         elapsed = time.monotonic() - started
         time.sleep(max(1, interval - elapsed))
 
