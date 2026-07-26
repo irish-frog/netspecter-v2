@@ -117,7 +117,7 @@ DEFAULT_CONFIG = {
     "suricata_import_interval_seconds": 60,
     "ids_default_reclassify_interval_seconds": 1800,
     "unknown_reclassify_interval_seconds": 300,
-    "unifi_import_interval_seconds": 300,
+    "unifi_import_interval_seconds": 600,
     "ids_maintenance_interval_seconds": 60,
     "incident_build_interval_seconds": 120,
     "remote_geo_interval_seconds": 300,
@@ -218,7 +218,7 @@ ENCRYPTED_PREFIX = "enc:"
 def ensure_secure_dir(path):
     path.mkdir(parents=True, exist_ok=True)
     try:
-        path.chmod(0o700)
+        path.chmod(0o750)
     except Exception:
         pass
 
@@ -227,7 +227,7 @@ def secure_file_write(path, text):
     ensure_secure_dir(path.parent)
     path.write_text(text)
     try:
-        path.chmod(0o600)
+        path.chmod(0o640)
     except Exception:
         pass
 
