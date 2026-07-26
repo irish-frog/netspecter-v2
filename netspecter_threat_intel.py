@@ -375,10 +375,34 @@ def load_active_indicators(con):
     return rows
 
 
+def build_indicator_index(indicators):
+    indexed = {"ip": {}, "domain": {}, "cidr": []}
+    for row in indicators:
+        indicator, indicator_type = row[0], row[1]
+        if indicator_type == "ip":
+            indexed["ip"][str(indicator)] = row
+        elif indicator_type == "domain":
+            indexed["domain"][str(indicator).lower().strip(".")] = row
+        elif indicator_type == "cidr":
+            try:
+                indexed["cidr"].append((ipaddress.ip_network(indicator, strict=False), row))
+            except ValueError:
+                continue
+    return indexed
+
+
 def match_ip(ip, indicators):
     try:
         address = ipaddress.ip_address(str(ip))
     except ValueError:
+        return None
+    if isinstance(indicators, dict):
+        exact = indicators.get("ip", {}).get(str(address))
+        if exact:
+            return exact
+        for network, row in indicators.get("cidr", []):
+            if address in network:
+                return row
         return None
     for row in indicators:
         indicator, indicator_type = row[0], row[1]
@@ -396,6 +420,14 @@ def match_ip(ip, indicators):
 def match_domain(domain, indicators):
     text = str(domain or "").lower().strip(".")
     if not text:
+        return None
+    if isinstance(indicators, dict):
+        labels = text.split(".")
+        domains = indicators.get("domain", {})
+        for idx in range(len(labels)):
+            candidate = ".".join(labels[idx:])
+            if candidate in domains:
+                return domains[candidate]
         return None
     for row in indicators:
         indicator, indicator_type = row[0], row[1]
@@ -440,7 +472,9 @@ def correlate_once(connect_db, config):
     cp = checkpoint(con, "threat_intel_ids_events")
     start_id = cp["last_id"]
     sql_started = time.monotonic()
-    indicators = load_active_indicators(con)
+    indicator_started = time.monotonic()
+    indicators = build_indicator_index(load_active_indicators(con))
+    indicator_elapsed = time.monotonic() - indicator_started
     inserted = 0
     ids_rows = con.execute(
         """
@@ -455,6 +489,7 @@ def correlate_once(connect_db, config):
     sql_elapsed = time.monotonic() - sql_started
     max_id = start_id
     max_ts = cp.get("last_ts") or ""
+    match_started = time.monotonic()
     for row in ids_rows:
         max_id = max(max_id, int(row[0] or 0))
         max_ts = row[1] or max_ts
@@ -464,6 +499,7 @@ def correlate_once(connect_db, config):
             continue
         key = safe_event_key("ids", row[0], rep.get("indicator"))
         inserted += insert_correlation(con, key, row[1], rep, src_ip=row[2], dest_ip=row[3], domain=domain, reason=row[7])
+    match_elapsed = time.monotonic() - match_started
     if max_id > start_id:
         update_checkpoint(con, "threat_intel_ids_events", max_id, max_ts)
     commit_started = time.monotonic()
@@ -474,6 +510,7 @@ def correlate_once(connect_db, config):
     print(
         "Threat correlation batch: "
         f"start_id={start_id} end_id={max_id} rows={len(ids_rows)} matches={inserted} "
+        f"indicators={indicator_elapsed:.3f}s match={match_elapsed:.3f}s "
         f"sql={sql_elapsed:.3f}s txn={total_elapsed:.3f}s commit={commit_elapsed:.3f}s"
     )
     return inserted

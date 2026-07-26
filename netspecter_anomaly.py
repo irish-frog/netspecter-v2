@@ -459,6 +459,7 @@ def run_anomaly_cycle(connect_db, config, target_day=None):
         )
         hourly_updates += 1
     count = 0
+    run_detection = True
     for day_value in sorted(touched_days):
         count += detect_for_day(con, day_value, config)
     if max_id > start_id:
@@ -472,6 +473,7 @@ def run_anomaly_cycle(connect_db, config, target_day=None):
         "Anomaly batch: "
         f"start_id={start_id} end_id={max_id} rows={len(rows)} days={len(touched_days)} "
         f"daily_updates={daily_updates} hourly_updates={hourly_updates} events={count} "
+        f"detect={'on' if run_detection else 'off'} "
         f"sql={sql_elapsed:.3f}s txn={elapsed:.3f}s commit={commit_elapsed:.3f}s"
     )
     return count

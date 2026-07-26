@@ -2850,6 +2850,10 @@ def flush_loop():
             destination_writes = 0
             destination_classify_elapsed = 0.0
             with timed_db_write("traffic_counter_batch") as con:
+                live_speed_rows = []
+                device_rows = []
+                traffic_rows = []
+                estimated_rows = []
                 for ip, cur in deltas.items():
                     rx_delta = cur["rx"]
                     tx_delta = cur["tx"]
@@ -2863,7 +2867,32 @@ def flush_loop():
                     dtype = classify_device(vendor)
                     name = adguard_name_for_ip(ip) or ip
 
-                    con.execute(
+                    live_speed_rows.append((ip, mac, rx_Bps, tx_Bps, total_Bps, now))
+                    live_speed_writes += 1
+
+                    device_rows.append((ip, name, mac, vendor, dtype, now, now))
+                    device_writes += 1
+
+                    interval_rx_mb = rx_delta / 1024 / 1024
+                    interval_tx_mb = tx_delta / 1024 / 1024
+                    interval_total_mb = interval_rx_mb + interval_tx_mb
+
+                    if interval_total_mb > 0:
+                        traffic_rows.append((
+                            ip,
+                            name,
+                            mac,
+                            interval_rx_mb,
+                            interval_tx_mb,
+                            interval_total_mb,
+                            (rx_delta + tx_delta) / elapsed * 8,
+                            day,
+                            now,
+                        ))
+                        interval_inserts += 1
+
+                if live_speed_rows:
+                    con.executemany(
                         """
                         INSERT INTO live_device_speed
                             (ip, mac, rx_bps, tx_bps, total_bps, updated_at)
@@ -2875,11 +2904,10 @@ def flush_loop():
                             total_bps=excluded.total_bps,
                             updated_at=excluded.updated_at
                         """,
-                        (ip, mac, rx_Bps, tx_Bps, total_Bps, now),
+                        live_speed_rows,
                     )
-                    live_speed_writes += 1
-
-                    con.execute(
+                if device_rows:
+                    con.executemany(
                         """
                         INSERT INTO devices
                             (ip, name, mac, vendor, device_type, status, first_seen, last_seen)
@@ -2897,49 +2925,35 @@ def flush_loop():
                             name=CASE WHEN excluded.name != excluded.ip THEN excluded.name ELSE devices.name END,
                             last_seen=excluded.last_seen
                         """,
-                        (ip, name, mac, vendor, dtype, now, now),
+                        device_rows,
                     )
-                    device_writes += 1
-
-                    interval_rx_mb = rx_delta / 1024 / 1024
-                    interval_tx_mb = tx_delta / 1024 / 1024
-                    interval_total_mb = interval_rx_mb + interval_tx_mb
-
-                    if interval_total_mb > 0:
-                        con.execute(
-                            """
-                            INSERT INTO traffic_intervals
-                                (ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                ip,
-                                name,
-                                mac,
-                                interval_rx_mb,
-                                interval_tx_mb,
-                                interval_total_mb,
-                                (rx_delta + tx_delta) / elapsed * 8,
-                                day,
-                                now,
-                            ),
-                        )
-                        interval_inserts += 1
+                if traffic_rows:
+                    con.executemany(
+                        """
+                        INSERT INTO traffic_intervals
+                            (ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        traffic_rows,
+                    )
 
                 for (category, ip), cur in estimated_deltas.items():
                     interval_rx_mb = cur["rx"] / 1024 / 1024
                     interval_tx_mb = cur["tx"] / 1024 / 1024
                     interval_total_mb = interval_rx_mb + interval_tx_mb
                     if interval_total_mb > 0:
-                        con.execute(
-                            """
-                            INSERT INTO estimated_app_traffic
-                                (ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (ip, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
-                        )
+                        estimated_rows.append((ip, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now))
                         estimated_inserts += 1
+
+                if estimated_rows:
+                    con.executemany(
+                        """
+                        INSERT INTO estimated_app_traffic
+                            (ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        estimated_rows,
+                    )
 
                 for (category, ip, destination), cur in remote_destination_deltas.items():
                     classify_started = time.monotonic()
