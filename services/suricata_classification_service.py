@@ -50,13 +50,21 @@ def enrich_from_suricata_metadata(con, batch_size=500):
     unknown_rows = []
     unknown_update_rows = []
     classify_elapsed = 0.0
+    classification_cache = {}
+    cache_hits = 0
     for row in rows:
         max_id = max(max_id, int(row["id"]))
         flow = _flow_from_event(row)
         if not flow:
             continue
         classify_started = time.monotonic()
-        classification = classify_flow(con, flow)
+        cache_key = _classification_cache_key(flow)
+        if cache_key in classification_cache:
+            classification = classification_cache[cache_key]
+            cache_hits += 1
+        else:
+            classification = classify_flow(con, flow, metadata_first=True)
+            classification_cache[cache_key] = classification
         classify_elapsed += time.monotonic() - classify_started
         if classification:
             fact_rows.append(classified_flow_fact_row(flow, classification))
@@ -90,6 +98,7 @@ def enrich_from_suricata_metadata(con, batch_size=500):
             f"rows={len(rows)} processed={processed} classified={classified_count} unknown={unknown_count} "
             f"fact_rows={len(fact_rows)} inserted_facts={inserted_facts} unknown_rows={len(unknown_rows)} "
             f"unknown_writes={upserted_unknowns} unknown_updates={updated_unknowns} "
+            f"cache_hits={cache_hits} cache_size={len(classification_cache)} "
             f"classify={classify_elapsed:.3f}s writes={write_elapsed:.3f}s total={elapsed:.3f}s"
         )
     return {"processed": processed, "classified": classified_count, "unknown": unknown_count, "last_id": max_id}
@@ -155,6 +164,22 @@ def _flow_from_event(row):
         http_host=http_host,
         app_proto=app_proto,
         flow_id=str(row["flow_id"] or f"ids:{row['id']}").strip(),
+    )
+
+
+def _classification_cache_key(flow):
+    if flow.tls_sni:
+        return ("tls", flow.tls_sni.lower())
+    if flow.http_host:
+        return ("http", flow.http_host.lower())
+    return (
+        "flow",
+        flow.local_ip,
+        flow.remote_ip,
+        flow.port,
+        flow.protocol or flow.app_proto,
+        flow.asn,
+        flow.provider,
     )
 
 

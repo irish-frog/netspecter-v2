@@ -71,12 +71,26 @@ def match_dns_resolution(con, client_ip, remote_ip, timestamp):
     ).fetchone()
 
 
-def classify_flow(con, flow, emit_timing=False):
+def classify_flow(con, flow, emit_timing=False, metadata_first=False):
     started = time.monotonic()
     timings = {}
 
     def mark(name, step_started):
         timings[name] = time.monotonic() - step_started
+
+    if metadata_first and flow.tls_sni:
+        step = time.monotonic()
+        result = _classification_for_domain(flow.tls_sni, "tls_sni", "high")
+        mark("tls_sni_classification", step)
+        _log_classification_timing("tls_sni", flow, timings, started, emit_timing)
+        return result
+
+    if metadata_first and flow.http_host:
+        step = time.monotonic()
+        result = _classification_for_domain(flow.http_host, "http_host", "high")
+        mark("http_host_classification", step)
+        _log_classification_timing("http_host", flow, timings, started, emit_timing)
+        return result
 
     step = time.monotonic()
     dns_result = match_dns_resolution(con, flow.local_ip, flow.remote_ip, flow.ts)
