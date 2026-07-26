@@ -296,6 +296,10 @@ last_dns_map_refresh = 0.0
 last_suricata_import = 0.0
 last_ids_default_reclassify = 0.0
 last_unknown_reclassify = 0.0
+last_unifi_import = 0.0
+last_ids_maintenance = 0.0
+last_incident_build = 0.0
+last_remote_geo = 0.0
 oui_vendor_cache = None
 GEOLOCATION_REFRESH_SECONDS = 3600
 DNS_MAP_REFRESH_SECONDS = 300
@@ -3208,7 +3212,7 @@ def import_adguard_querylog():
 
 def adguard_querylog_loop():
     """Background loop for AdGuard DNS querylog importing."""
-    global last_suricata_import
+    global last_suricata_import, last_unifi_import, last_ids_maintenance, last_incident_build, last_remote_geo
     init_db()
 
     while True:
@@ -3218,22 +3222,34 @@ def adguard_querylog_loop():
 
         try:
             run_timed_step("AdGuard/client names", refresh_adguard_client_names, c)
-            run_timed_step("UniFi/client import", refresh_unifi_clients, c)
-            suricata_interval = positive_int(c.get("suricata_import_interval_seconds", 60), 60, 15)
             now_mono = time.monotonic()
+            unifi_interval = positive_int(c.get("unifi_import_interval_seconds", 300), 300, 60)
+            if now_mono - last_unifi_import >= unifi_interval:
+                last_unifi_import = now_mono
+                run_timed_step("UniFi/client import", refresh_unifi_clients, c)
+            suricata_interval = positive_int(c.get("suricata_import_interval_seconds", 60), 60, 15)
             if now_mono - last_suricata_import >= suricata_interval:
                 last_suricata_import = now_mono
                 run_timed_step("Suricata/eve import", import_suricata_eve, c)
-            auto_blocked = run_timed_step("IDS/auto block", process_ids_auto_blocks, c)
-            if auto_blocked:
-                print(f"IDS automatic blocks applied: {auto_blocked}")
-            run_timed_step("IDS/email notify", process_ids_email_alerts, c)
-            with db_write_lock:
-                created = run_timed_step("Incidents/build", build_incidents_once, connect_db, c)
-            if created:
-                print(f"Security incidents created: {created}")
+            ids_interval = positive_int(c.get("ids_maintenance_interval_seconds", 60), 60, 15)
+            if now_mono - last_ids_maintenance >= ids_interval:
+                last_ids_maintenance = now_mono
+                auto_blocked = run_timed_step("IDS/auto block", process_ids_auto_blocks, c)
+                if auto_blocked:
+                    print(f"IDS automatic blocks applied: {auto_blocked}")
+                run_timed_step("IDS/email notify", process_ids_email_alerts, c)
+            incident_interval = positive_int(c.get("incident_build_interval_seconds", 120), 120, 30)
+            if now_mono - last_incident_build >= incident_interval:
+                last_incident_build = now_mono
+                with db_write_lock:
+                    created = run_timed_step("Incidents/build", build_incidents_once, connect_db, c)
+                if created:
+                    print(f"Security incidents created: {created}")
             run_timed_step("AdGuard/querylog import", import_adguard_querylog)
-            run_timed_step("Remote traffic geo", update_remote_traffic_locations, c)
+            geo_interval = positive_int(c.get("remote_geo_interval_seconds", 300), 300, 60)
+            if now_mono - last_remote_geo >= geo_interval:
+                last_remote_geo = now_mono
+                run_timed_step("Remote traffic geo", update_remote_traffic_locations, c)
         except Exception as e:
             print(f"AdGuard querylog loop failed: {e}")
 
