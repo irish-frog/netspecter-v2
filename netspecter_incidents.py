@@ -1,6 +1,7 @@
 import json
 import re
 import shutil
+import time
 from datetime import datetime, timedelta
 
 from netspecter_paths import DATA_ROOT
@@ -97,12 +98,58 @@ def incident_schema_sql():
         "CREATE INDEX IF NOT EXISTS idx_incident_events_incident ON security_incident_events(incident_id)",
         "CREATE INDEX IF NOT EXISTS idx_incident_events_source ON security_incident_events(source_table, source_id)",
         "CREATE INDEX IF NOT EXISTS idx_incident_audit_incident ON security_incident_audit(incident_id)",
+        """
+        CREATE TABLE IF NOT EXISTS processing_checkpoints (
+            name TEXT PRIMARY KEY,
+            last_id INTEGER DEFAULT 0,
+            last_ts TEXT,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_incidents_device_created ON security_incidents(device_ip, created_at)",
     ]
 
 
 def ensure_schema(con):
     for sql in incident_schema_sql():
         con.execute(sql)
+    optional_indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_ids_events_flow_ts ON ids_events(flow_id, ts)",
+        "CREATE INDEX IF NOT EXISTS idx_ids_events_incident_window_src ON ids_events(src_ip, ts)",
+        "CREATE INDEX IF NOT EXISTS idx_ids_events_incident_window_dest ON ids_events(dest_ip, ts)",
+        "CREATE INDEX IF NOT EXISTS idx_ids_events_incident_trigger ON ids_events(event_type, severity, id)",
+        "CREATE INDEX IF NOT EXISTS idx_dns_querylog_client_ts_domain ON dns_querylog(client, ts, domain)",
+        "CREATE INDEX IF NOT EXISTS idx_dns_querylog_domain_ts ON dns_querylog(domain, ts)",
+        "CREATE INDEX IF NOT EXISTS idx_threat_correlations_device_ts ON threat_correlations(device_ip, ts)",
+        "CREATE INDEX IF NOT EXISTS idx_threat_correlations_dest_ts ON threat_correlations(dest_ip, ts)",
+        "CREATE INDEX IF NOT EXISTS idx_threat_correlations_domain_ts ON threat_correlations(domain, ts)",
+        "CREATE INDEX IF NOT EXISTS idx_remote_traffic_ip_ts ON remote_traffic_intervals(ip, ts)",
+        "CREATE INDEX IF NOT EXISTS idx_remote_traffic_remote_ts ON remote_traffic_intervals(remote_ip, ts)",
+    ]
+    for sql in optional_indexes:
+        try:
+            con.execute(sql)
+        except Exception:
+            pass
+
+
+def checkpoint(con, name):
+    row = con.execute("SELECT last_id, last_ts FROM processing_checkpoints WHERE name=?", (name,)).fetchone()
+    return {"last_id": int(row[0] or 0), "last_ts": row[1]} if row else {"last_id": 0, "last_ts": None}
+
+
+def update_checkpoint(con, name, last_id, last_ts=""):
+    con.execute(
+        """
+        INSERT INTO processing_checkpoints(name, last_id, last_ts, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(name) DO UPDATE SET
+            last_id=excluded.last_id,
+            last_ts=excluded.last_ts,
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        (name, int(last_id or 0), last_ts or ""),
+    )
 
 
 def severity_label(value):
@@ -204,6 +251,8 @@ def find_or_create_incident(con, alert, config):
 
 
 def correlate_alert(con, incident_id, alert, config):
+    total_start = time.monotonic()
+    timings = {}
     window = int(config.get("incident_window_minutes", 15) or 15)
     event_dt = parse_ts(alert["ts"]) or datetime.now()
     start = dt_text(event_dt - timedelta(minutes=window))
@@ -223,7 +272,9 @@ def correlate_alert(con, incident_id, alert, config):
         f"P{alert['severity'] or 3} {signature}",
         "Anchor event: configured P1/P2 Suricata alert met incident criteria.",
     )
+    timings["anchor"] = time.monotonic() - total_start
     if flow:
+        step_start = time.monotonic()
         rows = con.execute(
             """
             SELECT id, ts, event_type, COALESCE(signature, query, hostname, tls_sni, filename, anomaly_event, event_type)
@@ -235,6 +286,8 @@ def correlate_alert(con, incident_id, alert, config):
         ).fetchall()
         for row in rows:
             add_incident_event(con, incident_id, "ids_events", row[0], row[1], row[2], row[3], "Same Suricata flow ID inside the investigation window.")
+        timings["flow"] = time.monotonic() - step_start
+    step_start = time.monotonic()
     rows = con.execute(
         """
         SELECT id, ts, event_type, COALESCE(signature, query, hostname, tls_sni, filename, anomaly_event, event_type)
@@ -247,6 +300,8 @@ def correlate_alert(con, incident_id, alert, config):
     ).fetchall()
     for row in rows:
         add_incident_event(con, incident_id, "ids_events", row[0], row[1], row[2], row[3], "Matched device or destination inside the investigation window.")
+    timings["ids_window"] = time.monotonic() - step_start
+    step_start = time.monotonic()
     rows = con.execute(
         """
         SELECT id, ts, domain, blocked, category
@@ -261,6 +316,8 @@ def correlate_alert(con, incident_id, alert, config):
     for row in rows:
         decision = "blocked" if int(row[3] or 0) else "allowed"
         add_incident_event(con, incident_id, "dns_querylog", row[0], row[1], "dns_query", row[2], f"DNS query by related device; AdGuard decision: {decision}.")
+    timings["dns"] = time.monotonic() - step_start
+    step_start = time.monotonic()
     rows = con.execute(
         """
         SELECT id, ts, reputation, indicator, source, reason, dest_ip, domain
@@ -275,6 +332,8 @@ def correlate_alert(con, incident_id, alert, config):
     for row in rows:
         label = f"{row[2]} {row[3] or row[7] or row[6] or ''}".strip()
         add_incident_event(con, incident_id, "threat_correlations", row[0], row[1], "threat_intel", label, f"Threat-intel correlation from {row[4] or 'local feed'}: {row[5] or 'matched indicator'}.")
+    timings["threat"] = time.monotonic() - step_start
+    step_start = time.monotonic()
     rows = con.execute(
         """
         SELECT id, ts, remote_ip, category, total_mb
@@ -286,12 +345,16 @@ def correlate_alert(con, incident_id, alert, config):
     ).fetchall()
     for row in rows:
         add_incident_event(con, incident_id, "remote_traffic_intervals", row[0], row[1], "traffic", f"{row[4] or 0:.3f} MB to {row[2]}", "Connection/traffic evidence matched device or destination in the investigation window.")
+    timings["traffic"] = time.monotonic() - step_start
+    step_start = time.monotonic()
     for row in con.execute("SELECT alert_key, last_sent_ts FROM ids_alert_notifications WHERE alert_key LIKE ?", (f"%{signature}%",)).fetchall():
         try:
             ts = dt_text(datetime.fromtimestamp(int(row[1] or 0)))
         except Exception:
             ts = ""
         add_incident_event(con, incident_id, "ids_alert_notifications", row[0], ts, "notification", "IDS notification sent", "Notification state references the same IDS signature.")
+    timings["notifications"] = time.monotonic() - step_start
+    step_start = time.monotonic()
     con.execute(
         """
         UPDATE security_incidents
@@ -302,34 +365,72 @@ def correlate_alert(con, incident_id, alert, config):
         """,
         (incident_id, incident_id, now_text(), incident_id),
     )
+    timings["update"] = time.monotonic() - step_start
+    total = time.monotonic() - total_start
+    if total >= float(config.get("incident_correlation_log_threshold_seconds", 0.5) or 0.5):
+        print(
+            "Incident correlation detail: "
+            f"incident={incident_id} alert_id={alert['id']} total={total:.3f}s "
+            + " ".join(f"{name}={elapsed:.3f}s" for name, elapsed in timings.items())
+        )
 
 
 def build_incidents_once(connect_db, config):
     severities = {int(v) for v in config.get("incident_trigger_severities", [1, 2])}
+    batch_size = max(1, min(int(config.get("incident_build_batch_size", 100) or 100), 500))
+    started = time.monotonic()
     con = connect_db()
     con.row_factory = None
     ensure_schema(con)
+    cp = checkpoint(con, "incident_builder_ids_events")
+    last_id = int(cp.get("last_id") or 0)
+    if last_id <= 0:
+        anchor_row = con.execute("SELECT COALESCE(MAX(anchor_event_id), 0) FROM security_incidents").fetchone()
+        anchor_id = int(anchor_row[0] or 0) if anchor_row else 0
+        if anchor_id > 0:
+            last_id = anchor_id
+            update_checkpoint(con, "incident_builder_ids_events", last_id, "")
+            con.commit()
     placeholders = ",".join("?" for _ in severities)
-    raw_rows = con.execute(
+    query_started = time.monotonic()
+    cur = con.execute(
         f"""
         SELECT * FROM ids_events
-        WHERE event_type='alert' AND severity IN ({placeholders})
-        ORDER BY id ASC LIMIT 500
+        WHERE id>? AND event_type='alert' AND severity IN ({placeholders})
+        ORDER BY id ASC LIMIT ?
         """,
-        tuple(severities),
-    ).fetchall()
-    columns = [desc[0] for desc in con.execute("SELECT * FROM ids_events LIMIT 0").description]
+        (last_id, *tuple(severities), batch_size),
+    )
+    raw_rows = cur.fetchall()
+    columns = [desc[0] for desc in cur.description]
     created = 0
+    processed = 0
+    max_id = last_id
+    max_ts = cp.get("last_ts") or ""
     for raw in raw_rows:
         row = dict(zip(columns, raw))
+        processed += 1
+        max_id = max(max_id, int(row.get("id") or 0))
+        max_ts = str(row.get("ts") or max_ts or "")
         incident_id, was_created = find_or_create_incident(con, row, config)
         if not incident_id:
             continue
         correlate_alert(con, incident_id, row, config)
         if was_created:
             created += 1
+    if processed:
+        update_checkpoint(con, "incident_builder_ids_events", max_id, max_ts)
+    before_commit = time.monotonic()
     con.commit()
+    committed = time.monotonic()
     con.close()
+    total = committed - started
+    if total >= float(config.get("incident_build_log_threshold_seconds", 0.5) or 0.5):
+        print(
+            "Incident build detail: "
+            f"start_id={last_id} end_id={max_id} rows={processed} created={created} "
+            f"query={before_commit - query_started:.3f}s commit={committed - before_commit:.3f}s total={total:.3f}s"
+        )
     return created
 
 

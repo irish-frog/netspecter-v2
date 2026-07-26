@@ -110,6 +110,8 @@
   "incident_trigger_severities": [1, 2],
   "incident_window_minutes": 15,
   "incident_dedupe_minutes": 60,
+  "incident_build_batch_size": 100,
+  "incident_correlation_log_threshold_seconds": 0.5,
   "incident_max_per_device_per_day": 20,
   "incident_retention_days": 365,
   "incident_max_records": 50000,
