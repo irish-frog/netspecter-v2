@@ -2,6 +2,7 @@ import fnmatch
 import ipaddress
 import json
 import hashlib
+import time
 from datetime import datetime, timedelta
 
 from netspecter_db import query, run_sql
@@ -22,6 +23,9 @@ BUILTIN_PROVIDER_SIGNATURES = [
     ("AnyDesk", "Remote Access", ["anydesk"], ["Remote Access"], 62, 22),
 ]
 
+_SIGNATURE_CACHE = {"expires_at": 0.0, "category_key": "", "signatures": []}
+_SIGNATURE_CACHE_TTL_SECONDS = 60
+
 
 def load_signatures(category_rows):
     signatures = _signatures_from_categories(category_rows)
@@ -38,6 +42,26 @@ def load_signatures(category_rows):
     if rows:
         signatures.extend(_normalise_signature(row) for row in rows)
     return sorted(signatures, key=lambda item: (-int(item["priority"]), -int(item["confidence"]), item["app"].lower()))
+
+
+def load_signatures_cached(category_rows):
+    category_key = hashlib.sha1(
+        json.dumps(category_rows, sort_keys=True, default=str).encode("utf-8", errors="ignore")
+    ).hexdigest()
+    now = time.monotonic()
+    if (
+        _SIGNATURE_CACHE["signatures"]
+        and _SIGNATURE_CACHE["category_key"] == category_key
+        and now < _SIGNATURE_CACHE["expires_at"]
+    ):
+        return _SIGNATURE_CACHE["signatures"]
+    signatures = load_signatures(category_rows)
+    _SIGNATURE_CACHE.update({
+        "expires_at": now + _SIGNATURE_CACHE_TTL_SECONDS,
+        "category_key": category_key,
+        "signatures": signatures,
+    })
+    return signatures
 
 
 def classify_metadata(signatures, app_name="", domain="", sni="", destination_ip="", asn="", provider="", protocol="", port=None):
@@ -61,13 +85,14 @@ def classify_metadata(signatures, app_name="", domain="", sni="", destination_ip
     }
 
 
-def classify_metadata_cached(signatures, app_name="", domain="", sni="", destination_ip="", asn="", provider="", protocol="", port=None, ttl_hours=168):
+def classify_metadata_cached(signatures, app_name="", domain="", sni="", destination_ip="", asn="", provider="", protocol="", port=None, ttl_hours=168, persistent_cache=True):
     cache_key = _cache_key(app_name, domain, sni, destination_ip, asn, provider, protocol, port, signatures)
-    cached = _cached_classification(cache_key)
-    if cached:
-        return cached
+    if persistent_cache:
+        cached = _cached_classification(cache_key)
+        if cached:
+            return cached
     result = classify_metadata(signatures, app_name, domain, sni, destination_ip, asn, provider, protocol, port)
-    if result:
+    if result and persistent_cache:
         _store_classification(cache_key, result, domain, sni, destination_ip, asn, provider, protocol, port, ttl_hours)
     return result
 

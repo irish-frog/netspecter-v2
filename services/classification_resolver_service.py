@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import time
 
 from services.application_classification_service import classify_application, site_application_mappings
 
@@ -70,19 +71,42 @@ def match_dns_resolution(con, client_ip, remote_ip, timestamp):
     ).fetchone()
 
 
-def classify_flow(con, flow):
+def classify_flow(con, flow, emit_timing=False):
+    started = time.monotonic()
+    timings = {}
+
+    def mark(name, step_started):
+        timings[name] = time.monotonic() - step_started
+
+    step = time.monotonic()
     dns_result = match_dns_resolution(con, flow.local_ip, flow.remote_ip, flow.ts)
+    mark("dns_lookup", step)
     if dns_result:
-        return _classification_for_domain(dns_result["domain"], "dns_resolution", "high")
+        step = time.monotonic()
+        result = _classification_for_domain(dns_result["domain"], "dns_resolution", "high")
+        mark("domain_classification", step)
+        _log_classification_timing("dns_resolution", flow, timings, started, emit_timing)
+        return result
 
     if flow.tls_sni:
-        return _classification_for_domain(flow.tls_sni, "tls_sni", "high")
+        step = time.monotonic()
+        result = _classification_for_domain(flow.tls_sni, "tls_sni", "high")
+        mark("tls_sni_classification", step)
+        _log_classification_timing("tls_sni", flow, timings, started, emit_timing)
+        return result
 
     if flow.http_host:
-        return _classification_for_domain(flow.http_host, "http_host", "high")
+        step = time.monotonic()
+        result = _classification_for_domain(flow.http_host, "http_host", "high")
+        mark("http_host_classification", step)
+        _log_classification_timing("http_host", flow, timings, started, emit_timing)
+        return result
 
+    step = time.monotonic()
     static_result = match_static_site_mapping(flow.remote_ip, flow.port)
+    mark("site_mapping", step)
     if static_result:
+        _log_classification_timing("static_site_mapping", flow, timings, started, emit_timing)
         return Classification(
             category=static_result["category"],
             application=static_result["application"],
@@ -90,14 +114,21 @@ def classify_flow(con, flow):
             confidence="high",
         )
 
+    step = time.monotonic()
     asn_result = match_asn_provider(flow.remote_ip, flow.asn, flow.provider)
+    mark("asn_provider", step)
     if asn_result:
+        _log_classification_timing("asn_provider", flow, timings, started, emit_timing)
         return asn_result
 
+    step = time.monotonic()
     protocol_result = classify_by_port_protocol(flow.port, flow.protocol or flow.app_proto)
+    mark("port_protocol", step)
     if protocol_result:
+        _log_classification_timing("port_protocol", flow, timings, started, emit_timing)
         return protocol_result
 
+    _log_classification_timing("unknown", flow, timings, started, emit_timing)
     return None
 
 
@@ -176,7 +207,7 @@ def upsert_unknown_traffic(con, flow):
 
 def _classification_for_domain(domain, evidence_source, confidence):
     domain = str(domain or "").strip(".").lower()
-    classified = classify_application(domain=domain)
+    classified = classify_application(domain=domain, persistent_cache=False)
     return Classification(
         category=classified.get("primary_category") or classified.get("category") or "Unknown",
         application=domain,
@@ -195,7 +226,7 @@ def match_static_site_mapping(remote_ip, port=None):
 def match_asn_provider(remote_ip="", asn="", provider=""):
     if not (asn or provider):
         return None
-    classified = classify_application(destination_ip=remote_ip, asn=asn, provider=provider)
+    classified = classify_application(destination_ip=remote_ip, asn=asn, provider=provider, persistent_cache=False)
     if classified.get("primary_category") == "Unknown":
         return None
     return Classification(
@@ -219,6 +250,18 @@ def classify_by_port_protocol(port, protocol=""):
     if port == 53 or protocol == "dns":
         return Classification("Local Services", "DNS", "port_protocol", "low")
     return None
+
+
+def _log_classification_timing(result, flow, timings, started, emit_timing=False):
+    total = time.monotonic() - started
+    if not emit_timing and total < 0.05:
+        return
+    parts = " ".join(f"{name}={elapsed:.3f}s" for name, elapsed in timings.items())
+    print(
+        "destination_classify: "
+        f"result={result} local={flow.local_ip} remote={flow.remote_ip} port={flow.port} "
+        f"{parts} total={total:.3f}s"
+    )
 
 
 def _positive_int(value, default):

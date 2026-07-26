@@ -7,7 +7,7 @@ from pathlib import Path
 from netspecter_paths import ROOT
 from netspecter_config import CONFIG_PATH, cfg
 from netspecter_db import query
-from services.application_signature_service import classify_metadata_cached, load_signatures, unknown_review_rows
+from services.application_signature_service import classify_metadata_cached, load_signatures_cached, unknown_review_rows
 from services.microsoft365_endpoints_service import CACHE_PATH as M365_ENDPOINT_CACHE_PATH
 from services.microsoft365_endpoints_service import cached_microsoft365_domain_mappings
 
@@ -110,9 +110,9 @@ def categories():
     return [row for row in load_category_config().get("categories", []) if row.get("enabled", True)]
 
 
-def classify_application(application_name="", domain="", destination_ip="", sni="", asn="", provider="", protocol="", port=None):
+def classify_application(application_name="", domain="", destination_ip="", sni="", asn="", provider="", protocol="", port=None, persistent_cache=True):
     signature_match = classify_metadata_cached(
-        load_signatures(categories()),
+        load_signatures_cached(categories()),
         app_name=application_name,
         domain=domain,
         sni=sni,
@@ -121,6 +121,7 @@ def classify_application(application_name="", domain="", destination_ip="", sni=
         provider=provider,
         protocol=protocol,
         port=port,
+        persistent_cache=persistent_cache,
     )
     if signature_match:
         return {

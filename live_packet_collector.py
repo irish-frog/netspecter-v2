@@ -29,7 +29,6 @@ import json
 import os
 import re
 import signal
-import socket
 import smtplib
 import sqlite3
 import ssl
@@ -161,8 +160,6 @@ DEFAULT_CONFIG = {
     "dns_retention_days": 60,
     "gateway_ip": "",
     "ignore_ips": [],
-    "remote_map_geo_lookups_per_run": 50,
-    "dns_map_geo_lookups_per_run": 10,
     "site_application_mappings": [
         {"application": "Nextcloud", "category": "File Sharing & Storage", "ip": "192.168.99.4"}
     ],
@@ -298,20 +295,13 @@ nft_active_ips = set()
 live_traffic_today = {"day": "", "downloaded_mb": 0.0, "uploaded_mb": 0.0, "total_mb": 0.0}
 estimated_app_targets = {}
 estimated_targets_lock = threading.Lock()
-last_dns_map_refresh = 0.0
 last_suricata_import = 0.0
 last_ids_default_reclassify = 0.0
 last_unknown_reclassify = 0.0
 last_unifi_import = 0.0
 last_ids_maintenance = 0.0
 last_incident_build = 0.0
-last_remote_geo = 0.0
 oui_vendor_cache = None
-GEOLOCATION_REFRESH_SECONDS = 3600
-DNS_MAP_REFRESH_SECONDS = 300
-DNS_MAP_DOMAIN_LIMIT = 80
-DNS_MAP_IP_LIMIT = 180
-DNS_MAP_GEO_LOOKUPS_PER_RUN = 3
 ESTIMATED_APP_NFT_TARGET_LIMIT = 200
 CLASSIFICATION_NFT_TARGET_LIMIT = 300
 NFT_SIGNATURE_REFRESH_SECONDS = 900
@@ -2488,162 +2478,6 @@ def active_classification_targets(config=None):
     return tuple(sorted(set(targets)))
 
 
-def public_ipv4(value):
-    try:
-        ip = ipaddress.ip_address(str(value or "").strip())
-    except ValueError:
-        return ""
-    if ip.version != 4 or not ip.is_global:
-        return ""
-    return str(ip)
-
-
-def resolve_domain_ipv4s(domain, limit=2, timeout=1.0):
-    domain = str(domain or "").strip().strip(".").lower()
-    if not domain or len(domain) > 253 or "." not in domain:
-        return []
-    literal_ip = public_ipv4(domain)
-    if literal_ip:
-        return [literal_ip]
-    previous_timeout = socket.getdefaulttimeout()
-    try:
-        socket.setdefaulttimeout(timeout)
-        _name, _aliases, addresses = socket.gethostbyname_ex(domain)
-    except Exception:
-        return []
-    finally:
-        socket.setdefaulttimeout(previous_timeout)
-    results = []
-    for address in addresses:
-        ip = public_ipv4(address)
-        if ip and ip not in results:
-            results.append(ip)
-        if len(results) >= limit:
-            break
-    return results
-
-
-def lookup_and_store_remote_location(remote_ip, source_label="Remote destination"):
-    remote_ip = public_ipv4(remote_ip)
-    if not remote_ip:
-        return False
-    return False
-
-
-def update_remote_traffic_locations(config=None):
-    """Refresh a few used traffic destination locations per DNS import cycle."""
-    c = config or cfg()
-    lookup_limit = positive_int(c.get("remote_map_geo_lookups_per_run", 50), 50, 1)
-    cutoff = datetime.fromtimestamp(time.time() - GEOLOCATION_REFRESH_SECONDS).strftime("%Y-%m-%d %H:%M:%S")
-    con = connect_db()
-    rows = con.execute(
-        """
-        SELECT r.remote_ip, SUM(r.total_mb) AS total_mb
-        FROM remote_traffic_intervals r
-        LEFT JOIN remote_ip_locations l ON l.remote_ip = r.remote_ip
-        WHERE r.day >= date('now', 'localtime', '-1 day')
-        GROUP BY r.remote_ip
-        HAVING MAX(l.lookup_ts) IS NULL
-            OR MAX(l.latitude) IS NULL
-            OR MAX(l.longitude) IS NULL
-            OR MAX(l.lookup_ts) < ?
-        ORDER BY SUM(r.total_mb) DESC, MAX(r.ts) DESC
-        LIMIT ?
-        """,
-        (cutoff, lookup_limit),
-    ).fetchall()
-    con.close()
-
-    for row in rows:
-        lookup_and_store_remote_location(str(row[0]))
-
-
-def update_one_remote_location():
-    """Backward-compatible wrapper for older callers."""
-    update_remote_traffic_locations({"remote_map_geo_lookups_per_run": 1})
-
-
-def update_dns_destination_map_cache(config=None):
-    """Resolve top DNS domains and geolocate a few missing IPs outside web requests."""
-    global last_dns_map_refresh
-
-    c = config or cfg()
-    interval = positive_int(c.get("dns_map_refresh_seconds", DNS_MAP_REFRESH_SECONDS), DNS_MAP_REFRESH_SECONDS, 60)
-    now_mono = time.monotonic()
-    if now_mono - last_dns_map_refresh < interval:
-        return
-    last_dns_map_refresh = now_mono
-
-    domain_limit = min(positive_int(c.get("dns_map_domain_limit", DNS_MAP_DOMAIN_LIMIT), DNS_MAP_DOMAIN_LIMIT, 10), 20)
-    ip_limit = min(positive_int(c.get("dns_map_ip_limit", DNS_MAP_IP_LIMIT), DNS_MAP_IP_LIMIT, 10), 40)
-    lookup_limit = min(positive_int(c.get("dns_map_geo_lookups_per_run", DNS_MAP_GEO_LOOKUPS_PER_RUN), DNS_MAP_GEO_LOOKUPS_PER_RUN, 1), 3)
-    deadline = time.monotonic() + 5.0
-    cutoff = datetime.fromtimestamp(time.time() - GEOLOCATION_REFRESH_SECONDS).strftime("%Y-%m-%d %H:%M:%S")
-    now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    con = connect_db()
-    domains = con.execute(
-        """
-        SELECT domain
-        FROM dns_querylog
-        WHERE day >= date('now', 'localtime', '-1 day')
-          AND blocked=0
-          AND domain <> ''
-        GROUP BY domain
-        ORDER BY COUNT(*) DESC
-        LIMIT ?
-        """,
-        (domain_limit,),
-    ).fetchall()
-    con.close()
-
-    resolved_ips = []
-    for row in domains:
-        if time.monotonic() >= deadline:
-            break
-        domain = str(row[0] or "").strip().strip(".").lower()
-        for remote_ip in resolve_domain_ipv4s(domain, limit=2, timeout=0.75):
-            run_sql(
-                """
-                INSERT INTO dns_resolved_ips (domain, remote_ip, resolved_ts)
-                VALUES (?, ?, ?)
-                ON CONFLICT(domain, remote_ip) DO UPDATE SET resolved_ts=excluded.resolved_ts
-                """,
-                (domain, remote_ip, now_text),
-            )
-            if remote_ip not in resolved_ips:
-                resolved_ips.append(remote_ip)
-            if len(resolved_ips) >= ip_limit:
-                break
-        if len(resolved_ips) >= ip_limit:
-            break
-
-    if not resolved_ips:
-        return
-
-    placeholders = ",".join("?" for _ in resolved_ips)
-    con = connect_db()
-    missing = con.execute(
-        f"""
-        SELECT r.remote_ip
-        FROM dns_resolved_ips r
-        LEFT JOIN remote_ip_locations l ON l.remote_ip = r.remote_ip
-        WHERE r.remote_ip IN ({placeholders})
-        GROUP BY r.remote_ip
-        HAVING MAX(l.lookup_ts) IS NULL OR MAX(l.lookup_ts) < ?
-        ORDER BY MAX(r.resolved_ts) DESC
-        LIMIT ?
-        """,
-        (*resolved_ips, cutoff, lookup_limit),
-    ).fetchall()
-    con.close()
-
-    for row in missing:
-        if time.monotonic() >= deadline:
-            break
-        lookup_and_store_remote_location(str(row[0]), "DNS destination")
-
-
 def nft_signature(config=None):
     c = config or cfg()
     banned_ips = []
@@ -2849,7 +2683,7 @@ def write_destination_delta(con, ip, destination, cur, day, now, default_categor
         bytes=int(cur["rx"] + cur["tx"]),
         protocol="tcp",
     )
-    classification = classify_flow(con, flow)
+    classification = classify_flow(con, flow, emit_timing=True)
     category = classification.category if classification else default_category
     con.execute(
         """
@@ -2860,9 +2694,17 @@ def write_destination_delta(con, ip, destination, cur, day, now, default_categor
         (ip, destination, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
     )
     if classification:
+        write_started = time.monotonic()
         write_classified_flow_fact(con, flow, classification)
+        elapsed = time.monotonic() - write_started
+        if elapsed >= 0.05:
+            print(f"destination_classify_write: classified_fact={elapsed:.3f}s")
     else:
+        write_started = time.monotonic()
         upsert_unknown_traffic(con, flow)
+        elapsed = time.monotonic() - write_started
+        if elapsed >= 0.05:
+            print(f"destination_classify_write: unknown_queue={elapsed:.3f}s")
 
 
 def flush_loop():
@@ -3283,7 +3125,7 @@ def import_adguard_querylog():
 
 def adguard_querylog_loop():
     """Background loop for AdGuard DNS querylog importing."""
-    global last_suricata_import, last_unifi_import, last_ids_maintenance, last_incident_build, last_remote_geo
+    global last_suricata_import, last_unifi_import, last_ids_maintenance, last_incident_build
     init_db()
 
     while True:
@@ -3317,10 +3159,6 @@ def adguard_querylog_loop():
                 if created:
                     print(f"Security incidents created: {created}")
             run_timed_step("AdGuard/querylog import", import_adguard_querylog)
-            geo_interval = positive_int(c.get("remote_geo_interval_seconds", 300), 300, 60)
-            if now_mono - last_remote_geo >= geo_interval:
-                last_remote_geo = now_mono
-                run_timed_step("Remote traffic geo", update_remote_traffic_locations, c)
         except Exception as e:
             print(f"AdGuard querylog loop failed: {e}")
 

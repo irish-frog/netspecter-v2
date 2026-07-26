@@ -59,8 +59,6 @@ DEFAULT_CONFIG = {
     "dns_retention_days": 60,
     "classification_nft_target_limit": 300,
     "public_ip_cache_seconds": 1800,
-    "remote_map_geo_lookups_per_run": 50,
-    "dns_map_geo_lookups_per_run": 10,
     "fast_page_mode": True,
     "site_application_mappings": [
         {"application": "Nextcloud", "category": "File Sharing & Storage", "ip": "192.168.99.4"}
@@ -121,7 +119,6 @@ DEFAULT_CONFIG = {
     "unifi_import_interval_seconds": 600,
     "ids_maintenance_interval_seconds": 60,
     "incident_build_interval_seconds": 120,
-    "remote_geo_interval_seconds": 300,
     "ids_structured_max_records": 200000,
     "ids_min_free_mb": 512,
     "internet_quality_targets": ["1.1.1.1", "8.8.8.8"],
@@ -182,7 +179,6 @@ SENSITIVE_CONFIG_KEYS = {"adguard_pass", "unifi_password", "smtp_password", "snm
 INTEGRATION_SETTINGS_KEYS = {
     "adguard_client_import_enabled", "unifi_enabled", "unifi_client_import_enabled", "unifi_connector_url", "unifi_site_id",
     "unifi_username", "unifi_password", "unifi_skip_tls_verify", "scheduled_speedtests_per_day",
-    "remote_map_geo_lookups_per_run", "dns_map_geo_lookups_per_run",
     "ids_unknown_only", "ids_excluded_ips", "ids_exceptions", "ids_banned_ips", "ids_banned_domains", "ids_auto_ban_enabled",
     "ids_email_enabled", "ids_telegram_enabled", "smtp_host", "smtp_port", "smtp_security",
     "smtp_username", "smtp_password", "smtp_from", "smtp_to",

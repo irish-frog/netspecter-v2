@@ -167,6 +167,7 @@ def init_dns_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_resolution_resolved_ip ON dns_resolution_events(resolved_ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_resolution_domain ON dns_resolution_events(domain)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_resolution_expires ON dns_resolution_events(expires_at)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_dns_resolution_client_ip_remote_ts ON dns_resolution_events(client_ip, resolved_ip, ts)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS dns_import_state (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -366,6 +367,7 @@ def init_traffic_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_classified_flow_fact_local_ip_day ON classified_flow_facts(local_ip, day)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_classified_flow_fact_category_day ON classified_flow_facts(category, day)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_classified_flow_fact_remote_ip ON classified_flow_facts(remote_ip)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_classified_flow_fact_dedupe ON classified_flow_facts(flow_id, evidence_source, local_ip, remote_ip)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS unknown_traffic_review (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -412,6 +414,7 @@ def init_traffic_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_unknown_remote_ip ON unknown_traffic_queue(remote_ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_unknown_local_ip ON unknown_traffic_queue(local_ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_unknown_status ON unknown_traffic_queue(status)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_unknown_flow_key ON unknown_traffic_queue(local_ip, remote_ip, port, protocol)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS remote_traffic_hourly_rollups (
             hour TEXT NOT NULL,
