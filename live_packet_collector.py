@@ -293,6 +293,7 @@ nft_previous_estimated_counters = {}
 nft_previous_classification_counters = {}
 nft_active_ips = set()
 live_traffic_today = {"day": "", "downloaded_mb": 0.0, "uploaded_mb": 0.0, "total_mb": 0.0}
+device_inventory_write_cache = {}
 estimated_app_targets = {}
 estimated_targets_lock = threading.Lock()
 last_suricata_import = 0.0
@@ -2499,7 +2500,7 @@ def nft_signature(config=None):
 
 def install_nft_counters(config=None):
     """Create bridge traffic counters and any configured IDS endpoint drop rules."""
-    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_previous_classification_counters, nft_active_ips, live_traffic_today
+    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_previous_classification_counters, nft_active_ips, live_traffic_today, device_inventory_write_cache
     started = time.monotonic()
     c = config or cfg()
     signature = nft_signature(c)
@@ -2586,6 +2587,7 @@ def install_nft_counters(config=None):
     nft_previous_estimated_counters = {}
     nft_previous_classification_counters = {}
     nft_active_ips = set()
+    device_inventory_write_cache = {}
     print(
         f"nftables traffic counters installed for {network_text} on bridge traffic ({interface}); "
         f"{len(app_targets)} monitored app attribution target(s); "
@@ -2744,6 +2746,7 @@ def flush_loop():
             last_flush_at = flush_at
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             day = datetime.now().strftime("%Y-%m-%d")
+            device_inventory_interval = positive_int(c.get("traffic_device_update_interval_seconds", 60), 60, 10)
             macs = read_arp_macs()
             deltas = {}
             next_previous_counters = dict(nft_previous_counters)
@@ -2878,8 +2881,17 @@ def flush_loop():
                     live_speed_rows.append((ip, mac, rx_Bps, tx_Bps, total_Bps, now))
                     live_speed_writes += 1
 
-                    device_rows.append((ip, name, mac, vendor, dtype, now, now))
-                    device_writes += 1
+                    metadata_key = (name, mac, vendor, dtype)
+                    last_inventory = device_inventory_write_cache.get(ip)
+                    last_inventory_ts = float(last_inventory[0] or 0.0) if last_inventory else 0.0
+                    last_metadata_key = last_inventory[1] if last_inventory else None
+                    if (
+                        last_metadata_key != metadata_key
+                        or time.monotonic() - last_inventory_ts >= device_inventory_interval
+                    ):
+                        device_rows.append((ip, name, mac, vendor, dtype, now, now))
+                        device_inventory_write_cache[ip] = (time.monotonic(), metadata_key)
+                        device_writes += 1
 
                     interval_rx_mb = rx_delta / 1024 / 1024
                     interval_tx_mb = tx_delta / 1024 / 1024

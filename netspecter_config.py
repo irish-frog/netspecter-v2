@@ -119,6 +119,7 @@ DEFAULT_CONFIG = {
     "unifi_import_interval_seconds": 600,
     "ids_maintenance_interval_seconds": 60,
     "incident_build_interval_seconds": 120,
+    "traffic_device_update_interval_seconds": 60,
     "ids_structured_max_records": 200000,
     "ids_min_free_mb": 512,
     "internet_quality_targets": ["1.1.1.1", "8.8.8.8"],
