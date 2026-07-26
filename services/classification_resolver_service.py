@@ -171,6 +171,62 @@ def write_classified_flow_fact(con, flow, classification):
     )
 
 
+def classified_flow_fact_row(flow, classification):
+    bytes_value = int(flow.bytes or 0)
+    evidence_key = flow.flow_id or f"{flow.ts}|{flow.local_ip}|{flow.remote_ip}|{flow.port}|{flow.protocol}|{classification.evidence_source}"
+    return (
+        flow.ts,
+        flow.ts[:10],
+        flow.local_ip,
+        flow.remote_ip,
+        flow.port,
+        flow.protocol or flow.app_proto,
+        bytes_value,
+        classification.category,
+        classification.application,
+        classification.evidence_source,
+        classification.confidence,
+        evidence_key,
+    )
+
+
+def write_classified_flow_facts_batch(con, rows):
+    if not rows:
+        return 0
+    keys = [(row[11], row[9], row[2], row[3]) for row in rows]
+    existing = set()
+    for flow_id, evidence_source, local_ip, remote_ip in keys:
+        found = con.execute(
+            """
+            SELECT 1
+            FROM classified_flow_facts
+            WHERE flow_id=? AND evidence_source=? AND local_ip=? AND remote_ip=?
+            LIMIT 1
+            """,
+            (flow_id, evidence_source, local_ip, remote_ip),
+        ).fetchone()
+        if found:
+            existing.add((flow_id, evidence_source, local_ip, remote_ip))
+    rows = [
+        row for row in rows
+        if (row[11], row[9], row[2], row[3]) not in existing
+    ]
+    if not rows:
+        return 0
+    before = con.total_changes
+    con.executemany(
+        """
+        INSERT INTO classified_flow_facts (
+            ts, day, local_ip, remote_ip, port, protocol, bytes,
+            category, application, evidence_source, confidence, flow_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    return con.total_changes - before
+
+
 def upsert_unknown_traffic(con, flow):
     con.execute(
         """
@@ -203,6 +259,48 @@ def upsert_unknown_traffic(con, flow):
             flow.http_host,
         ),
     )
+
+
+def unknown_traffic_row(flow):
+    return (
+        flow.ts,
+        flow.ts,
+        flow.local_ip,
+        flow.remote_ip,
+        flow.port,
+        flow.protocol or flow.app_proto,
+        int(flow.bytes or 0),
+        flow.asn,
+        flow.provider,
+        flow.tls_sni,
+        flow.http_host,
+    )
+
+
+def upsert_unknown_traffic_batch(con, rows):
+    if not rows:
+        return 0
+    before = con.total_changes
+    con.executemany(
+        """
+        INSERT INTO unknown_traffic_queue (
+            first_seen, last_seen, local_ip, remote_ip, port, protocol, total_bytes,
+            flow_count, asn, provider, sample_sni, sample_http_host, status
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 'new')
+        ON CONFLICT(local_ip, remote_ip, port, protocol) DO UPDATE SET
+            first_seen=MIN(first_seen, excluded.first_seen),
+            last_seen=MAX(last_seen, excluded.last_seen),
+            total_bytes=total_bytes + excluded.total_bytes,
+            flow_count=flow_count + 1,
+            asn=COALESCE(NULLIF(excluded.asn, ''), asn),
+            provider=COALESCE(NULLIF(excluded.provider, ''), provider),
+            sample_sni=COALESCE(NULLIF(excluded.sample_sni, ''), sample_sni),
+            sample_http_host=COALESCE(NULLIF(excluded.sample_http_host, ''), sample_http_host)
+        """,
+        rows,
+    )
+    return con.total_changes - before
 
 
 def _classification_for_domain(domain, evidence_source, confidence):

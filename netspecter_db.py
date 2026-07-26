@@ -415,6 +415,7 @@ def init_traffic_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_unknown_local_ip ON unknown_traffic_queue(local_ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_unknown_status ON unknown_traffic_queue(status)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_unknown_flow_key ON unknown_traffic_queue(local_ip, remote_ip, port, protocol)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_unknown_flow_status ON unknown_traffic_queue(local_ip, remote_ip, port, protocol, status)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS remote_traffic_hourly_rollups (
             hour TEXT NOT NULL,
@@ -875,6 +876,7 @@ def init_db(force=False):
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_tls_sni ON ids_events(tls_sni)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_alert_rollup ON ids_events(signature_id, src_ip, dest_ip, query, protocol)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_metadata_enrichment ON ids_events(id, event_type, src_ip, dest_ip)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_metadata_batch ON ids_events(id, event_type, src_ip, dest_ip, tls_sni, hostname)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_threat_indicators_indicator_active ON threat_indicators(indicator, active)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS processing_checkpoints (

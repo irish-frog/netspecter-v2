@@ -1,10 +1,15 @@
 from datetime import datetime
+import time
 
 from services.classification_resolver_service import (
     Flow,
     classify_flow,
+    classified_flow_fact_row,
+    unknown_traffic_row,
     upsert_unknown_traffic,
+    upsert_unknown_traffic_batch,
     write_classified_flow_fact,
+    write_classified_flow_facts_batch,
 )
 
 
@@ -13,6 +18,7 @@ SUPPORTED_TYPES = ("tls", "http", "alert")
 
 
 def enrich_from_suricata_metadata(con, batch_size=500):
+    started = time.monotonic()
     state = con.execute(
         "SELECT last_id FROM classification_enrichment_state WHERE source=?",
         (SOURCE_KEY,),
@@ -40,21 +46,33 @@ def enrich_from_suricata_metadata(con, batch_size=500):
 
     processed = classified_count = unknown_count = 0
     max_id = last_id
+    fact_rows = []
+    unknown_rows = []
+    unknown_update_rows = []
+    classify_elapsed = 0.0
     for row in rows:
         max_id = max(max_id, int(row["id"]))
         flow = _flow_from_event(row)
         if not flow:
             continue
+        classify_started = time.monotonic()
         classification = classify_flow(con, flow)
+        classify_elapsed += time.monotonic() - classify_started
         if classification:
-            write_classified_flow_fact(con, flow, classification)
-            _update_matching_unknowns(con, flow)
+            fact_rows.append(classified_flow_fact_row(flow, classification))
+            if flow.tls_sni or flow.http_host:
+                unknown_update_rows.append((flow.tls_sni, flow.http_host, flow.local_ip, flow.remote_ip, flow.port, flow.protocol or flow.app_proto))
             classified_count += 1
         else:
-            upsert_unknown_traffic(con, flow)
+            unknown_rows.append(unknown_traffic_row(flow))
             unknown_count += 1
         processed += 1
 
+    write_started = time.monotonic()
+    inserted_facts = write_classified_flow_facts_batch(con, fact_rows)
+    upserted_unknowns = upsert_unknown_traffic_batch(con, unknown_rows)
+    updated_unknowns = _update_matching_unknowns_batch(con, unknown_update_rows)
+    write_elapsed = time.monotonic() - write_started
     con.execute(
         """
         INSERT INTO classification_enrichment_state (source, last_id, updated_at)
@@ -65,6 +83,15 @@ def enrich_from_suricata_metadata(con, batch_size=500):
         """,
         (SOURCE_KEY, max_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
     )
+    elapsed = time.monotonic() - started
+    if elapsed >= 0.2:
+        print(
+            "Suricata metadata classification detail: "
+            f"rows={len(rows)} processed={processed} classified={classified_count} unknown={unknown_count} "
+            f"fact_rows={len(fact_rows)} inserted_facts={inserted_facts} unknown_rows={len(unknown_rows)} "
+            f"unknown_writes={upserted_unknowns} unknown_updates={updated_unknowns} "
+            f"classify={classify_elapsed:.3f}s writes={write_elapsed:.3f}s total={elapsed:.3f}s"
+        )
     return {"processed": processed, "classified": classified_count, "unknown": unknown_count, "last_id": max_id}
 
 
@@ -152,6 +179,32 @@ def _update_matching_unknowns(con, flow):
             flow.protocol or flow.app_proto,
         ),
     )
+
+
+def _update_matching_unknowns_batch(con, rows):
+    rows = [row for row in rows if row[0] or row[1]]
+    if not rows:
+        return 0
+    before = con.total_changes
+    con.executemany(
+        """
+        UPDATE unknown_traffic_queue
+        SET sample_sni=COALESCE(NULLIF(?, ''), sample_sni),
+            sample_http_host=COALESCE(NULLIF(?, ''), sample_http_host),
+            status=CASE WHEN status='new' THEN 'enriched' ELSE status END
+        WHERE local_ip=?
+          AND remote_ip=?
+          AND (port IS NULL OR port=?)
+          AND (protocol IS NULL OR protocol='' OR protocol=?)
+          AND (
+              status='new'
+              OR COALESCE(sample_sni, '') != COALESCE(NULLIF(?, ''), COALESCE(sample_sni, ''))
+              OR COALESCE(sample_http_host, '') != COALESCE(NULLIF(?, ''), COALESCE(sample_http_host, ''))
+          )
+        """,
+        [(sni, host, local_ip, remote_ip, port, protocol, sni, host) for sni, host, local_ip, remote_ip, port, protocol in rows],
+    )
+    return con.total_changes - before
 
 
 def _normalise_ts(value):
