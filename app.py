@@ -1897,7 +1897,7 @@ def shell(title, body, active="Dashboard"):
             [
                 ("Devices", "/devices", "devices"),
                 ("Traffic", "/traffic", "traffic"),
-                ("Unknown Review", "/unknown-traffic", "network"),
+                ("Attribution Review", "/unknown-traffic", "network"),
                 ("History", "/history", "history"),
                 ("Application Activity", "/applications", "network"),
                 ("Speed Tests", "/speed-tests", "speedtest"),
@@ -5490,7 +5490,7 @@ def traffic():
       <div class="ns-filter-bar">
         {time_picker()}
         <input id="trafficSearch" type="search" placeholder="Filter device or IP" aria-label="Filter traffic rows" data-table-search="trafficTable">
-        <a class="ns-compact-button" href="/unknown-traffic">Unknown Review</a>
+        <a class="ns-compact-button" href="/unknown-traffic">Attribution Review</a>
         <a class="ns-compact-button ns-compact-button--danger" href="/traffic/clear?range={range_key()}">Clear Traffic History</a>
       </div>
     </div>
@@ -5942,7 +5942,7 @@ def applications():
     if unattributed_total > 0.01:
         unattributed_rows = f"""
 <tr>
-  <td>Other / Unclassified</td>
+  <td>Traffic Without Application Attribution</td>
   <td>{fmt_mb(unattributed_total)}</td>
   <td><span>100.0%</span><span class="ns-coverage-mini-bar muted"><span style="width:100%"></span></span></td>
 </tr>
@@ -5956,10 +5956,10 @@ def applications():
         coverage_section = f"""
   <section class="ns-polish-panel ns-classification-coverage">
     <div class="ns-polish-header">
-      <h2 class="ns-polish-section-title">Classification Coverage</h2>
+      <h2 class="ns-polish-section-title">Application Attribution Coverage</h2>
     </div>
     <div class="ns-dashboard-empty ns-coverage-empty">
-      Classification coverage uses traffic byte counters and is shown in Data Used mode. DNS Activity uses query counts, so it is kept separate from byte coverage.
+      Application attribution coverage uses traffic byte counters and is shown in Data Used mode. DNS Activity uses query counts, so it is kept separate from byte coverage.
       <a class="ns-compact-button" href="/applications?range={range_key()}&view=data#classificationCoverage">View Data Used</a>
     </div>
   </section>
@@ -5971,15 +5971,15 @@ def applications():
         coverage_section = f"""
   <section class="ns-polish-panel ns-classification-coverage" id="classificationCoverage">
     <div class="ns-polish-header">
-      <h2 class="ns-polish-section-title">Classification Coverage</h2>
+      <h2 class="ns-polish-section-title">Application Attribution Coverage</h2>
     </div>
     <div class="ns-coverage-stats">
       <div><b>{fmt_mb(coverage_total)}</b><span>Total Traffic</span></div>
-      <div><b class="purple">{fmt_mb(attributed_total)}</b><span>Classified</span></div>
+      <div><b class="purple">{fmt_mb(attributed_total)}</b><span>Attributed</span></div>
       <div><b>{fmt_mb(unattributed_total)}</b><span>Unattributed</span></div>
-      <div><b class="cyan">{classified_pct:.1f}%</b><span>classified</span></div>
+      <div><b class="cyan">{classified_pct:.1f}%</b><span>attributed</span></div>
     </div>
-    <div class="ns-coverage-bar" aria-label="Classification coverage {classified_pct:.1f}%">
+    <div class="ns-coverage-bar" aria-label="Application attribution coverage {classified_pct:.1f}%">
       <span class="ns-coverage-fill" style="width:{coverage_width}%"></span>
     </div>
     <div class="ns-coverage-helper"><i class="fa-solid fa-circle-info"></i> Improve coverage by adding DNS/app mappings</div>
@@ -5988,7 +5988,7 @@ def applications():
   <section class="ns-coverage-panels">
     <div class="ns-polish-panel ns-coverage-detail">
       <div class="ns-polish-header">
-        <h2 class="ns-polish-section-title">Top Classified Data</h2>
+        <h2 class="ns-polish-section-title">Top Attributed Data</h2>
       </div>
       <table class="ns-coverage-table">
         <thead><tr><th>Application</th><th>Category</th><th>Traffic</th><th>Percentage</th></tr></thead>
@@ -6028,7 +6028,7 @@ def applications():
   </div>
   {clear_notice}
   <section class="ns-app-metric-grid">
-    <div class="ns-polish-card ns-app-metric"><span class="ns-app-metric-icon purple"><i class="fa-solid fa-wave-square"></i></span><span class="label">Total Classified Data Used</span><b class="big blue">{fmt_mb(attributed_total)}</b><small>Coverage: {classified_pct}% classified of {fmt_mb(coverage_total)}</small></div>
+    <div class="ns-polish-card ns-app-metric"><span class="ns-app-metric-icon purple"><i class="fa-solid fa-wave-square"></i></span><span class="label">Total Attributed Data Used</span><b class="big blue">{fmt_mb(attributed_total)}</b><small>Coverage: {classified_pct}% attributed of {fmt_mb(coverage_total)}</small></div>
     <div class="ns-polish-card ns-app-metric"><span class="ns-app-metric-icon blue"><i class="fa-solid fa-table-cells-large"></i></span><span class="label">DNS Queries</span><b class="big">{total_queries:,}</b><small>Total observed</small></div>
     <div class="ns-polish-card ns-app-metric"><span class="ns-app-metric-icon green"><i class="fa-solid fa-display"></i></span><span class="label">Active Applications</span><b class="big green">{len(rows):,}</b><small>Unique categories</small></div>
     <div class="ns-polish-card ns-app-metric"><span class="ns-app-metric-icon cyan"><i class="fa-solid fa-globe"></i></span><span class="label">Unattributed Traffic</span><b class="big yellow">{fmt_mb(unattributed_total)}</b><small>Not app-attributed</small></div>
@@ -8506,7 +8506,7 @@ def reporting_page():
 </tr>
 """
         if not rows_html:
-            rows_html = '<tr><td colspan="6">No unclassified device traffic estimate for this period.</td></tr>'
+            rows_html = '<tr><td colspan="6">No unattributed device traffic estimate for this period.</td></tr>'
         return rows_html
 
     def fmt_metric(value, suffix="", decimals=1):
@@ -8587,7 +8587,7 @@ def reporting_page():
 
     classified_category_rows = [
         row for row in (category_rows or [])
-        if row.get("category") != "Unclassified / Other Network Traffic" and float(row.get("total_mb") or 0) > 0
+        if row.get("category") != "Traffic Without Application Attribution" and float(row.get("total_mb") or 0) > 0
     ]
     donut_segments = []
     donut_start = 0.0
@@ -8671,7 +8671,7 @@ def reporting_page():
         preview_sections += f"""
 <section class="ns-report-a4-section">
   <h2>Application Categories</h2>
-  <p>Application categories use exclusive primary classification. Coverage: {coverage_pct:.1f}%. Unknown traffic: {max(0.0, 100.0 - coverage_pct):.1f}%.{h(overlap_note)}</p>
+  <p>Application categories use exclusive primary classification. Coverage: {coverage_pct:.1f}%. Traffic without application attribution: {max(0.0, 100.0 - coverage_pct):.1f}%.{h(overlap_note)}</p>
 </section>
 <section class="ns-report-a4-section">
   <h2>Top Applications by Data Used</h2>
@@ -8681,10 +8681,10 @@ def reporting_page():
   </table>
 </section>
 <section class="ns-report-a4-section">
-  <h2>Unclassified Traffic by Device</h2>
+  <h2>Unattributed Traffic by Device</h2>
   <p>Estimate based on total device traffic minus application-attributed traffic.</p>
   <table class="ns-report-a4-table">
-    <thead><tr><th>Number</th><th>Device</th><th>IP Address</th><th>Unclassified</th><th>Total Traffic</th><th>Unclassified %</th></tr></thead>
+    <thead><tr><th>Number</th><th>Device</th><th>IP Address</th><th>Unattributed</th><th>Total Traffic</th><th>Unattributed %</th></tr></thead>
     <tbody>{unclassified_device_report_rows()}</tbody>
   </table>
 </section>
@@ -8819,7 +8819,7 @@ def reporting_page():
           <div class="ns-report-donut"><div><b>{h(fmt_mb(overview.get("total_mb") or 0))}</b><span>Total Traffic</span></div></div>
           <div>{category_legend}</div>
         </div>
-        <div class="ns-report-coverage">Primary classification coverage: {coverage_pct:.1f}%. Unknown traffic: {max(0.0, 100.0 - coverage_pct):.1f}%.{h(overlap_note)}</div>
+        <div class="ns-report-coverage">Primary application attribution coverage: {coverage_pct:.1f}%. Traffic without application attribution: {max(0.0, 100.0 - coverage_pct):.1f}%.{h(overlap_note)}</div>
       </section>
       <section class="ns-polish-panel ns-report-panel">
         <h2>Report Contents</h2>
@@ -8965,7 +8965,7 @@ def reporting_page():
         return f'<tr><td><span class="ns-category-dot" style="background:{h(row["color"])}"></span>{h(row["category"])}</td><td>{h(row["usage_group"])}</td><td>{h(fmt_mb(row["total_mb"] or 0))}</td><td>{h(row["share_total_pct"])}%</td><td>{h(row["share_classified_pct"])}%</td><td>{app_cell}</td></tr>'
 
     category_table = table(
-        ["Category", "Usage Group", "Traffic", "Share of Total", "Share of Classified", "Applications"],
+        ["Category", "Usage Group", "Traffic", "Share of Total", "Share of Attributed", "Applications"],
         category_rows,
         "No classified application traffic found for this period.",
         category_row,
@@ -8992,7 +8992,7 @@ def reporting_page():
     donut_segments = []
     donut_start = 0.0
     for row in category_rows:
-        if row.get("category") == "Unclassified / Other Network Traffic":
+        if row.get("category") == "Traffic Without Application Attribution":
             continue
         pct = max(0.0, float(row.get("share_classified_pct") or row.get("share_total_pct") or 0))
         if pct <= 0:
@@ -9116,7 +9116,7 @@ def reporting_page():
     {stat_card("Active Devices", f'{overview["active_devices"]:,}', "Devices seen in period", "desktop", "blue")}
     {stat_card("Applications", f'{overview["applications"]:,}', "Detected categories", "grip", "blue")}
     {stat_card("Destinations", f'{overview["unique_destinations"]:,}', "Remote IPs contacted", "location-dot", "teal")}
-    {stat_card("Classification Coverage", f'{coverage_pct}%', f'{fmt_mb(category_report["classified_application_mb"])} of {fmt_mb(category_report["total_network_mb"])} classified', "chart-pie", "teal")}
+    {stat_card("Application Attribution", f'{coverage_pct}%', f'{fmt_mb(category_report["classified_application_mb"])} of {fmt_mb(category_report["total_network_mb"])} attributed', "chart-pie", "teal")}
   </div>
 
   <div class="ns-reporting-shell">
@@ -9139,8 +9139,8 @@ def reporting_page():
       <div class="ns-reporting-grid">
       <section class="ns-card ns-reporting-section ns-reporting-wide">
         <h2>Application Usage by Category</h2>
-        <p class="ns-muted">Default view is based on total network traffic. The table also shows each category's share of classified application traffic.</p>
-        <div class="ns-coverage-note {coverage_class}"><strong>{h(coverage_label)}:</strong> {h(coverage_pct)}% of total network traffic was identified by application category. Category percentages should be interpreted with this coverage in mind.</div>
+        <p class="ns-muted">Default view is based on total network traffic. The table also shows each category's share of application-attributed traffic.</p>
+        <div class="ns-coverage-note {coverage_class}"><strong>{h(coverage_label)}:</strong> {h(coverage_pct)}% of total network traffic had application byte attribution. Category percentages should be interpreted with this coverage in mind.</div>
         {ai_summary_panel}
         <div class="ns-category-panel">
           <div class="ns-category-donut"><span>{h(fmt_mb(overview["total_mb"]))}<small>Total Traffic</small></span></div>
@@ -9319,9 +9319,9 @@ def reporting_xlsx_response(context, sections=None):
         sheets.append(("Top Devices", rows))
     if "applications" in selected:
         category_report = context.get("category_report") or {}
-        rows = [["Category", "Traffic", "Share of Classified", "Classification Coverage"]]
+        rows = [["Category", "Traffic", "Share of Attributed", "Application Attribution Coverage"]]
         for row in context.get("category_rows") or []:
-            if row.get("category") == "Unclassified / Other Network Traffic" or float(row.get("total_mb") or 0) <= 0:
+            if row.get("category") == "Traffic Without Application Attribution" or float(row.get("total_mb") or 0) <= 0:
                 continue
             rows.append([
                 row.get("category") or "Other",
@@ -9812,7 +9812,7 @@ def unknown_traffic_review():
         valid_categories = {row["name"] for row in application_categories()}
         row = _unknown_queue_row(row_id)
         if not row:
-            notice, notice_class = "Unknown traffic row was not found.", "setup-warning"
+            notice, notice_class = "Unattributed traffic row was not found.", "setup-warning"
         elif not app_name or category not in valid_categories:
             notice, notice_class = "Choose an application name and valid category before saving a rule.", "setup-warning"
         else:
@@ -9918,15 +9918,15 @@ def unknown_traffic_review():
   </tr>
 """
 
-    table_rows = "".join(row_html(row) for row in rows) or '<tr><td colspan="6">No unknown traffic is waiting for review.</td></tr>'
+    table_rows = "".join(row_html(row) for row in rows) or '<tr><td colspan="6">No unattributed traffic is waiting for review.</td></tr>'
     notice_html = f'<div class="{notice_class}">{h(notice)}</div>' if notice else ""
     body = f"""
-{topbar('Unknown Traffic')}
+{topbar('Unattributed Traffic')}
 <div class="settings-page">
   {notice_html}
   <div class="panel settings settings-card">
-    <h2>Unknown Traffic Review</h2>
-    <p class="sub">Convert repeated unknown destinations into reusable classification rules. Saved rules are applied immediately to the queued unknowns and used by future background classification.</p>
+    <h2>Unattributed Traffic Review</h2>
+    <p class="sub">Convert repeated destinations without application attribution into reusable classification rules. Saved rules are applied immediately to the queued destinations and used by future background classification.</p>
     <table class="table compact">
       <thead><tr><th>Local device</th><th>Destination</th><th>Port</th><th>Volume</th><th>Status</th><th>Rule</th></tr></thead>
       <tbody>{table_rows}</tbody>
@@ -9934,7 +9934,7 @@ def unknown_traffic_review():
   </div>
 </div>
 """
-    return shell("Unknown Traffic", body, "Traffic")
+    return shell("Unattributed Traffic", body, "Traffic")
 
 
 def _unknown_queue_row(row_id):

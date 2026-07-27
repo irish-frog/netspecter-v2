@@ -82,20 +82,20 @@ def structured_report_text(context, mask_options=None):
     lines.append(f"- Unique destinations: {overview.get('unique_destinations', 0)}")
     lines.append("")
     if category_report:
-        lines.append("## Application Classification Coverage")
+        lines.append("## Application Attribution Coverage")
         lines.append(
             f"{category_report.get('classification_coverage_pct', 0)}% "
             f"({float(category_report.get('classified_application_mb') or 0):.2f} MB of "
-            f"{float(category_report.get('total_network_mb') or 0):.2f} MB classified by application)"
+            f"{float(category_report.get('total_network_mb') or 0):.2f} MB attributed to applications)"
         )
         lines.append("")
     flow_report = context.get("classified_flow_report") or {}
     if flow_report.get("total_bytes"):
         lines.append("## Classification Pipeline Coverage")
-        lines.append(f"- Known traffic: {flow_report.get('known_pct', 0)}%")
-        lines.append(f"- Unknown traffic: {flow_report.get('unknown_pct', 0)}%")
+        lines.append(f"- Attributed traffic: {flow_report.get('known_pct', 0)}%")
+        lines.append(f"- Traffic without application attribution: {flow_report.get('unknown_pct', 0)}%")
         lines.append(f"- Classified evidence bytes: {int(flow_report.get('known_bytes') or 0):,}")
-        lines.append(f"- Unknown evidence bytes: {int(flow_report.get('unknown_bytes') or 0):,}")
+        lines.append(f"- Unattributed evidence bytes: {int(flow_report.get('unknown_bytes') or 0):,}")
         lines.append("")
         lines.append("## Top Categories by Classified Bytes")
         for row in (flow_report.get("category_rows") or [])[:10]:
@@ -112,7 +112,7 @@ def structured_report_text(context, mask_options=None):
         lines.append("")
     unknown_rows = context.get("unknown_destination_rows") or []
     if unknown_rows:
-        lines.append("## Top Unknown Destinations")
+        lines.append("## Top Destinations Without Application Attribution")
         for row in unknown_rows[:10]:
             hint = _row_value(row, "sample_sni", "") or _row_value(row, "sample_http_host", "") or _row_value(row, "provider", "")
             hint_text = f", hint: {hint}" if hint else ""
@@ -125,12 +125,12 @@ def structured_report_text(context, mask_options=None):
         lines.append("")
     trend_rows = context.get("unknown_traffic_trend") or []
     if trend_rows:
-        lines.append("## Unknown Traffic Trend")
+        lines.append("## Unattributed Traffic Trend")
         for row in trend_rows[-14:]:
             total_bytes = float(_row_value(row, "total_bytes", 0) or 0)
             unknown_bytes = float(_row_value(row, "unknown_bytes", 0) or 0)
             unknown_pct = round((unknown_bytes / total_bytes * 100), 1) if total_bytes else 0
-            lines.append(f"- {_row_value(row, 'day', '')}: {unknown_pct}% unknown")
+            lines.append(f"- {_row_value(row, 'day', '')}: {unknown_pct}% without application attribution")
         lines.append("")
     ai_summary = context.get("ai_summary") or {}
     if ai_summary.get("services_detected"):

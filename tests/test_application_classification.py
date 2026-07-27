@@ -203,7 +203,7 @@ def test_site_device_mapping_adds_nextcloud_to_category_summary(monkeypatch):
     summary = category_summary("2026-07-13", "2026-07-14", total_network_mb=200.0)
 
     file_sharing = next(row for row in summary["rows"] if row["category"] == "File Sharing & Storage")
-    unclassified = next(row for row in summary["rows"] if row["category"] == "Unclassified / Other Network Traffic")
+    unclassified = next(row for row in summary["rows"] if row["category"] == "Traffic Without Application Attribution")
     assert file_sharing["total_mb"] == 85.0
     assert file_sharing["application_names"] == ["Nextcloud"]
     assert summary["classification_coverage_pct"] == 42.5
@@ -437,7 +437,7 @@ def test_category_totals_equal_exclusive_classified_traffic_when_overlapping(mon
     monkeypatch.setattr(application_classification_service, "query", fake_query)
     monkeypatch.setattr(application_classification_service, "site_application_mappings", lambda: [])
     summary = category_summary("2026-07-13", "2026-07-14", total_network_mb=100.0)
-    primary_rows = [row for row in summary["rows"] if row["category"] != "Unclassified / Other Network Traffic"]
+    primary_rows = [row for row in summary["rows"] if row["category"] != "Traffic Without Application Attribution"]
 
     assert sum(row["total_mb"] for row in primary_rows) == summary["matched_application_mb"]
     assert summary["classified_application_mb"] == summary["total_network_mb"]

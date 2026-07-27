@@ -70,7 +70,7 @@ def _draw_report(pdf, context):
     coverage = float(category_report.get("classification_coverage_pct") or 0)
     pdf.round_rect(MARGIN, 574, 511, 126, fill=(0.98, 0.99, 1.0), stroke=(0.82, 0.88, 0.95))
     pdf.text(MARGIN + 14, 678, "Application Usage", 13, bold=True, color=(0.05, 0.12, 0.22))
-    pdf.text(MARGIN + 14, 661, f"{coverage:.1f}% of total traffic is classified by application.", 8, color=(0.36, 0.43, 0.54))
+    pdf.text(MARGIN + 14, 661, f"{coverage:.1f}% of total traffic is attributed to applications.", 8, color=(0.36, 0.43, 0.54))
     _application_usage_summary(pdf, category_rows, MARGIN + 14, 641, 483)
 
     _status_panel(pdf, findings, MARGIN, 438, 246, 116)
@@ -234,7 +234,7 @@ def _ai_panel(pdf, ai_summary, x, y, w, h):
 
 
 def _application_usage_summary(pdf, category_rows, x, y, width):
-    rows = [row for row in category_rows if _row_value(row, "category") != "Unclassified / Other Network Traffic"][:5]
+    rows = [row for row in category_rows if _row_value(row, "category") != "Traffic Without Application Attribution"][:5]
     if not rows:
         pdf.text(x, y - 10, "No classified application traffic found for this period.", 8, color=(0.36, 0.43, 0.54))
         return
@@ -257,7 +257,7 @@ def _application_usage_summary(pdf, category_rows, x, y, width):
 
 
 def _category_table(pdf, category_rows, x, y):
-    rows = [row for row in category_rows if _row_value(row, "category") != "Unclassified / Other Network Traffic"][:7]
+    rows = [row for row in category_rows if _row_value(row, "category") != "Traffic Without Application Attribution"][:7]
     table_rows = []
     for row in rows:
         apps = _row_value(row, "application_names", []) or []
@@ -304,7 +304,7 @@ def _draw_pie(pdf, cx, cy, radius, rows):
     start = -90.0
     total = 0.0
     for row in rows:
-        if _row_value(row, "category") == "Unclassified / Other Network Traffic":
+        if _row_value(row, "category") == "Traffic Without Application Attribution":
             continue
         pct = max(0.0, float(_row_value(row, "share_classified_pct", _row_value(row, "share_total_pct", 0)) or 0))
         if pct <= 0:

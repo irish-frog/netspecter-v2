@@ -298,8 +298,8 @@ def category_summary(start_time, end_time, filters=None, limit=8, total_network_
     unclassified_mb = max(0.0, network_total - classified_total)
     if unclassified_mb > 0:
         top.append({
-            "category": "Unclassified / Other Network Traffic",
-            "usage_group": "Unclassified",
+            "category": "Traffic Without Application Attribution",
+            "usage_group": "Unattributed",
             "classification_source": "Outside application classification",
             "color": "#64748b",
             "downloaded_mb": 0.0,
