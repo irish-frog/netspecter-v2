@@ -364,6 +364,31 @@ def test_read_nft_counters_parses_classification_counters(monkeypatch):
     assert classification[("rx", "192.168.99.50", "203.0.113.10")] == 250
 
 
+def test_configured_local_app_ip_creates_estimated_target_from_dns_answer():
+    config = {
+        "lan_prefix": "192.168.99.",
+        "site_application_mappings": [
+            {"application": "Customer File Server", "category": "File Sharing & Storage", "ip": "192.168.99.4"}
+        ],
+    }
+    live_packet_collector.estimated_app_targets.clear()
+
+    live_packet_collector.remember_estimated_app_targets(
+        config,
+        "192.168.99.50",
+        "fileserver.lan",
+        [{"type": "A", "value": "192.168.99.4", "ttl": 900}],
+        "",
+        False,
+    )
+
+    assert (
+        "Customer File Server",
+        "192.168.99.50",
+        "192.168.99.4",
+    ) in live_packet_collector.active_estimated_app_targets()
+
+
 def test_write_destination_delta_records_fact_or_unknown(monkeypatch):
     con = memory_db()
     con.execute(

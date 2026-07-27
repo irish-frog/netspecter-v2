@@ -2340,11 +2340,10 @@ def domain_pattern_matches(pattern, domain):
 
 
 def monitored_app_ips(config=None):
-    output = {app: set(ips) for app, ips in SITE_MONITORED_APP_IPS.items()}
+    output = {}
+    assigned_ips = set()
     mappings = (config or cfg()).get("site_application_mappings")
-    if not isinstance(mappings, list):
-        return output
-    for row in mappings:
+    for row in mappings if isinstance(mappings, list) else []:
         if not isinstance(row, dict):
             continue
         app_name = str(row.get("application") or "").strip()
@@ -2356,6 +2355,12 @@ def monitored_app_ips(config=None):
         except ValueError:
             continue
         output.setdefault(app_name, set()).add(ip)
+        assigned_ips.add(ip)
+    for app_name, ips in SITE_MONITORED_APP_IPS.items():
+        for ip in ips:
+            if ip in assigned_ips:
+                continue
+            output.setdefault(app_name, set()).add(ip)
     return output
 
 
@@ -2364,8 +2369,6 @@ def remember_estimated_app_targets(config, client, domain, answers, observed_at=
     if blocked:
         return
     category = monitored_app_for_domain(domain, config)
-    if not category:
-        return
     try:
         client_ip = ipaddress.ip_address(str(client or "").strip())
         network = lan_network(config)
@@ -2380,7 +2383,6 @@ def remember_estimated_app_targets(config, client, domain, answers, observed_at=
     except ValueError:
         observed_epoch = now
     configured_app_ips = monitored_app_ips(config)
-    local_app_ips = configured_app_ips.get(category, set())
     for answer in answers if isinstance(answers, list) else []:
         if not isinstance(answer, dict) or str(answer.get("type") or "").upper() != "A":
             continue
@@ -2390,6 +2392,10 @@ def remember_estimated_app_targets(config, client, domain, answers, observed_at=
             continue
         if destination.version != 4 or destination.is_unspecified:
             continue
+        target_category = category or monitored_app_for_ip(destination, configured_app_ips)
+        if not target_category:
+            continue
+        local_app_ips = configured_app_ips.get(target_category, set())
         if destination in network and str(destination) not in local_app_ips:
             continue
         ttl = positive_int(answer.get("ttl", 900), 900, 1)
@@ -2399,8 +2405,16 @@ def remember_estimated_app_targets(config, client, domain, answers, observed_at=
         key = (str(client_ip), str(destination))
         with estimated_targets_lock:
             existing = estimated_app_targets.get(key)
-            if not existing or existing[0] == category or existing[1] <= now:
-                estimated_app_targets[key] = (category, max(existing[1] if existing and existing[0] == category else 0, expires))
+            if not existing or existing[0] == target_category or existing[1] <= now:
+                estimated_app_targets[key] = (target_category, max(existing[1] if existing and existing[0] == target_category else 0, expires))
+
+
+def monitored_app_for_ip(destination, configured_app_ips=None):
+    destination_text = str(destination or "").strip()
+    for app_name, ips in (configured_app_ips or monitored_app_ips()).items():
+        if destination_text in ips:
+            return app_name
+    return ""
 
 
 def active_estimated_app_targets():
