@@ -159,6 +159,7 @@ DEFAULT_CONFIG = {
     "traffic_retention_days": 60,
     "raw_traffic_retention_hours": 6,
     "dns_retention_days": 60,
+    "raw_dns_retention_hours": 24,
     "gateway_ip": "",
     "ignore_ips": [],
     "site_application_mappings": [
@@ -2012,12 +2013,10 @@ def prune_history(config=None):
     """Apply configured history retention without altering today's totals."""
     c = config or cfg()
     traffic_days = positive_int(c.get("traffic_retention_days", 60), 60, 1)
-    dns_days = positive_int(c.get("dns_retention_days", 60), 60, 1)
     quality_days = positive_int(c.get("internet_quality_retention_days", 60), 60, 1)
     config_days = positive_int(c.get("config_change_retention_days", 180), 180, 1)
     threat_days = positive_int(c.get("threat_intel_retention_days", 30), 30, 1)
     traffic_cutoff = f"-{traffic_days - 1} days"
-    dns_cutoff = f"-{dns_days - 1} days"
     quality_cutoff = f"-{quality_days - 1} days"
     config_cutoff = f"-{config_days - 1} days"
     threat_cutoff = f"-{threat_days - 1} days"
@@ -2041,18 +2040,8 @@ def prune_history(config=None):
             "DELETE FROM remote_traffic_intervals WHERE day < date('now', 'localtime', ?)",
             (traffic_cutoff,),
         )
-        con.execute(
-            "DELETE FROM dns_querylog WHERE day < date('now', 'localtime', ?)",
-            (dns_cutoff,),
-        )
-        con.execute(
-            "DELETE FROM dns_resolved_ips WHERE resolved_ts < datetime('now', 'localtime', ?)",
-            (dns_cutoff,),
-        )
-        con.execute(
-            "DELETE FROM dns_resolution_events WHERE expires_at < datetime('now', 'localtime', ?)",
-            (dns_cutoff,),
-        )
+        from services.dns_rollup_service import prune_dns_history
+        prune_dns_history(con, c)
         con.execute(
             "DELETE FROM remote_ip_locations WHERE lookup_ts < datetime('now', 'localtime', ?)",
             (traffic_cutoff,),

@@ -57,6 +57,7 @@ DEFAULT_CONFIG = {
     "traffic_retention_days": 60,
     "raw_traffic_retention_hours": 6,
     "dns_retention_days": 60,
+    "raw_dns_retention_hours": 24,
     "classification_nft_target_limit": 300,
     "public_ip_cache_seconds": 1800,
     "fast_page_mode": True,

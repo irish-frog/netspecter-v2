@@ -2,6 +2,8 @@
 set -euo pipefail
 
 DATA_DIR="${NETSPECTER_DATA_ROOT:-/var/lib/netspecter}"
+INSTALL_DIR="${NETSPECTER_INSTALL_ROOT:-/opt/netspecter}"
+PYTHON_BIN="${NETSPECTER_PYTHON:-${INSTALL_DIR}/venv/bin/python}"
 LOG_FILE="${DATA_DIR}/daily-db-maintenance.log"
 DBS=(
   "${DATA_DIR}/netspecter.db"
@@ -33,6 +35,23 @@ vacuum_db() {
 }
 
 log "NetSpecter daily database maintenance started"
+if [ -x "$PYTHON_BIN" ] && [ -d "$INSTALL_DIR" ]; then
+  log "Pruning raw Suricata logs"
+  if (cd "$INSTALL_DIR" && timeout 600 "$PYTHON_BIN" -c "from netspecter_config import cfg; from live_packet_collector import prune_suricata_raw_logs; prune_suricata_raw_logs(cfg())"); then
+    log "Suricata raw log prune complete"
+  else
+    log "Suricata raw log prune skipped or failed"
+  fi
+
+  log "Rolling up and pruning raw DNS history"
+  if (cd "$INSTALL_DIR" && timeout 1800 "$PYTHON_BIN" -c "from netspecter_config import cfg; from netspecter_db import connect_db, init_db; from services.dns_rollup_service import prune_dns_history; init_db(); con=connect_db(); prune_dns_history(con, cfg()); con.commit(); con.close()"); then
+    log "DNS rollup and raw prune complete"
+  else
+    log "DNS rollup and raw prune skipped or failed, likely busy"
+  fi
+else
+  log "Skipping Python maintenance; Python runtime not found: $PYTHON_BIN"
+fi
 for db in "${DBS[@]}"; do
   vacuum_db "$db"
 done

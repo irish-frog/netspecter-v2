@@ -139,6 +139,23 @@ def init_dns_db():
         """
     )
     con.execute("""
+        CREATE TABLE IF NOT EXISTS dns_daily_rollups (
+            day TEXT NOT NULL,
+            client TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            category TEXT DEFAULT 'Other',
+            request_count INTEGER DEFAULT 0,
+            blocked_count INTEGER DEFAULT 0,
+            downloaded_mb REAL DEFAULT 0,
+            uploaded_mb REAL DEFAULT 0,
+            total_mb REAL DEFAULT 0,
+            PRIMARY KEY (day, client, domain)
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_dns_daily_day_client ON dns_daily_rollups(day, client)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_dns_daily_day_domain ON dns_daily_rollups(day, domain)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_dns_daily_day_category ON dns_daily_rollups(day, category)")
+    con.execute("""
         CREATE TABLE IF NOT EXISTS dns_resolved_ips (
             domain TEXT NOT NULL,
             remote_ip TEXT NOT NULL,
