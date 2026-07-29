@@ -1,0 +1,11 @@
+[Unit]
+Description=Run NetSpecter Daily SQLite Maintenance
+
+[Timer]
+OnCalendar=*-*-* 03:25:00
+Persistent=true
+RandomizedDelaySec=20min
+Unit=netspecter-db-maintenance.service
+
+[Install]
+WantedBy=timers.target
