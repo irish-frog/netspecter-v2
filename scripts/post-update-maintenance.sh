@@ -97,6 +97,29 @@ install_nic_offload_service() {
   fi
 }
 
+install_db_maintenance_timer() {
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "Skipping database maintenance timer install; root privileges are required." >&2
+    return 0
+  fi
+
+  local root_dir
+  root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+  if [ ! -f "$root_dir/systemd/netspecter-db-maintenance.service" ] || [ ! -f "$root_dir/systemd/netspecter-db-maintenance.timer" ]; then
+    echo "WARNING: NetSpecter database maintenance unit files were not found." >&2
+    return 0
+  fi
+
+  if [ -f "$root_dir/scripts/daily-db-maintenance.sh" ]; then
+    chmod 755 "$root_dir/scripts/daily-db-maintenance.sh"
+  fi
+  cp "$root_dir/systemd/netspecter-db-maintenance.service" /etc/systemd/system/netspecter-db-maintenance.service
+  cp "$root_dir/systemd/netspecter-db-maintenance.timer" /etc/systemd/system/netspecter-db-maintenance.timer
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl enable --now netspecter-db-maintenance.timer >/dev/null 2>&1 || true
+  systemctl restart netspecter-db-maintenance.timer >/dev/null 2>&1 || true
+}
+
 detect_suricata_interface() {
   if [ -n "${NETSPECTER_SURICATA_IFACE:-}" ]; then
     echo "$NETSPECTER_SURICATA_IFACE"
@@ -278,6 +301,7 @@ ensure_ethtool
 install_suricata_safety_override
 configure_suricata_interface
 install_nic_offload_service
+install_db_maintenance_timer
 refresh_suricata_rules
 reclassify_ids_alerts
 systemctl reset-failed logrotate >/dev/null 2>&1 || true
