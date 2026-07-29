@@ -538,6 +538,7 @@ apply_runtime_permissions() {
   chmod +x "$INSTALL_DIR/scripts/reset-history.sh"
   chmod +x "$INSTALL_DIR/scripts/post-update-maintenance.sh"
   chmod +x "$INSTALL_DIR/scripts/daily-db-maintenance.sh"
+  chmod +x "$INSTALL_DIR/scripts/run-ui-update.sh"
   chmod +x /usr/local/bin/netspecter-vault
 }
 
@@ -725,13 +726,15 @@ cp systemd/netspecter-monitor.service "$SERVICE_DIR/netspecter-monitor.service"
 cp systemd/netspecter-monitor.timer "$SERVICE_DIR/netspecter-monitor.timer"
 cp systemd/netspecter-db-maintenance.service "$SERVICE_DIR/netspecter-db-maintenance.service"
 cp systemd/netspecter-db-maintenance.timer "$SERVICE_DIR/netspecter-db-maintenance.timer"
+cp systemd/netspecter-update.service "$SERVICE_DIR/netspecter-update.service"
+cp systemd/netspecter-update.path "$SERVICE_DIR/netspecter-update.path"
 cp systemd/netspecter-vault.service "$SERVICE_DIR/netspecter-vault.service"
 cp systemd/netspecter-vault.timer "$SERVICE_DIR/netspecter-vault.timer"
 cp systemd/netspecter-nic-offload.service "$SERVICE_DIR/netspecter-nic-offload.service"
 systemctl daemon-reload
 install_nic_offload_service
 validate_anomaly_permissions "netspecter-collector.service"
-systemctl enable --now netspecter-web netspecter-https netspecter-collector netspecter-watchdog.timer netspecter-speedtest.timer netspecter-monitor.timer netspecter-db-maintenance.timer netspecter-vault.timer
+systemctl enable --now netspecter-web netspecter-https netspecter-collector netspecter-watchdog.timer netspecter-speedtest.timer netspecter-monitor.timer netspecter-db-maintenance.timer netspecter-update.path netspecter-vault.timer
 systemctl restart netspecter-web netspecter-https netspecter-collector
 systemctl restart netspecter-watchdog.timer
 systemctl restart netspecter-speedtest.timer

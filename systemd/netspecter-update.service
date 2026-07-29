@@ -1,0 +1,14 @@
+[Unit]
+Description=NetSpecter UI-triggered Update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/netspecter
+ExecStart=/opt/netspecter/scripts/run-ui-update.sh
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6

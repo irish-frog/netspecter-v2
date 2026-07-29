@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for NetSpecter UI Update Requests
+
+[Path]
+PathChanged=/var/lib/netspecter/update.request
+Unit=netspecter-update.service
+
+[Install]
+WantedBy=multi-user.target

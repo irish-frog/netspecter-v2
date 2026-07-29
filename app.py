@@ -58,6 +58,7 @@ from netspecter_paths import (
     SURICATA_EVE_LOG,
     SURICATA_FAST_LOG,
     UPDATE_LOG_PATH,
+    UPDATE_REQUEST_PATH,
     UPDATE_STATE_PATH,
     VAULT_BACKUP_LOG_PATH,
     VAULT_BACKUP_STATE_PATH,
@@ -1143,8 +1144,9 @@ def source_checkout_root():
 
 
 def git_command(source_root, *args, timeout=20):
+    source_root = Path(source_root)
     result = subprocess.run(
-        ["git", "-C", str(source_root), *args],
+        ["git", "-c", f"safe.directory={source_root}", "-C", str(source_root), *args],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -1214,6 +1216,17 @@ def update_status(force=False, fetch_remote=False):
 
 
 def start_background_update():
+    source = source_checkout_root()
+    if not source:
+        return False, "Source checkout not found."
+
+    UPDATE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    UPDATE_REQUEST_PATH.write_text(f"{int(time.time())}\n")
+    UPDATE_STATUS_CACHE.update({"ts": 0, "data": None})
+    return True, "Update requested."
+
+
+def start_background_update_legacy():
     source = source_checkout_root()
     if not source:
         return False, "Source checkout not found."
