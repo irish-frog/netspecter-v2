@@ -197,16 +197,17 @@ DEFAULT_CONFIG = {
     "smtp_from": "",
     "smtp_to": "",
     "ids_email_cooldown_minutes": 480,
-    "ids_alert_retention_days": 45,
+    "suricata_enabled": True,
+    "ids_alert_retention_days": 30,
     "ids_ignored_retention_days": 3,
     "ids_low_priority_retention_days": 7,
-    "ids_detail_retention_days": 45,
-    "ids_file_retention_days": 45,
+    "ids_detail_retention_days": 7,
+    "ids_file_retention_days": 7,
     "ids_raw_flow_retention_hours": 0,
-    "suricata_log_retention_hours": 24,
-    "suricata_active_log_max_mb": 256,
-    "ids_structured_max_records": 200000,
-    "ids_min_free_mb": 512,
+    "suricata_log_retention_hours": 6,
+    "suricata_active_log_max_mb": 64,
+    "ids_structured_max_records": 100000,
+    "ids_min_free_mb": 2048,
     "internet_quality_targets": ["1.1.1.1", "8.8.8.8"],
     "internet_quality_dns_server": "",
     "internet_quality_external_dns_enabled": True,
@@ -1911,6 +1912,8 @@ def process_ids_auto_blocks(config):
 
 def import_suricata_eve(config):
     global last_ids_default_reclassify, last_unknown_reclassify
+    if not (config or {}).get("suricata_enabled", True):
+        return
     try:
         contention_remaining = database_contention_remaining()
         if contention_remaining > 0:
@@ -3200,7 +3203,7 @@ def adguard_querylog_loop():
                 last_unifi_import = now_mono
                 run_timed_step("UniFi/client import", refresh_unifi_clients, c)
             suricata_interval = positive_int(c.get("suricata_import_interval_seconds", 60), 60, 15)
-            if now_mono - last_suricata_import >= suricata_interval:
+            if c.get("suricata_enabled", True) and now_mono - last_suricata_import >= suricata_interval:
                 last_suricata_import = now_mono
                 run_timed_step("Suricata/eve import", import_suricata_eve, c)
             ids_interval = positive_int(c.get("ids_maintenance_interval_seconds", 60), 60, 15)

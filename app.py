@@ -10865,7 +10865,7 @@ def settings():
         "network": [
             "appliance_ip", "gateway_ip", "ignore_ips", "lan_prefix", "packet_iface",
             "collect_interval_seconds", "raw_traffic_retention_hours", "traffic_retention_days", "dns_retention_days", "fast_page_mode",
-            "suricata_log_retention_hours", "suricata_active_log_max_mb",
+            "suricata_enabled", "suricata_log_retention_hours", "suricata_active_log_max_mb",
         ],
         "adguard": ["adguard_url", "adguard_user", "adguard_pass", "adguard_querylog_interval_seconds"],
         "telemetry": [
@@ -11062,6 +11062,7 @@ def settings():
         "raw_traffic_retention_hours": "Hours of raw traffic intervals to keep before automatic hourly rollups take over.",
         "traffic_retention_days": "Number of calendar days of measured traffic history to keep. The appliance UI supports up to 60 days.",
         "dns_retention_days": "Number of calendar days of imported DNS/application activity to keep. The appliance UI supports up to 60 days.",
+        "suricata_enabled": "Enable Suricata IDS ingestion. Disable temporarily if disk pressure is high; DNS and traffic monitoring will continue.",
         "suricata_log_retention_hours": "Hours of raw Suricata rotated logs to keep. Normalized IDS alerts remain in NetSpecter history.",
         "suricata_active_log_max_mb": "Maximum size for active Suricata eve.json and fast.log before NetSpecter truncates them after import.",
         "fast_page_mode": "Speeds up navigation by disabling dashboard background refresh and loading the traffic graph only when requested.",
@@ -11094,6 +11095,7 @@ def settings():
         "collect_interval_seconds": "Traffic Sample Interval Seconds",
         "traffic_retention_days": "Traffic Retention Days",
         "dns_retention_days": "DNS/App Retention Days",
+        "suricata_enabled": "Suricata IDS Enabled",
         "fast_page_mode": "Fast Page Mode",
         "snmp_enabled": "SNMP Enabled",
         "snmp_targets": "SNMP Targets",
