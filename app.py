@@ -233,7 +233,7 @@ LOGIN_MAX_FAILURES = 5
 LOGIN_FAILURES = {}
 HEAVY_PAGE_CACHE_SECONDS = 60
 ADGUARD_STATUS_CACHE_SECONDS = 30
-UPDATE_STATUS_CACHE_SECONDS = 300
+UPDATE_STATUS_CACHE_SECONDS = 60
 
 
 SESSION_IDLE_TIMEOUT_SECONDS = int(env_minutes("NETSPECTER_SESSION_IDLE_MINUTES", 30) * 60)
@@ -1228,7 +1228,7 @@ def git_upstream_ref(source_root):
     return ""
 
 
-def update_status(force=False, fetch_remote=False):
+def update_status(force=False, fetch_remote=True):
     now = time.time()
     cached = UPDATE_STATUS_CACHE.get("data")
     if cached and not force and now - float(UPDATE_STATUS_CACHE.get("ts", 0) or 0) < UPDATE_STATUS_CACHE_SECONDS:
@@ -1237,27 +1237,46 @@ def update_status(force=False, fetch_remote=False):
     source = source_checkout_root()
     if not source:
         data = {"ok": False, "available": False, "detail": "Source checkout not found."}
+        print(f"Update check failed: {data['detail']}")
         UPDATE_STATUS_CACHE.update({"ts": now, "data": data})
         return data
 
     upstream = git_upstream_ref(source)
     if not upstream:
         data = {"ok": False, "available": False, "detail": f"Git upstream not configured for {source}."}
+        print(f"Update check failed: {data['detail']}")
         UPDATE_STATUS_CACHE.update({"ts": now, "data": data})
         return data
 
     remote_name = upstream.split("/", 1)[0] if "/" in upstream else "origin"
     if fetch_remote:
-        git_command(source, "fetch", "--quiet", remote_name, timeout=10)
-    _rc, current, _err = git_command(source, "rev-parse", "--short", "HEAD")
+        rc, _out, err = git_command(source, "fetch", "--quiet", remote_name, timeout=12)
+        if rc != 0:
+            detail = err or f"Could not fetch from {remote_name}."
+            data = {"ok": False, "available": False, "detail": detail, "source": str(source), "upstream": upstream}
+            print(f"Update check fetch failed for {remote_name}: {detail}")
+            UPDATE_STATUS_CACHE.update({"ts": now, "data": data})
+            return data
+    rc, current, err = git_command(source, "rev-parse", "--short", "HEAD")
+    if rc != 0 or not current:
+        data = {"ok": False, "available": False, "detail": err or "Could not read installed Git version.", "source": str(source), "upstream": upstream}
+        print(f"Update check failed reading HEAD: {data['detail']}")
+        UPDATE_STATUS_CACHE.update({"ts": now, "data": data})
+        return data
     rc, latest, err = git_command(source, "rev-parse", "--short", upstream)
-    if rc != 0:
+    if rc != 0 or not latest:
         data = {"ok": False, "available": False, "detail": err or f"Could not read {upstream}."}
+        print(f"Update check failed reading {upstream}: {data['detail']}")
         UPDATE_STATUS_CACHE.update({"ts": now, "data": data})
         return data
 
-    rc, behind, _err = git_command(source, "rev-list", "--count", f"HEAD..{upstream}")
-    available = rc == 0 and str(behind or "0").isdigit() and int(behind) > 0
+    rc, behind, err = git_command(source, "rev-list", "--count", f"HEAD..{upstream}")
+    if rc != 0:
+        data = {"ok": False, "available": False, "detail": err or f"Could not compare HEAD with {upstream}."}
+        print(f"Update check compare failed for {upstream}: {data['detail']}")
+        UPDATE_STATUS_CACHE.update({"ts": now, "data": data})
+        return data
+    available = str(behind or "0").isdigit() and int(behind) > 0
     data = {
         "ok": True,
         "available": available,
@@ -2844,7 +2863,7 @@ def api_lcd_summary():
 @app.route("/api/update-status")
 def api_update_status():
     force = request.args.get("force") == "1"
-    return update_status(force=force, fetch_remote=force or request.args.get("fetch") == "1")
+    return update_status(force=force, fetch_remote=True)
 
 
 @app.route("/api/update-progress")
@@ -9674,7 +9693,7 @@ def health_page():
     elif update_state == "failed" and update_age is not None and update_age < 600:
         update_status_label = "Failed"
     force_update_check = request.args.get("check") == "1"
-    update_status_data = update_status(force=force_update_check, fetch_remote=force_update_check)
+    update_status_data = update_status(force=force_update_check, fetch_remote=True)
     if request.args.get("update") == "started":
         notice += '<div class="setup-ok">Update started. This page will show progress below.</div>'
     elif request.args.get("update") == "failed":
@@ -9682,10 +9701,13 @@ def health_page():
     if update_status_data.get("ok"):
         update_label = "Updates Available" if update_status_data.get("available") else "Current"
         update_detail = f"Installed {h(update_status_data.get('current', '-'))}; latest {h(update_status_data.get('latest', '-'))}."
+        update_button = "Update Available" if update_status_data.get("available") else "Reinstall Current Version"
+        update_button_disabled = ""
     else:
         update_label = "Check Failed"
         update_detail = h(update_status_data.get("detail", "Update status unavailable."))
-    update_button = "Update Available" if update_status_data.get("available") else "Reinstall Current Version"
+        update_button = "Cannot Check Updates"
+        update_button_disabled = " disabled"
     body = f"""
 {topbar('Service Health')}
 {notice}
@@ -9703,7 +9725,7 @@ def health_page():
   <p class="sub">{update_detail}</p>
   <form method="post" action="/system">
     {csrf_input()}
-    <button class="btn-yellow" type="submit">{update_button}</button>
+    <button class="btn-yellow" type="submit"{update_button_disabled}>{update_button}</button>
     <a class="btn" href="/health?check=1#updateProgress">Check Again</a>
   </form>
   <p><b>Status:</b> <span id="updateProgressState">{h(update_status_label)}</span></p>
