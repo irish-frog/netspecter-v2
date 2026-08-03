@@ -2007,6 +2007,29 @@ def shell(title, body, active="Dashboard"):
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="/static/ns-ui.js?v=20260712b" defer></script>
+<style>
+.ns-password-field {{ position:relative; display:block; max-width:100%; }}
+.ns-password-field input[type="password"],
+.ns-password-field input[type="text"] {{ width:100%; padding-right:44px; box-sizing:border-box; }}
+.ns-password-toggle {{
+  position:absolute;
+  right:8px;
+  top:50%;
+  transform:translateY(-50%);
+  display:grid;
+  place-items:center;
+  width:30px;
+  height:30px;
+  border:1px solid rgba(125,176,224,.28);
+  border-radius:8px;
+  background:rgba(8,18,33,.78);
+  color:var(--ns-text-secondary);
+  cursor:pointer;
+}}
+.ns-password-toggle:hover,
+.ns-password-toggle:focus-visible {{ color:var(--ns-text-primary); border-color:var(--ns-border-hover); outline:none; }}
+.ns-password-toggle i {{ pointer-events:none; }}
+</style>
 </head>
 <body>
 
@@ -2170,6 +2193,33 @@ function closeFloatingControls() {{
   }});
 }}
 
+function initPasswordToggles(root) {{
+  const scope = root || document;
+  scope.querySelectorAll('input[type="password"]').forEach(input => {{
+    if (input.closest(".ns-password-field")) return;
+    const wrapper = document.createElement("span");
+    wrapper.className = "ns-password-field";
+    input.parentNode.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ns-password-toggle";
+    button.setAttribute("aria-label", "Show password");
+    button.setAttribute("title", "Show password");
+    button.innerHTML = '<i class="fa-regular fa-eye" aria-hidden="true"></i>';
+    button.addEventListener("click", () => {{
+      const showing = input.type === "text";
+      input.type = showing ? "password" : "text";
+      button.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+      button.setAttribute("title", showing ? "Show password" : "Hide password");
+      button.innerHTML = showing
+        ? '<i class="fa-regular fa-eye" aria-hidden="true"></i>'
+        : '<i class="fa-regular fa-eye-slash" aria-hidden="true"></i>';
+    }});
+    wrapper.appendChild(button);
+  }});
+}}
+
 async function loadAppShellPage(url, pushState = true) {{
   const content = document.getElementById("appContent");
   if (!content) {{
@@ -2197,6 +2247,7 @@ async function loadAppShellPage(url, pushState = true) {{
     }}
     content.innerHTML = html;
     runContentScripts(content);
+    initPasswordToggles(content);
 
     const title = response.headers.get("X-NetSpecter-Title");
     const active = response.headers.get("X-NetSpecter-Active");
@@ -2342,6 +2393,7 @@ async function refreshUpdateStatusBadge() {{
   }}
 }}
 refreshUpdateStatusBadge();
+initPasswordToggles(document.getElementById("appContent") || document);
 
 </script>
 </body>
@@ -3264,7 +3316,7 @@ def dashboard():
 .speed-test-form small {{ color:var(--ns-text-muted); font-weight:700; }}
 .ns-dashboard__kpi-grid {{
   display:grid;
-  grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns:repeat(auto-fit, minmax(210px, 1fr));
   gap:10px;
   position:relative;
 }}
@@ -3322,8 +3374,8 @@ def dashboard():
   font-weight:700;
 }}
 .ns-dashboard-error.is-visible {{ display:block; }}
-.ns-dashboard-grid {{ display:grid; grid-template-columns:minmax(min(100%, 460px), 1.35fr) repeat(2, minmax(min(100%, 300px), .8fr)); gap:12px; align-items:stretch; }}
-.ns-dashboard-lower {{ display:grid; grid-template-columns:minmax(0, 1.55fr) minmax(min(100%, 380px), .95fr); gap:14px; align-items:start; }}
+.ns-dashboard-grid {{ display:grid; grid-template-columns:minmax(0, 1.35fr) repeat(2, minmax(280px, .8fr)); gap:12px; align-items:stretch; }}
+.ns-dashboard-lower {{ display:grid; grid-template-columns:minmax(0, 1.45fr) minmax(360px, .8fr); gap:14px; align-items:start; }}
 .ns-dashboard-lower > .ns-polish-panel {{ min-height:380px; }}
 .ns-chart-card,
 .ns-list-card {{
@@ -3370,7 +3422,7 @@ def dashboard():
 .chart-legend .download {{ background:#18aaff; }}
 .chart-legend .upload {{ background:#9c6cff; }}
 .ns-dashboard__secondary-grid {{ display:grid; grid-template-columns:1fr; gap:10px; }}
-.ns-health-grid {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px 12px; align-items:start; }}
+.ns-health-grid {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:8px 12px; align-items:start; }}
 .ns-health-card {{
   display:flex;
   align-items:center;
@@ -3394,7 +3446,7 @@ def dashboard():
 .collector-restart-card button {{ display:flex; align-items:center; gap:12px; width:100%; padding:0; border:0; background:transparent; color:inherit; text-align:left; cursor:pointer; font:inherit; }}
 .ns-dashboard-empty {{ padding:16px; border:1px dashed var(--ns-border); border-radius:8px; color:var(--ns-text-secondary); text-align:center; }}
 .blue {{ color:#5ba8ff !important; }} .purple {{ color:#a68bff !important; }} .teal {{ color:#00ddc7 !important; }} .green {{ color:#20df9f !important; }} .red {{ color:#ff526c !important; }} .yellow {{ color:#f8c84e !important; }}
-@media (min-width:1500px) {{ .ns-dashboard-grid {{ grid-template-columns:minmax(520px, 1.45fr) minmax(320px, .78fr) minmax(320px, .78fr); }} .ns-dashboard-lower {{ grid-template-columns:minmax(0, 1.6fr) minmax(440px, .9fr); }} }}
+@media (min-width:1500px) {{ .ns-dashboard-grid {{ grid-template-columns:minmax(520px, 1.45fr) minmax(320px, .78fr) minmax(320px, .78fr); }} .ns-dashboard-lower {{ grid-template-columns:minmax(0, 1.45fr) minmax(400px, .72fr); }} }}
 @media (max-width:1280px) {{ .ns-dashboard-grid, .ns-dashboard-lower {{ grid-template-columns:1fr; }} .ns-dashboard-lower > .ns-polish-panel {{ min-height:0; }} }}
 @media (max-width:700px) {{
   .ns-dashboard__kpi-grid, .ns-dashboard-grid, .ns-dashboard-lower, .ns-health-grid {{ grid-template-columns:1fr; }}

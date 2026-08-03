@@ -897,12 +897,13 @@ td time {
 
 .ns-mini-metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
   margin-bottom: 12px;
 }
 
 .ns-mini-metric {
+  min-width: 0;
   padding: 10px;
   border: 1px solid rgba(80,112,150,.2);
   border-radius: 8px;
@@ -918,9 +919,14 @@ td time {
 
 .ns-mini-metric b {
   display: block;
+  max-width: 100%;
   margin-top: 5px;
+  overflow: hidden;
   color: var(--ns-text-primary);
   font-size: 18px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ns-quality-chart {
