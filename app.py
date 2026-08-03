@@ -530,6 +530,7 @@ def login_template(title, body):
 }}
 .ns-password-toggle:hover,
 .ns-password-toggle:focus-visible {{ color:#fff; border-color:rgba(148,163,184,.35); outline:none; }}
+.ns-password-toggle i {{ pointer-events:none; }}
 </style>
 </head>
 <body class="login-body">
@@ -549,11 +550,11 @@ def login_template(title, body):
     button.className = 'ns-password-toggle';
     button.setAttribute('aria-label', 'Show password');
     button.title = 'Show password';
-    button.textContent = 'Show';
+    button.innerHTML = '<i class="fa-regular fa-eye" aria-hidden="true"></i>';
     button.addEventListener('click', function() {{
       var showing = input.type === 'text';
       input.type = showing ? 'password' : 'text';
-      button.textContent = showing ? 'Show' : 'Hide';
+      button.innerHTML = showing ? '<i class="fa-regular fa-eye" aria-hidden="true"></i>' : '<i class="fa-regular fa-eye-slash" aria-hidden="true"></i>';
       button.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
       button.title = showing ? 'Show password' : 'Hide password';
       input.focus();
