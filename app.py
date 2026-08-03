@@ -16,6 +16,7 @@ import hashlib
 import smtplib
 import ssl
 import shlex
+import shutil
 import zipfile
 import threading
 import traceback
@@ -507,12 +508,59 @@ def login_template(title, body):
 <link rel="stylesheet" href="/static/ui-icons.css?v=20260711c">
 <link rel="stylesheet" href="/static/ui-components.css?v=20260711a">
 <link rel="stylesheet" href="/static/theme.css?v=20260718a">
+<style>
+.ns-password-field {{ position:relative; display:block; max-width:100%; }}
+.ns-password-field input[type="password"],
+.ns-password-field input[type="text"] {{ width:100%; padding-right:44px; box-sizing:border-box; }}
+.ns-password-toggle {{
+  position:absolute;
+  right:8px;
+  top:50%;
+  transform:translateY(-50%);
+  width:34px;
+  height:34px;
+  border:1px solid transparent;
+  border-radius:8px;
+  background:transparent;
+  color:rgba(229,241,255,.72);
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}}
+.ns-password-toggle:hover,
+.ns-password-toggle:focus-visible {{ color:#fff; border-color:rgba(148,163,184,.35); outline:none; }}
+</style>
 </head>
 <body class="login-body">
   <div class="login-card">
     <img src="/static/brand/logo-login.png?v=20260711-ui5" class="login-logo">
     {body}
   </div>
+  <script>
+  document.querySelectorAll('input[type="password"]').forEach(function(input) {{
+    if (input.closest('.ns-password-field')) return;
+    var wrapper = document.createElement('span');
+    wrapper.className = 'ns-password-field';
+    input.parentNode.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ns-password-toggle';
+    button.setAttribute('aria-label', 'Show password');
+    button.title = 'Show password';
+    button.textContent = 'Show';
+    button.addEventListener('click', function() {{
+      var showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      button.textContent = showing ? 'Show' : 'Hide';
+      button.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+      button.title = showing ? 'Show password' : 'Hide password';
+      input.focus();
+    }});
+    wrapper.appendChild(button);
+  }});
+  </script>
 </body>
 </html>"""
 
@@ -11564,7 +11612,35 @@ document.querySelectorAll('[data-add-row]').forEach(function(button) {{
     return shell("Settings", body, "Settings")
 
 
+def _speed_value_mbps(value):
+    try:
+        number = float(value)
+    except Exception:
+        return None
+    return number / 1000000.0 if number > 10000 else number
+
+
 def parse_speedtest_metrics(output):
+    try:
+        payload = json.loads(output or "")
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        latency = payload.get("ping") or payload.get("latency")
+        if isinstance(latency, dict):
+            latency = latency.get("latency") or latency.get("value")
+        download = payload.get("download")
+        if isinstance(download, dict):
+            download = download.get("bandwidth") or download.get("bytes") or download.get("value")
+        upload = payload.get("upload")
+        if isinstance(upload, dict):
+            upload = upload.get("bandwidth") or upload.get("bytes") or upload.get("value")
+        return (
+            float(latency) if latency is not None else None,
+            _speed_value_mbps(download),
+            _speed_value_mbps(upload),
+        )
+
     def value(pattern):
         match = re.search(pattern, output or "", re.IGNORECASE)
         return float(match.group(1)) if match else None
@@ -11576,14 +11652,16 @@ def parse_speedtest_metrics(output):
 
 
 def speedtest_command():
-    candidates = [
-        ("/usr/bin/speedtest", ["--accept-license", "--accept-gdpr"]),
-        ("/usr/bin/speedtest-cli", []),
-    ]
-    for path, args in candidates:
-        if Path(path).exists():
-            return [path] + args
-    return None
+    c = cfg()
+    path = str(c.get("librespeed_cli_path") or "librespeed-cli").strip() or "librespeed-cli"
+    resolved = path if Path(path).exists() else shutil.which(path)
+    if not resolved:
+        return None
+    command = [resolved, "--json"]
+    server_id = str(c.get("librespeed_server_id") or "").strip()
+    if server_id:
+        command.extend(["--server", server_id])
+    return command
 
 
 def run_and_store_speedtest(source="manual"):
@@ -11596,12 +11674,13 @@ def run_and_store_speedtest(source="manual"):
         speedtest_env.setdefault("HOME", "/root")
         speedtest_env.setdefault("LANG", "C.UTF-8")
         speedtest_env.setdefault("LC_ALL", "C.UTF-8")
+        timeout = max(15, min(300, int(cfg().get("librespeed_timeout_seconds", 120) or 120)))
         result = subprocess.run(
             command,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=120,
+            timeout=timeout,
             check=False,
             env=speedtest_env,
         )
@@ -11611,9 +11690,9 @@ def run_and_store_speedtest(source="manual"):
         else:
             success = True
     except FileNotFoundError:
-        output = "No supported speed test client is installed. Re-run the NetSpecter installer to install speedtest-cli."
+        output = "LibreSpeed CLI is not installed. Install librespeed-cli or set librespeed_cli_path in NetSpecter settings."
     except subprocess.TimeoutExpired:
-        output = "Speed test timed out after 120 seconds."
+        output = "LibreSpeed test timed out."
     except Exception as error:
         print(f"Speed test failed: {error}")
         output = operation_failed_message("Speed test")
@@ -11674,6 +11753,16 @@ def speed_metric_status(metric, value):
 
 
 def speedtest_server_label(result_text):
+    try:
+        payload = json.loads(result_text or "")
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        server = payload.get("server") or {}
+        if isinstance(server, dict):
+            return ", ".join(str(part) for part in (server.get("name"), server.get("location"), server.get("country")) if part)
+        if server:
+            return str(server)
     lines = str(result_text or "").splitlines()
     for line in lines:
         text = line.strip()
@@ -11699,6 +11788,13 @@ def speed_tests():
         c["scheduled_speedtests_per_day"] = 1 if frequency in ("daily", "weekly") else 0
         c["scheduled_speedtest_frequency"] = frequency
         c["scheduled_speedtest_time"] = request.form.get("scheduled_speedtest_time", "12:00").strip() or "12:00"
+        c["speedtest_provider"] = "librespeed"
+        c["librespeed_cli_path"] = request.form.get("librespeed_cli_path", "librespeed-cli").strip() or "librespeed-cli"
+        c["librespeed_server_id"] = request.form.get("librespeed_server_id", "").strip()
+        try:
+            c["librespeed_timeout_seconds"] = max(15, min(300, int(request.form.get("librespeed_timeout_seconds", "120") or 120)))
+        except Exception:
+            c["librespeed_timeout_seconds"] = 120
         save_cfg(c)
         return redirect("/speed-tests?saved=1#automaticTesting")
 
@@ -11759,6 +11855,9 @@ def speed_tests():
     schedule_checked = " checked" if schedule_count else ""
     frequency_disabled = " disabled" if not schedule_count else ""
     next_run = speedtest_next_run_label(frequency, schedule_time)
+    librespeed_cli_path = str(c.get("librespeed_cli_path") or "librespeed-cli").strip() or "librespeed-cli"
+    librespeed_server_id = str(c.get("librespeed_server_id") or "").strip()
+    librespeed_timeout = max(15, min(300, int(c.get("librespeed_timeout_seconds", 120) or 120)))
     if request.args.get("saved") == "1":
         notice = f'<div class="ns-inline-notice ns-inline-notice--ok">Speed-test schedule saved. {h(next_run) if next_run else "Automatic tests disabled."}</div>'
     show_full_history = request.args.get("history") == "full"
@@ -11890,6 +11989,15 @@ def speed_tests():
         </label>
         <label>Preferred test time
           <input class="ns-input" type="time" name="scheduled_speedtest_time" value="{h(schedule_time)}"{frequency_disabled}>
+        </label>
+        <label>LibreSpeed CLI path
+          <input class="ns-input" name="librespeed_cli_path" value="{h(librespeed_cli_path)}" placeholder="librespeed-cli">
+        </label>
+        <label>LibreSpeed server ID
+          <input class="ns-input" name="librespeed_server_id" value="{h(librespeed_server_id)}" placeholder="Optional">
+        </label>
+        <label>Timeout seconds
+          <input class="ns-input" type="number" name="librespeed_timeout_seconds" min="15" max="300" value="{h(librespeed_timeout)}">
         </label>
         <div class="ns-speed-helper"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Scheduled tests use internet data.</div>
         <button class="ns-button" type="submit"><i class="fa-regular fa-floppy-disk" aria-hidden="true"></i> Save schedule</button>

@@ -89,6 +89,10 @@ DEFAULT_CONFIG = {
     "unifi_username": "",
     "unifi_password": "",
     "unifi_skip_tls_verify": False,
+    "speedtest_provider": "librespeed",
+    "librespeed_cli_path": "librespeed-cli",
+    "librespeed_server_id": "",
+    "librespeed_timeout_seconds": 120,
     "scheduled_speedtests_per_day": 0,
     "ids_unknown_only": False,
     "ids_excluded_ips": [],
@@ -183,7 +187,9 @@ DEFAULT_CONFIG = {
 SENSITIVE_CONFIG_KEYS = {"adguard_pass", "unifi_password", "smtp_password", "snmp_community", "mqtt_password", "telegram_bot_token", "netlic_licence_key", "netlic_signing_secret"}
 INTEGRATION_SETTINGS_KEYS = {
     "adguard_client_import_enabled", "unifi_enabled", "unifi_client_import_enabled", "unifi_connector_url", "unifi_site_id",
-    "unifi_username", "unifi_password", "unifi_skip_tls_verify", "scheduled_speedtests_per_day",
+    "unifi_username", "unifi_password", "unifi_skip_tls_verify",
+    "speedtest_provider", "librespeed_cli_path", "librespeed_server_id", "librespeed_timeout_seconds",
+    "scheduled_speedtests_per_day",
     "ids_unknown_only", "ids_excluded_ips", "ids_exceptions", "ids_banned_ips", "ids_banned_domains", "ids_auto_ban_enabled",
     "ids_email_enabled", "ids_telegram_enabled", "smtp_host", "smtp_port", "smtp_security",
     "smtp_username", "smtp_password", "smtp_from", "smtp_to",

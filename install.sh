@@ -67,25 +67,17 @@ disable_suricata_safely() {
 }
 
 install_speedtest_optional() {
-  if dpkg-query -W -f='${Status}' speedtest 2>/dev/null | grep -q "install ok installed" || \
-     dpkg-query -W -f='${Status}' speedtest-cli 2>/dev/null | grep -q "install ok installed"; then
+  if command -v librespeed-cli >/dev/null 2>&1 || \
+     dpkg-query -W -f='${Status}' librespeed-cli 2>/dev/null | grep -q "install ok installed"; then
     return 0
   fi
 
-  echo "Installing Ookla Speedtest if the external repository supports this Debian release..."
-  if curl -fsSL https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | bash; then
-    apt update || true
-    if apt install -y speedtest; then
-      return 0
-    fi
-  fi
-
-  echo "Ookla Speedtest is unavailable for this Debian release; installing Debian speedtest-cli fallback..."
-  if apt install -y speedtest-cli; then
+  echo "Installing LibreSpeed CLI for NetSpecter speed tests..."
+  if apt install -y librespeed-cli; then
     return 0
   fi
 
-  echo "WARNING: no speed test client is available. NetSpecter will install without speed test support." >&2
+  echo "WARNING: librespeed-cli is unavailable from this Debian repository. NetSpecter will install without speed test support until a LibreSpeed CLI path is configured." >&2
   return 0
 }
 
