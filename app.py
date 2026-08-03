@@ -530,7 +530,7 @@ def login_template(title, body):
 }}
 .ns-password-toggle:hover,
 .ns-password-toggle:focus-visible {{ color:#fff; border-color:rgba(148,163,184,.35); outline:none; }}
-.ns-password-toggle i {{ pointer-events:none; }}
+.ns-password-toggle svg {{ width:18px; height:18px; pointer-events:none; stroke:currentColor; }}
 </style>
 </head>
 <body class="login-body">
@@ -550,11 +550,13 @@ def login_template(title, body):
     button.className = 'ns-password-toggle';
     button.setAttribute('aria-label', 'Show password');
     button.title = 'Show password';
-    button.innerHTML = '<i class="fa-regular fa-eye" aria-hidden="true"></i>';
+    var eyeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+    var eyeOffIcon = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.7 5.1A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a18.6 18.6 0 0 1-2.1 3.1"></path><path d="M6.6 6.6C3.6 8.6 2 12 2 12s3.5 7 10 7a10.8 10.8 0 0 0 5.4-1.5"></path><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"></path><path d="M3 3l18 18"></path></svg>';
+    button.innerHTML = eyeIcon;
     button.addEventListener('click', function() {{
       var showing = input.type === 'text';
       input.type = showing ? 'password' : 'text';
-      button.innerHTML = showing ? '<i class="fa-regular fa-eye" aria-hidden="true"></i>' : '<i class="fa-regular fa-eye-slash" aria-hidden="true"></i>';
+      button.innerHTML = showing ? eyeIcon : eyeOffIcon;
       button.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
       button.title = showing ? 'Show password' : 'Hide password';
       input.focus();
