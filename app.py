@@ -517,18 +517,23 @@ def login_template(title, body):
   right:10px;
   top:50%;
   transform:translateY(-50%);
-  width:34px;
-  height:34px;
-  border:1px solid transparent;
+  width:34px !important;
+  min-width:34px !important;
+  height:34px !important;
+  min-height:34px !important;
+  margin:0 !important;
+  padding:0 !important;
+  border:0 !important;
   border-radius:8px;
-  background:transparent;
+  background:transparent !important;
   color:rgba(229,241,255,.72);
   cursor:pointer;
   display:flex;
   align-items:center;
   justify-content:center;
+  box-shadow:none !important;
 }}
-.ns-password-toggle:hover {{ color:rgba(229,241,255,.72); }}
+.ns-password-toggle:hover {{ color:rgba(229,241,255,.72); background:transparent !important; border:0 !important; box-shadow:none !important; }}
 .ns-password-toggle:focus-visible {{ color:#fff; outline:2px solid rgba(34,211,238,.45); outline-offset:2px; }}
 .ns-password-toggle svg {{ width:18px; height:18px; pointer-events:none; stroke:currentColor; }}
 </style>
