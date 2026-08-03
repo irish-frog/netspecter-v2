@@ -509,12 +509,12 @@ def login_template(title, body):
 <link rel="stylesheet" href="/static/ui-components.css?v=20260711a">
 <link rel="stylesheet" href="/static/theme.css?v=20260718a">
 <style>
-.ns-password-field {{ position:relative; display:block; max-width:100%; }}
+.ns-password-field {{ position:relative; display:block; width:100%; max-width:100%; }}
 .ns-password-field input[type="password"],
-.ns-password-field input[type="text"] {{ width:100%; padding-right:44px; box-sizing:border-box; }}
+.ns-password-field input[type="text"] {{ display:block; width:100%; padding-right:46px; box-sizing:border-box; }}
 .ns-password-toggle {{
   position:absolute;
-  right:8px;
+  right:10px;
   top:50%;
   transform:translateY(-50%);
   width:34px;
@@ -528,8 +528,8 @@ def login_template(title, body):
   align-items:center;
   justify-content:center;
 }}
-.ns-password-toggle:hover,
-.ns-password-toggle:focus-visible {{ color:#fff; border-color:rgba(148,163,184,.35); outline:none; }}
+.ns-password-toggle:hover {{ color:rgba(229,241,255,.72); }}
+.ns-password-toggle:focus-visible {{ color:#fff; outline:2px solid rgba(34,211,238,.45); outline-offset:2px; }}
 .ns-password-toggle svg {{ width:18px; height:18px; pointer-events:none; stroke:currentColor; }}
 </style>
 </head>
