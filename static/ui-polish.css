@@ -929,6 +929,36 @@ td time {
   white-space: nowrap;
 }
 
+.ns-mini-metric b:has(.ns-isp-badge) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ns-mini-metric b:has(.ns-isp-badge) span:last-child {
+  overflow: hidden;
+  color: var(--ns-text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ns-isp-badge {
+  flex: 0 0 auto;
+  display: inline-grid;
+  min-width: 30px;
+  height: 24px;
+  place-items: center;
+  padding: 0 6px;
+  border: 1px solid rgba(34, 211, 238, .34);
+  border-radius: 7px;
+  background: rgba(34, 211, 238, .12);
+  color: #a5f3fc;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: .03em;
+}
+
 .ns-quality-chart {
   height: 150px;
   position: relative;

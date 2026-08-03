@@ -3040,6 +3040,15 @@ def dashboard_status_dot(state="unknown"):
     return f'<span class="ns-status-dot ns-status-dot--{safe_state}" aria-hidden="true"></span>'
 
 
+def isp_badge(isp_label):
+    text = str(isp_label or "").strip()
+    if not text or text == "Not detected":
+        return h(text or "Not detected")
+    words = [part for part in re.split(r"[^A-Za-z0-9]+", text) if part]
+    initials = "".join(word[0].upper() for word in words[:2]) or "ISP"
+    return f'<span class="ns-isp-badge" aria-hidden="true">{h(initials[:3])}</span><span>{h(text)}</span>'
+
+
 def dashboard_app_rows():
     cats = top_categories(5)[:5]
     cat_total = sum(int(x["total"] or 0) for x in cats) or 1
@@ -3218,10 +3227,10 @@ def dashboard_quality_panel():
     internet = json.dumps(chart_internet)
     jitter = json.dumps(chart_jitter)
     loss = json.dumps(chart_loss)
-    metric = lambda title, value, suffix="", numeric=True, element_id="": f"""
+    metric = lambda title, value, suffix="", numeric=True, element_id="", raw=False: f"""
 <div class="ns-mini-metric">
   <span>{h(title)}</span>
-  <b{f' id="{h(element_id)}"' if element_id else ""}>{h(quality_value(value, suffix) if numeric else (str(value or "").strip() or "-"))}</b>
+  <b{f' id="{h(element_id)}"' if element_id else ""}>{(value if raw else h(quality_value(value, suffix) if numeric else (str(value or "").strip() or "-")))}</b>
 </div>"""
     isp_label = "-"
     public_ip_label = "-"
@@ -3247,7 +3256,7 @@ def dashboard_quality_panel():
     {metric("Packet Loss", latest["internet_loss_pct"] if latest else None, "%", element_id="dashboardQualityLoss")}
     {metric("Jitter", latest["jitter_ms"] if latest else None, " ms", element_id="dashboardQualityJitter")}
     {metric("DNS Response", latest["dns_ms"] if latest else None, " ms", element_id="dashboardQualityDns")}
-    {metric("ISP", isp_label, numeric=False, element_id="dashboardQualityIsp")}
+    {metric("ISP", isp_badge(isp_label), numeric=False, element_id="dashboardQualityIsp", raw=True)}
     {metric("Public IP", public_ip_label, numeric=False, element_id="dashboardQualityPublicIp")}
   </div>
   <div class="ns-quality-chart">
@@ -3783,12 +3792,25 @@ async function loadDashboardQuality() {{
       const el = document.getElementById(id);
       if (el) el.textContent = value || "-";
     }};
+    const setIsp = (id, value) => {{
+      const el = document.getElementById(id);
+      if (!el) return;
+      const text = (value || "-").trim();
+      if (!text || text === "Not detected" || text === "-") {{
+        el.textContent = text || "-";
+        return;
+      }}
+      const initials = text.split(/[^A-Za-z0-9]+/).filter(Boolean).slice(0, 2).map(part => part[0].toUpperCase()).join("").slice(0, 3) || "ISP";
+      el.innerHTML = '<span class="ns-isp-badge" aria-hidden="true"></span><span></span>';
+      el.querySelector(".ns-isp-badge").textContent = initials;
+      el.querySelector("span:last-child").textContent = text;
+    }};
     setText("dashboardQualityGateway", data.gateway);
     setText("dashboardQualityInternet", data.internet);
     setText("dashboardQualityLoss", data.packet_loss);
     setText("dashboardQualityJitter", data.jitter);
     setText("dashboardQualityDns", data.dns);
-    setText("dashboardQualityIsp", data.isp);
+    setIsp("dashboardQualityIsp", data.isp);
     setText("dashboardQualityPublicIp", data.public_ip);
   }} catch (error) {{
     console.log("Dashboard quality refresh failed:", error);
