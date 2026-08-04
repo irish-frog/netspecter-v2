@@ -1460,7 +1460,7 @@ def netbios_discovery_pass(config=None):
     c = config or cfg()
     if not c.get("netbios_discovery_enabled", True):
         return 0
-    batch_size = positive_int(c.get("netbios_discovery_batch_size", 12), 12, 1, 64)
+    batch_size = min(64, positive_int(c.get("netbios_discovery_batch_size", 12), 12, 1))
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cutoff = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
     rows = []
