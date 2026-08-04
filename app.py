@@ -11016,6 +11016,7 @@ def settings():
     section_keys = {
         "network": [
             "appliance_ip", "gateway_ip", "ignore_ips", "lan_prefix", "packet_iface",
+            "device_identity_tracking_enabled", "device_identity_carry_names", "device_identity_exclude_private_macs",
             "collect_interval_seconds", "raw_traffic_retention_hours", "traffic_retention_days", "dns_retention_days", "fast_page_mode",
             "suricata_enabled", "suricata_log_retention_hours", "suricata_active_log_max_mb",
         ],
@@ -11209,6 +11210,9 @@ def settings():
         "ignore_ips": "Extra IPs to ignore, separated by commas. The gateway IP is always ignored automatically.",
         "packet_iface": "Bridge carrying monitored traffic, usually br0. Linux nftables counts forwarded bytes on this bridge.",
         "lan_prefix": "LAN prefix used to identify local devices, for example 192.168.1.",
+        "device_identity_tracking_enabled": "Track devices by stable MAC address when available, so names can follow a device when DHCP gives it a new IP.",
+        "device_identity_carry_names": "Carry a known device name to a new IP when the same stable MAC address appears there.",
+        "device_identity_exclude_private_macs": "Do not auto-transfer identity for locally administered/private MAC addresses used by phones and privacy features.",
         "adguard_url": "AdGuard Home URL used for DNS stats and controls.",
         "collect_interval_seconds": "Seconds between measured traffic interval writes. Live speed freshness follows this value.",
         "raw_traffic_retention_hours": "Hours of raw traffic intervals to keep before automatic hourly rollups take over.",
@@ -11241,6 +11245,9 @@ def settings():
         "ignore_ips": "Extra Ignored IPs",
         "packet_iface": "Monitored Bridge Interface",
         "lan_prefix": "LAN Prefix",
+        "device_identity_tracking_enabled": "Track Devices By Stable MAC",
+        "device_identity_carry_names": "Carry Names Across IP Changes",
+        "device_identity_exclude_private_macs": "Exclude Private / Random MACs",
         "adguard_url": "AdGuard URL",
         "adguard_user": "AdGuard User",
         "adguard_pass": "AdGuard Password",

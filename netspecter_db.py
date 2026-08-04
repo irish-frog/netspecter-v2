@@ -565,6 +565,41 @@ def init_db(force=False):
         )
     """)
     con.execute("""
+        CREATE TABLE IF NOT EXISTS device_identities (
+            identity_key TEXT PRIMARY KEY,
+            mac TEXT,
+            hostname TEXT,
+            display_name TEXT,
+            current_ip TEXT,
+            last_ip TEXT,
+            vendor TEXT,
+            device_type TEXT DEFAULT 'Unknown',
+            source TEXT,
+            confidence INTEGER DEFAULT 0,
+            private_mac INTEGER DEFAULT 0,
+            first_seen TEXT,
+            last_seen TEXT,
+            updated_at TEXT
+        )
+    """)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS device_ip_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            identity_key TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            mac TEXT,
+            hostname TEXT,
+            source TEXT,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            UNIQUE(identity_key, ip)
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_device_identities_mac ON device_identities(mac)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_device_identities_current_ip ON device_identities(current_ip)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_device_ip_history_ip ON device_ip_history(ip)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_device_ip_history_seen ON device_ip_history(last_seen)")
+    con.execute("""
         CREATE TABLE IF NOT EXISTS user_labels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             display_name TEXT NOT NULL,

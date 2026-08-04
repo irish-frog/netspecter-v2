@@ -175,6 +175,9 @@ DEFAULT_CONFIG = {
     "adguard_pass": "",
     "adguard_querylog_interval_seconds": 15,
     "adguard_client_import_enabled": False,
+    "device_identity_tracking_enabled": True,
+    "device_identity_carry_names": True,
+    "device_identity_exclude_private_macs": True,
     "unifi_enabled": False,
     "unifi_client_import_enabled": False,
     "unifi_connector_url": "",
@@ -894,6 +897,13 @@ def refresh_unifi_clients(config):
         if device_rows:
             try:
                 with timed_db_write("unifi_client_import") as con:
+                    identity_rows = []
+                    for ip, name, mac, vendor, dtype, connected, seen_at in device_rows:
+                        normalized_mac = normalize_mac(mac)
+                        display_name = apply_device_identity(
+                            con, ip, name, normalized_mac, vendor, dtype, seen_at, "unifi", config
+                        )
+                        identity_rows.append((ip, display_name, normalized_mac, vendor, dtype, connected, seen_at))
                     con.executemany(
                         """
                         INSERT INTO devices (ip, name, mac, vendor, device_type, status, first_seen, last_seen)
@@ -1032,6 +1042,47 @@ def private_mac_address(mac):
         return False
 
 
+def normalize_mac(mac):
+    text = re.sub(r"[^0-9A-Fa-f]", "", str(mac or ""))
+    if len(text) != 12:
+        return ""
+    return ":".join(text[i:i + 2] for i in range(0, 12, 2)).upper()
+
+
+def meaningful_device_name(name, ip=""):
+    text = str(name or "").strip()
+    if not text or text == str(ip or "").strip():
+        return ""
+    return text
+
+
+def identity_tracking_enabled(config=None):
+    return bool((config or cfg()).get("device_identity_tracking_enabled", True))
+
+
+def identity_carry_names_enabled(config=None):
+    return bool((config or cfg()).get("device_identity_carry_names", True))
+
+
+def identity_private_mac_excluded(mac, config=None):
+    return bool((config or cfg()).get("device_identity_exclude_private_macs", True)) and private_mac_address(mac)
+
+
+def identity_source_rank(source):
+    return {
+        "manual": 100,
+        "unifi": 90,
+        "dhcp": 80,
+        "adguard": 65,
+        "traffic": 35,
+    }.get(str(source or "").lower(), 20)
+
+
+def identity_key_for_mac(mac):
+    normalized = normalize_mac(mac)
+    return f"mac:{normalized}" if normalized else ""
+
+
 def load_oui_vendors():
     """Load shipped overrides plus Debian's IEEE OUI list once per collector process."""
     global oui_vendor_cache
@@ -1101,6 +1152,105 @@ def classify_device(vendor=""):
         return "IoT"
 
     return "Unknown"
+
+
+def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unknown", ts="", source="traffic", config=None):
+    """Persist stable MAC identity and return the best display name for this IP row."""
+    c = config or cfg()
+    if not identity_tracking_enabled(c):
+        return meaningful_device_name(name, ip) or str(name or ip)
+    ip = ip_identifier(ip)
+    normalized_mac = normalize_mac(mac)
+    observed_name = meaningful_device_name(name, ip)
+    ts = ts or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if not ip or not normalized_mac:
+        return observed_name or str(name or ip)
+
+    is_private = private_mac_address(normalized_mac)
+    if identity_private_mac_excluded(normalized_mac, c):
+        identity_key = f"private-mac:{normalized_mac}:{ip}"
+    else:
+        identity_key = identity_key_for_mac(normalized_mac)
+    if not identity_key:
+        return observed_name or str(name or ip)
+
+    existing = con.execute(
+        """
+        SELECT display_name, current_ip, source, first_seen, private_mac
+        FROM device_identities
+        WHERE identity_key=?
+        """,
+        (identity_key,),
+    ).fetchone()
+    existing_name = str(existing["display_name"] or "").strip() if existing else ""
+    existing_source = str(existing["source"] or "").strip() if existing else ""
+    carry_name = existing_name if identity_carry_names_enabled(c) and not is_private else ""
+    display_name = observed_name or carry_name or str(name or ip)
+    should_update_name = bool(observed_name) and (
+        not existing_name or identity_source_rank(source) >= identity_source_rank(existing_source)
+    )
+    stored_name = observed_name if should_update_name else existing_name or observed_name
+    first_seen = min(str(existing["first_seen"] or ts), ts) if existing else ts
+    current_ip = str(existing["current_ip"] or "").strip() if existing else ""
+    last_ip = current_ip if current_ip and current_ip != ip else str(existing["last_ip"] or "").strip() if existing else ""
+
+    con.execute(
+        """
+        INSERT INTO device_identities
+            (identity_key, mac, hostname, display_name, current_ip, last_ip, vendor, device_type,
+             source, confidence, private_mac, first_seen, last_seen, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(identity_key) DO UPDATE SET
+            hostname=COALESCE(NULLIF(excluded.hostname, ''), hostname),
+            display_name=CASE
+                WHEN excluded.display_name IS NOT NULL AND TRIM(excluded.display_name) != ''
+                THEN excluded.display_name ELSE display_name END,
+            current_ip=excluded.current_ip,
+            last_ip=excluded.last_ip,
+            vendor=COALESCE(NULLIF(excluded.vendor, ''), vendor),
+            device_type=CASE
+                WHEN device_type IS NULL OR device_type='' OR device_type='Unknown'
+                THEN excluded.device_type ELSE device_type END,
+            source=excluded.source,
+            confidence=MAX(confidence, excluded.confidence),
+            private_mac=excluded.private_mac,
+            first_seen=MIN(first_seen, excluded.first_seen),
+            last_seen=MAX(last_seen, excluded.last_seen),
+            updated_at=excluded.updated_at
+        """,
+        (
+            identity_key,
+            normalized_mac,
+            observed_name,
+            stored_name,
+            ip,
+            last_ip,
+            vendor or "",
+            device_type or "Unknown",
+            source,
+            40 if is_private else max(50, identity_source_rank(source)),
+            1 if is_private else 0,
+            first_seen,
+            ts,
+            ts,
+        ),
+    )
+    con.execute(
+        """
+        INSERT INTO device_ip_history
+            (identity_key, ip, mac, hostname, source, first_seen, last_seen)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(identity_key, ip) DO UPDATE SET
+            hostname=COALESCE(NULLIF(excluded.hostname, ''), hostname),
+            source=excluded.source,
+            first_seen=MIN(first_seen, excluded.first_seen),
+            last_seen=MAX(last_seen, excluded.last_seen)
+        """,
+        (identity_key, ip, normalized_mac, observed_name, source, ts, ts),
+    )
+    if carry_name and not observed_name:
+        print(f"Device identity carried name {carry_name} from {last_ip or 'previous IP'} to {ip} via {normalized_mac}")
+    return display_name
 
 
 def app_from_domain(domain):
@@ -2940,6 +3090,13 @@ def flush_loop():
                     traffic_step_timings["live_speed_write"] += time.monotonic() - step_started
                 if device_rows:
                     step_started = time.monotonic()
+                    identity_rows = []
+                    for ip, name, mac, vendor, dtype, first_seen, last_seen in device_rows:
+                        normalized_mac = normalize_mac(mac)
+                        display_name = apply_device_identity(
+                            con, ip, name, normalized_mac, vendor, dtype, last_seen, "traffic", c
+                        )
+                        identity_rows.append((ip, display_name, normalized_mac, vendor, dtype, first_seen, last_seen))
                     con.executemany(
                         """
                         INSERT INTO devices
@@ -2958,7 +3115,7 @@ def flush_loop():
                             name=CASE WHEN excluded.name != excluded.ip THEN excluded.name ELSE devices.name END,
                             last_seen=excluded.last_seen
                         """,
-                        device_rows,
+                        identity_rows,
                     )
                     traffic_step_timings["device_write"] += time.monotonic() - step_started
                 if traffic_rows:
@@ -3089,6 +3246,7 @@ def import_adguard_querylog():
     dns_rows = []
     dns_resolution_rows = []
     pending_dns_keys = []
+    arp_macs = read_arp_macs()
 
     for item in rows:
         if not isinstance(item, dict):
@@ -3113,7 +3271,10 @@ def import_adguard_querylog():
             current = device_updates.get(ip)
             first_seen = min(current[1], ts) if current else ts
             last_seen = max(current[2], ts) if current else ts
-            device_updates[ip] = (name, first_seen, last_seen)
+            mac = arp_macs.get(ip, "")
+            vendor = vendor_from_mac(mac)
+            dtype = classify_device(vendor)
+            device_updates[ip] = (name, first_seen, last_seen, mac, vendor, dtype)
         if not is_reverse_dns_lookup_domain(domain):
             remember_estimated_app_targets(c, client, domain, item.get("answer") or [], ts, blocked)
         dns_resolution_rows.extend(dns_answer_rows(ip or client, domain, item.get("answer") or [], ts))
@@ -3139,12 +3300,21 @@ def import_adguard_querylog():
 
     try:
         with timed_db_write("adguard_dns_querylog") as con:
-            for ip, (name, first_seen, last_seen) in device_updates.items():
+            for ip, (name, first_seen, last_seen, mac, vendor, dtype) in device_updates.items():
+                normalized_mac = normalize_mac(mac)
+                display_name = apply_device_identity(
+                    con, ip, name, normalized_mac, vendor, dtype, last_seen, "adguard", c
+                )
                 con.execute(
                     """
-                    INSERT INTO devices (ip, name, status, first_seen, last_seen)
-                    VALUES (?, ?, 'Active', ?, ?)
+                    INSERT INTO devices (ip, name, mac, vendor, device_type, status, first_seen, last_seen)
+                    VALUES (?, ?, ?, ?, ?, 'Active', ?, ?)
                     ON CONFLICT(ip) DO UPDATE SET
+                        mac=CASE WHEN excluded.mac != '' THEN excluded.mac ELSE devices.mac END,
+                        vendor=CASE WHEN excluded.mac != '' THEN excluded.vendor ELSE devices.vendor END,
+                        device_type=CASE
+                            WHEN devices.device_type IS NULL OR devices.device_type='' OR devices.device_type='Unknown'
+                            THEN excluded.device_type ELSE devices.device_type END,
                         name=excluded.name,
                         last_seen=CASE
                             WHEN devices.last_seen IS NULL OR devices.last_seen < excluded.last_seen
@@ -3152,7 +3322,7 @@ def import_adguard_querylog():
                             ELSE devices.last_seen
                         END
                     """,
-                    (ip, name, first_seen, last_seen),
+                    (ip, display_name, normalized_mac, vendor, dtype, first_seen, last_seen),
                 )
             if dns_rows:
                 con.executemany(
