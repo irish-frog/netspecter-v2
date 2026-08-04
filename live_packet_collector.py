@@ -178,6 +178,9 @@ DEFAULT_CONFIG = {
     "device_identity_tracking_enabled": True,
     "device_identity_carry_names": True,
     "device_identity_exclude_private_macs": True,
+    "netbios_discovery_enabled": True,
+    "netbios_discovery_interval_seconds": 900,
+    "netbios_discovery_batch_size": 12,
     "unifi_enabled": False,
     "unifi_client_import_enabled": False,
     "unifi_connector_url": "",
@@ -308,6 +311,7 @@ last_unknown_reclassify = 0.0
 last_unifi_import = 0.0
 last_ids_maintenance = 0.0
 last_incident_build = 0.0
+last_netbios_discovery = 0.0
 oui_vendor_cache = None
 ESTIMATED_APP_NFT_TARGET_LIMIT = 200
 CLASSIFICATION_NFT_TARGET_LIMIT = 300
@@ -1073,6 +1077,7 @@ def identity_source_rank(source):
         "manual": 100,
         "unifi": 90,
         "dhcp": 80,
+        "netbios": 75,
         "adguard": 65,
         "traffic": 35,
     }.get(str(source or "").lower(), 20)
@@ -1251,6 +1256,141 @@ def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unkn
     if carry_name and not observed_name:
         print(f"Device identity carried name {carry_name} from {last_ip or 'previous IP'} to {ip} via {normalized_mac}")
     return display_name
+
+
+def parse_nmblookup_status(output):
+    name = ""
+    mac = ""
+    for line in str(output or "").splitlines():
+        text = line.strip()
+        mac_match = re.search(r"MAC Address\s*=\s*([0-9A-Fa-f:-]{17})", text)
+        if mac_match:
+            mac = normalize_mac(mac_match.group(1))
+            continue
+        match = re.match(r"^([^\s<]{1,63})\s+<00>\s+-\s+(?:(<GROUP>)\s+)?M\s+<ACTIVE>", text)
+        if not match or match.group(2):
+            continue
+        candidate = match.group(1).strip()
+        if candidate and candidate != "__MSBROWSE__":
+            name = candidate
+    return name, mac
+
+
+def discover_netbios_name(ip, timeout=3):
+    ip = ip_identifier(ip)
+    if not ip:
+        return "", ""
+    try:
+        result = subprocess.run(
+            ["nmblookup", "-A", ip],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError:
+        return "", ""
+    except subprocess.TimeoutExpired:
+        return "", ""
+    except Exception as error:
+        print(f"NetBIOS discovery failed for {ip}: {error}")
+        return "", ""
+    if result.returncode != 0 and not result.stdout:
+        return "", ""
+    return parse_nmblookup_status(result.stdout)
+
+
+def netbios_discovery_pass(config=None):
+    c = config or cfg()
+    if not c.get("netbios_discovery_enabled", True):
+        return 0
+    batch_size = positive_int(c.get("netbios_discovery_batch_size", 12), 12, 1, 64)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cutoff = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    rows = []
+    try:
+        con = connect_db(timeout=2, busy_timeout_ms=1000)
+        rows = con.execute(
+            """
+            SELECT d.ip, d.name, d.mac, d.vendor, d.device_type, o.name AS override_name
+            FROM devices d
+            LEFT JOIN device_overrides o ON o.ip=d.ip
+            WHERE d.last_seen >= ?
+              AND d.ip IS NOT NULL AND d.ip != ''
+            ORDER BY
+              CASE
+                WHEN (d.name IS NULL OR TRIM(d.name)='' OR d.name=d.ip)
+                 AND (o.name IS NULL OR TRIM(o.name)='' OR o.name=o.ip)
+                THEN 0 ELSE 1 END,
+              d.last_seen DESC
+            LIMIT ?
+            """,
+            (cutoff, batch_size),
+        ).fetchall()
+        con.close()
+    except Exception as error:
+        print(f"NetBIOS discovery candidate query failed: {error}")
+        return 0
+
+    updates = []
+    for row in rows:
+        ip = str(row["ip"] or "").strip()
+        override_name = str(row["override_name"] or "").strip()
+        has_real_override = bool(override_name and override_name != ip)
+        discovered_name, discovered_mac = discover_netbios_name(ip)
+        discovered_name = meaningful_device_name(discovered_name, ip)
+        discovered_mac = discovered_mac or normalize_mac(row["mac"])
+        if not discovered_name and not discovered_mac:
+            continue
+        vendor = vendor_from_mac(discovered_mac) if discovered_mac else str(row["vendor"] or "Unknown Vendor")
+        dtype = classify_device(vendor)
+        updates.append((ip, discovered_name, discovered_mac, vendor, dtype, has_real_override))
+
+    if not updates:
+        return 0
+
+    try:
+        with timed_db_write("netbios_discovery") as con:
+            applied = 0
+            for ip, name, mac, vendor, dtype, has_real_override in updates:
+                display_name = apply_device_identity(con, ip, name, mac, vendor, dtype, now, "netbios", c)
+                device_name = "" if has_real_override else display_name
+                con.execute(
+                    """
+                    INSERT INTO devices (ip, name, mac, vendor, device_type, status, first_seen, last_seen)
+                    VALUES (?, ?, ?, ?, ?, 'Active', ?, ?)
+                    ON CONFLICT(ip) DO UPDATE SET
+                        name=CASE
+                            WHEN excluded.name IS NOT NULL AND TRIM(excluded.name) != '' AND excluded.name != excluded.ip
+                            THEN excluded.name ELSE devices.name END,
+                        mac=CASE WHEN excluded.mac != '' THEN excluded.mac ELSE devices.mac END,
+                        vendor=CASE WHEN excluded.mac != '' THEN excluded.vendor ELSE devices.vendor END,
+                        device_type=CASE
+                            WHEN devices.device_type IS NULL OR devices.device_type='' OR devices.device_type='Unknown'
+                            THEN excluded.device_type ELSE devices.device_type END,
+                        last_seen=CASE
+                            WHEN devices.last_seen IS NULL OR devices.last_seen < excluded.last_seen
+                            THEN excluded.last_seen ELSE devices.last_seen END
+                    """,
+                    (ip, device_name, normalize_mac(mac), vendor, dtype, now, now),
+                )
+                if name:
+                    con.execute(
+                        """
+                        UPDATE device_overrides
+                        SET name=?, updated_at=?
+                        WHERE ip=? AND (name IS NULL OR TRIM(name)='' OR name=ip)
+                        """,
+                        (name, now, ip),
+                    )
+                applied += 1
+        if applied:
+            print(f"NetBIOS device discovery updated: {applied}")
+        return applied
+    except Exception as error:
+        print(f"NetBIOS discovery database update failed: {error}")
+        return 0
 
 
 def app_from_domain(domain):
@@ -3356,7 +3496,7 @@ def import_adguard_querylog():
 
 def adguard_querylog_loop():
     """Background loop for AdGuard DNS querylog importing."""
-    global last_suricata_import, last_unifi_import, last_ids_maintenance, last_incident_build
+    global last_suricata_import, last_unifi_import, last_ids_maintenance, last_incident_build, last_netbios_discovery
     init_db()
 
     while True:
@@ -3372,6 +3512,10 @@ def adguard_querylog_loop():
             if now_mono - last_unifi_import >= unifi_interval:
                 last_unifi_import = now_mono
                 run_timed_step("UniFi/client import", refresh_unifi_clients, c)
+            netbios_interval = positive_int(c.get("netbios_discovery_interval_seconds", 900), 900, 60)
+            if now_mono - last_netbios_discovery >= netbios_interval:
+                last_netbios_discovery = now_mono
+                run_timed_step("NetBIOS/device discovery", netbios_discovery_pass, c)
             suricata_interval = positive_int(c.get("suricata_import_interval_seconds", 60), 60, 15)
             if c.get("suricata_enabled", True) and now_mono - last_suricata_import >= suricata_interval:
                 last_suricata_import = now_mono

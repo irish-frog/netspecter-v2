@@ -636,7 +636,7 @@ if [ "$ADGUARD_JUST_INSTALLED" = "1" ] && port_3000_in_use; then
 fi
 
 echo "[3/10] Installing NetSpecter base packages..."
-apt install -y python3 python3-pip python3-venv sqlite3 bridge-utils nftables tcpdump curl nano git bmon vnstat ieee-data snmp dnsutils cifs-utils openssl ethtool
+apt install -y python3 python3-pip python3-venv sqlite3 bridge-utils nftables tcpdump curl nano git bmon vnstat ieee-data snmp dnsutils cifs-utils openssl ethtool samba-common-bin
 install_speedtest_optional
 install_suricata_optional
 ensure_runtime_user
