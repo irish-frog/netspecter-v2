@@ -181,6 +181,10 @@ DEFAULT_CONFIG = {
     "netbios_discovery_enabled": True,
     "netbios_discovery_interval_seconds": 900,
     "netbios_discovery_batch_size": 12,
+    "mdns_discovery_enabled": True,
+    "snmp_name_discovery_enabled": True,
+    "ssdp_discovery_enabled": True,
+    "vendor_fallback_names_enabled": True,
     "unifi_enabled": False,
     "unifi_client_import_enabled": False,
     "unifi_connector_url": "",
@@ -1076,9 +1080,13 @@ def identity_source_rank(source):
     return {
         "manual": 100,
         "unifi": 90,
+        "snmp": 82,
         "dhcp": 80,
         "netbios": 75,
+        "mdns": 70,
+        "ssdp": 68,
         "adguard": 65,
+        "vendor": 25,
         "traffic": 35,
     }.get(str(source or "").lower(), 20)
 
@@ -1301,6 +1309,153 @@ def discover_netbios_name(ip, timeout=3):
     return parse_nmblookup_status(result.stdout)
 
 
+def clean_discovered_name(name, ip=""):
+    text = str(name or "").strip().strip(".")
+    text = re.sub(r"\.local$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text or text == str(ip or "").strip() or text.lower() in {"unknown", "localhost"}:
+        return ""
+    return text[:80]
+
+
+def discover_mdns_name(ip, timeout=3):
+    ip = ip_identifier(ip)
+    if not ip:
+        return ""
+    for command in (["avahi-resolve-address", ip], ["avahi-resolve", "-a", ip]):
+        try:
+            result = subprocess.run(
+                command,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+        except Exception as error:
+            print(f"mDNS discovery failed for {ip}: {error}")
+            continue
+        if result.returncode != 0:
+            continue
+        text = (result.stdout or "").strip()
+        if not text:
+            continue
+        parts = re.split(r"\s+", text)
+        candidate = parts[-1] if parts else ""
+        name = clean_discovered_name(candidate, ip)
+        if name:
+            return name
+    return ""
+
+
+def discover_snmp_name(ip, config=None, timeout=3):
+    c = config or cfg()
+    if not c.get("snmp_name_discovery_enabled", True):
+        return ""
+    community = str(c.get("snmp_community") or "public").strip() or "public"
+    port = positive_int(c.get("snmp_port", 161), 161, 1)
+    value = snmpget_value(ip, community, "1.3.6.1.2.1.1.5.0", port=port, timeout=timeout)
+    if value.startswith(("snmpget ", "snmpget failed", "snmpget timed out")):
+        return ""
+    return clean_discovered_name(value.strip('"'), ip)
+
+
+def ssdp_location_for_ip(ip, timeout=2):
+    ip = ip_identifier(ip)
+    if not ip:
+        return ""
+    message = (
+        "M-SEARCH * HTTP/1.1\r\n"
+        "HOST: 239.255.255.250:1900\r\n"
+        "MAN: \"ssdp:discover\"\r\n"
+        "MX: 1\r\n"
+        "ST: ssdp:all\r\n\r\n"
+    ).encode("ascii")
+    sock = None
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.settimeout(timeout)
+        sock.sendto(message, ("239.255.255.250", 1900))
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                data, address = sock.recvfrom(4096)
+            except socket.timeout:
+                break
+            if address[0] != ip:
+                continue
+            text = data.decode("utf-8", errors="replace")
+            for line in text.splitlines():
+                if line.lower().startswith("location:"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        return ""
+    finally:
+        if sock:
+            sock.close()
+    return ""
+
+
+def discover_ssdp_name(ip, timeout=3):
+    location = ssdp_location_for_ip(ip, timeout=2)
+    if not location or requests is None:
+        return ""
+    try:
+        response = requests.get(location, timeout=timeout)
+        if response.status_code != 200:
+            return ""
+        match = re.search(r"<friendlyName>\s*([^<]+)\s*</friendlyName>", response.text or "", re.IGNORECASE)
+        if match:
+            return clean_discovered_name(match.group(1), ip)
+    except Exception:
+        return ""
+    return ""
+
+
+def vendor_fallback_name(ip, vendor="", device_type=""):
+    vendor_text = str(vendor or "").strip()
+    dtype = str(device_type or "").strip() or classify_device(vendor_text)
+    if not vendor_text or vendor_text == "Unknown Vendor":
+        return ""
+    if vendor_text == "Private / Random MAC":
+        return f"Mobile Device - Private MAC"
+    short_vendor = re.sub(r"\b(inc|ltd|corp|corporation|co|company)\.?\b", "", vendor_text, flags=re.IGNORECASE)
+    short_vendor = re.sub(r"\s+", " ", short_vendor).strip(" .,-")
+    if dtype and dtype != "Unknown":
+        return f"{dtype} - {short_vendor or vendor_text}"
+    return short_vendor or vendor_text
+
+
+def discover_device_name(ip, mac="", vendor="", device_type="", config=None):
+    c = config or cfg()
+    if c.get("netbios_discovery_enabled", True):
+        name, discovered_mac = discover_netbios_name(ip)
+        name = clean_discovered_name(name, ip)
+        if name:
+            return name, discovered_mac or normalize_mac(mac), "netbios"
+        if discovered_mac and not mac:
+            mac = discovered_mac
+    if c.get("mdns_discovery_enabled", True):
+        name = discover_mdns_name(ip)
+        if name:
+            return name, normalize_mac(mac), "mdns"
+    if c.get("snmp_name_discovery_enabled", True):
+        name = discover_snmp_name(ip, c)
+        if name:
+            return name, normalize_mac(mac), "snmp"
+    if c.get("ssdp_discovery_enabled", True):
+        name = discover_ssdp_name(ip)
+        if name:
+            return name, normalize_mac(mac), "ssdp"
+    if c.get("vendor_fallback_names_enabled", True):
+        name = vendor_fallback_name(ip, vendor, device_type)
+        if name:
+            return name, normalize_mac(mac), "vendor"
+    return "", normalize_mac(mac), ""
+
+
 def netbios_discovery_pass(config=None):
     c = config or cfg()
     if not c.get("netbios_discovery_enabled", True):
@@ -1318,11 +1473,9 @@ def netbios_discovery_pass(config=None):
             LEFT JOIN device_overrides o ON o.ip=d.ip
             WHERE d.last_seen >= ?
               AND d.ip IS NOT NULL AND d.ip != ''
+              AND (d.name IS NULL OR TRIM(d.name)='' OR d.name=d.ip OR LOWER(d.name)='unknown')
+              AND (o.name IS NULL OR TRIM(o.name)='' OR o.name=o.ip OR LOWER(o.name)='unknown')
             ORDER BY
-              CASE
-                WHEN (d.name IS NULL OR TRIM(d.name)='' OR d.name=d.ip)
-                 AND (o.name IS NULL OR TRIM(o.name)='' OR o.name=o.ip)
-                THEN 0 ELSE 1 END,
               d.last_seen DESC
             LIMIT ?
             """,
@@ -1338,14 +1491,18 @@ def netbios_discovery_pass(config=None):
         ip = str(row["ip"] or "").strip()
         override_name = str(row["override_name"] or "").strip()
         has_real_override = bool(override_name and override_name != ip)
-        discovered_name, discovered_mac = discover_netbios_name(ip)
-        discovered_name = meaningful_device_name(discovered_name, ip)
-        discovered_mac = discovered_mac or normalize_mac(row["mac"])
+        discovered_name, discovered_mac, source = discover_device_name(
+            ip,
+            row["mac"],
+            row["vendor"],
+            row["device_type"],
+            c,
+        )
         if not discovered_name and not discovered_mac:
             continue
         vendor = vendor_from_mac(discovered_mac) if discovered_mac else str(row["vendor"] or "Unknown Vendor")
         dtype = classify_device(vendor)
-        updates.append((ip, discovered_name, discovered_mac, vendor, dtype, has_real_override))
+        updates.append((ip, discovered_name, discovered_mac, vendor, dtype, has_real_override, source or "discovery"))
 
     if not updates:
         return 0
@@ -1353,8 +1510,8 @@ def netbios_discovery_pass(config=None):
     try:
         with timed_db_write("netbios_discovery") as con:
             applied = 0
-            for ip, name, mac, vendor, dtype, has_real_override in updates:
-                display_name = apply_device_identity(con, ip, name, mac, vendor, dtype, now, "netbios", c)
+            for ip, name, mac, vendor, dtype, has_real_override, source in updates:
+                display_name = apply_device_identity(con, ip, name, mac, vendor, dtype, now, source, c)
                 device_name = "" if has_real_override else display_name
                 con.execute(
                     """
@@ -1386,7 +1543,7 @@ def netbios_discovery_pass(config=None):
                     )
                 applied += 1
         if applied:
-            print(f"NetBIOS device discovery updated: {applied}")
+            print(f"Device name discovery updated: {applied}")
         return applied
     except Exception as error:
         print(f"NetBIOS discovery database update failed: {error}")
@@ -1629,7 +1786,7 @@ def store_telemetry(source, target, metric, value):
     )
 
 
-def snmpget_value(target, community, oid, port=161):
+def snmpget_value(target, community, oid, port=161, timeout=8):
     command = [
         "snmpget",
         "-v2c",
@@ -1645,7 +1802,7 @@ def snmpget_value(target, community, oid, port=161):
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=8,
+            timeout=timeout,
             check=False,
         )
         if result.returncode != 0:
