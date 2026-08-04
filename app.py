@@ -11219,7 +11219,7 @@ def settings():
         "netbios_discovery_interval_seconds": "Seconds between background NetBIOS discovery passes.",
         "netbios_discovery_batch_size": "Maximum recently active devices to probe per NetBIOS discovery pass.",
         "mdns_discovery_enabled": "Use background mDNS/Avahi lookups for Apple, Linux, printers and smart devices that advertise .local names.",
-        "snmp_name_discovery_enabled": "Use background SNMP sysName discovery for printers, VoIP phones, switches and UPS devices when they allow SNMP.",
+        "snmp_name_discovery_enabled": "Use background SNMP sysName discovery for printers, VoIP phones, switches and UPS devices. Off by default because closed SNMP ports can time out.",
         "ssdp_discovery_enabled": "Use background SSDP/UPnP friendlyName discovery for smart TVs, media devices and IoT devices.",
         "vendor_fallback_names_enabled": "If no hostname is found, label unresolved devices from MAC vendor and inferred type instead of leaving only the IP.",
         "adguard_url": "AdGuard Home URL used for DNS stats and controls.",

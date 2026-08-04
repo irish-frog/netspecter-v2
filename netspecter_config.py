@@ -96,7 +96,7 @@ DEFAULT_CONFIG = {
     "netbios_discovery_interval_seconds": 900,
     "netbios_discovery_batch_size": 12,
     "mdns_discovery_enabled": True,
-    "snmp_name_discovery_enabled": True,
+    "snmp_name_discovery_enabled": False,
     "ssdp_discovery_enabled": True,
     "vendor_fallback_names_enabled": True,
     "speedtest_provider": "librespeed",

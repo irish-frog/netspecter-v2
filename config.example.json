@@ -58,7 +58,7 @@
   "netbios_discovery_interval_seconds": 900,
   "netbios_discovery_batch_size": 12,
   "mdns_discovery_enabled": true,
-  "snmp_name_discovery_enabled": true,
+  "snmp_name_discovery_enabled": false,
   "ssdp_discovery_enabled": true,
   "vendor_fallback_names_enabled": true,
   "speedtest_provider": "librespeed",

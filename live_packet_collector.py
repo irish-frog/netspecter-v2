@@ -182,7 +182,7 @@ DEFAULT_CONFIG = {
     "netbios_discovery_interval_seconds": 900,
     "netbios_discovery_batch_size": 12,
     "mdns_discovery_enabled": True,
-    "snmp_name_discovery_enabled": True,
+    "snmp_name_discovery_enabled": False,
     "ssdp_discovery_enabled": True,
     "vendor_fallback_names_enabled": True,
     "unifi_enabled": False,
@@ -1356,7 +1356,7 @@ def discover_snmp_name(ip, config=None, timeout=3):
         return ""
     community = str(c.get("snmp_community") or "public").strip() or "public"
     port = positive_int(c.get("snmp_port", 161), 161, 1)
-    value = snmpget_value(ip, community, "1.3.6.1.2.1.1.5.0", port=port, timeout=timeout)
+    value = snmpget_value(ip, community, "1.3.6.1.2.1.1.5.0", port=port, timeout=timeout, quiet=True)
     if value.startswith(("snmpget ", "snmpget failed", "snmpget timed out")):
         return ""
     return clean_discovered_name(value.strip('"'), ip)
@@ -1786,7 +1786,7 @@ def store_telemetry(source, target, metric, value):
     )
 
 
-def snmpget_value(target, community, oid, port=161, timeout=8):
+def snmpget_value(target, community, oid, port=161, timeout=8, quiet=False):
     command = [
         "snmpget",
         "-v2c",
@@ -1811,7 +1811,8 @@ def snmpget_value(target, community, oid, port=161, timeout=8):
     except FileNotFoundError:
         return "snmpget not installed"
     except Exception as e:
-        print(f"SNMP poll failed for {target}: {e}")
+        if not quiet:
+            print(f"SNMP poll failed for {target}: {e}")
         return ""
 
 
