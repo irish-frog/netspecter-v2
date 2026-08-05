@@ -23,6 +23,7 @@ class Flow:
     asn: str = ""
     provider: str = ""
     flow_id: str = ""
+    shared_dns_enabled: bool = False
 
 
 @dataclass
@@ -184,12 +185,13 @@ def classify_flow(con, flow, emit_timing=False, metadata_first=False):
         _log_classification_timing("dns_resolution", flow, timings, started, emit_timing)
         return result
 
-    step = time.monotonic()
-    shared_dns_result = match_shared_dns_resolution(con, flow.remote_ip, flow.ts)
-    mark("shared_dns_lookup", step)
-    if shared_dns_result:
-        _log_classification_timing("shared_dns_resolution", flow, timings, started, emit_timing)
-        return shared_dns_result
+    if getattr(flow, "shared_dns_enabled", False):
+        step = time.monotonic()
+        shared_dns_result = match_shared_dns_resolution(con, flow.remote_ip, flow.ts)
+        mark("shared_dns_lookup", step)
+        if shared_dns_result:
+            _log_classification_timing("shared_dns_resolution", flow, timings, started, emit_timing)
+            return shared_dns_result
 
     if flow.tls_sni:
         step = time.monotonic()

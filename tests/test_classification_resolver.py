@@ -189,12 +189,37 @@ def test_classify_flow_uses_unambiguous_shared_dns_resolution(monkeypatch):
         local_ip="192.168.99.50",
         remote_ip="203.0.113.10",
         bytes=2048,
+        shared_dns_enabled=True,
     ))
 
     assert result.category == "Video Streaming"
     assert result.application == "Plex CDN"
     assert result.evidence_source == "shared_dns_resolution"
     assert result.confidence == "medium"
+
+
+def test_shared_dns_resolution_is_disabled_by_default(monkeypatch):
+    _SHARED_DNS_CACHE.clear()
+    con = memory_db()
+    con.execute(
+        """
+        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES ('2026-07-24 10:00:00', '192.168.99.10', 'a.hvcdn.to', '203.0.113.15', 900, '2026-07-24 10:15:00')
+        """
+    )
+    monkeypatch.setattr(
+        "services.classification_resolver_service.classify_application",
+        lambda domain="", **_kwargs: {"primary_category": "Video Streaming", "primary_app": "Plex CDN"},
+    )
+
+    result = classify_flow(con, Flow(
+        ts="2026-07-24 10:01:00",
+        local_ip="192.168.99.50",
+        remote_ip="203.0.113.15",
+        bytes=2048,
+    ))
+
+    assert result is None
 
 
 def test_classify_flow_does_not_guess_ambiguous_shared_dns(monkeypatch):
@@ -223,6 +248,7 @@ def test_classify_flow_does_not_guess_ambiguous_shared_dns(monkeypatch):
         local_ip="192.168.99.50",
         remote_ip="203.0.113.20",
         bytes=2048,
+        shared_dns_enabled=True,
     ))
 
     assert result is None
@@ -247,6 +273,7 @@ def test_classify_flow_ignores_expired_shared_dns(monkeypatch):
         local_ip="192.168.99.50",
         remote_ip="203.0.113.30",
         bytes=2048,
+        shared_dns_enabled=True,
     ))
 
     assert result is None
