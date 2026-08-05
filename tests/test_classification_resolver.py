@@ -7,7 +7,6 @@ import live_packet_collector
 from services import report_context_service
 from services.classification_resolver_service import (
     Flow,
-    _SHARED_DNS_CACHE,
     classify_flow,
     dns_answer_rows,
     upsert_unknown_traffic,
@@ -164,119 +163,6 @@ def test_classify_flow_prefers_dns_resolution_before_sni(monkeypatch):
     assert result.application == "e7a37f2d.hvcdn.to"
     assert result.evidence_source == "dns_resolution"
     assert result.confidence == "high"
-
-
-def test_classify_flow_uses_unambiguous_shared_dns_resolution(monkeypatch):
-    _SHARED_DNS_CACHE.clear()
-    con = memory_db()
-    con.executemany(
-        """
-        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        [
-            ("2026-07-24 10:00:00", "192.168.99.10", "a.hvcdn.to", "203.0.113.10", 900, "2026-07-24 10:15:00"),
-            ("2026-07-24 10:00:01", "192.168.99.11", "b.hvcdn.to", "203.0.113.10", 900, "2026-07-24 10:15:01"),
-        ],
-    )
-    monkeypatch.setattr(
-        "services.classification_resolver_service.classify_application",
-        lambda domain="", **_kwargs: {"primary_category": "Video Streaming", "primary_app": "Plex CDN", "category": "Video Streaming"},
-    )
-
-    result = classify_flow(con, Flow(
-        ts="2026-07-24 10:01:00",
-        local_ip="192.168.99.50",
-        remote_ip="203.0.113.10",
-        bytes=2048,
-        shared_dns_enabled=True,
-    ))
-
-    assert result.category == "Video Streaming"
-    assert result.application == "Plex CDN"
-    assert result.evidence_source == "shared_dns_resolution"
-    assert result.confidence == "medium"
-
-
-def test_shared_dns_resolution_is_disabled_by_default(monkeypatch):
-    _SHARED_DNS_CACHE.clear()
-    con = memory_db()
-    con.execute(
-        """
-        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
-        VALUES ('2026-07-24 10:00:00', '192.168.99.10', 'a.hvcdn.to', '203.0.113.15', 900, '2026-07-24 10:15:00')
-        """
-    )
-    monkeypatch.setattr(
-        "services.classification_resolver_service.classify_application",
-        lambda domain="", **_kwargs: {"primary_category": "Video Streaming", "primary_app": "Plex CDN"},
-    )
-
-    result = classify_flow(con, Flow(
-        ts="2026-07-24 10:01:00",
-        local_ip="192.168.99.50",
-        remote_ip="203.0.113.15",
-        bytes=2048,
-    ))
-
-    assert result is None
-
-
-def test_classify_flow_does_not_guess_ambiguous_shared_dns(monkeypatch):
-    _SHARED_DNS_CACHE.clear()
-    con = memory_db()
-    con.executemany(
-        """
-        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        [
-            ("2026-07-24 10:00:00", "192.168.99.10", "video.example.com", "203.0.113.20", 900, "2026-07-24 10:15:00"),
-            ("2026-07-24 10:00:01", "192.168.99.11", "updates.example.net", "203.0.113.20", 900, "2026-07-24 10:15:01"),
-        ],
-    )
-
-    def fake_classify(domain="", **_kwargs):
-        if domain == "video.example.com":
-            return {"primary_category": "Video Streaming", "primary_app": "Video"}
-        return {"primary_category": "Software Updates", "primary_app": "Updates"}
-
-    monkeypatch.setattr("services.classification_resolver_service.classify_application", fake_classify)
-
-    result = classify_flow(con, Flow(
-        ts="2026-07-24 10:01:00",
-        local_ip="192.168.99.50",
-        remote_ip="203.0.113.20",
-        bytes=2048,
-        shared_dns_enabled=True,
-    ))
-
-    assert result is None
-
-
-def test_classify_flow_ignores_expired_shared_dns(monkeypatch):
-    _SHARED_DNS_CACHE.clear()
-    con = memory_db()
-    con.execute(
-        """
-        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
-        VALUES ('2026-07-24 10:00:00', '192.168.99.10', 'a.hvcdn.to', '203.0.113.30', 30, '2026-07-24 10:00:30')
-        """
-    )
-    monkeypatch.setattr(
-        "services.classification_resolver_service.classify_application",
-        lambda domain="", **_kwargs: {"primary_category": "Video Streaming", "primary_app": "Plex CDN"},
-    )
-
-    result = classify_flow(con, Flow(
-        ts="2026-07-24 10:01:00",
-        local_ip="192.168.99.50",
-        remote_ip="203.0.113.30",
-        bytes=2048,
-        shared_dns_enabled=True,
-    ))
-
-    assert result is None
 
 
 def test_unknown_queue_merges_by_local_remote_port_protocol():

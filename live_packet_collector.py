@@ -3209,7 +3209,7 @@ def read_arp_macs():
     return macs
 
 
-def write_destination_delta(con, ip, destination, cur, day, now, default_category="Unknown", shared_dns_enabled=False):
+def write_destination_delta(con, ip, destination, cur, day, now, default_category="Unknown"):
     interval_rx_mb = cur["rx"] / 1024 / 1024
     interval_tx_mb = cur["tx"] / 1024 / 1024
     interval_total_mb = interval_rx_mb + interval_tx_mb
@@ -3221,7 +3221,6 @@ def write_destination_delta(con, ip, destination, cur, day, now, default_categor
         remote_ip=destination,
         bytes=int(cur["rx"] + cur["tx"]),
         protocol="tcp",
-        shared_dns_enabled=bool(shared_dns_enabled),
     )
     classification = classify_flow(con, flow, emit_timing=True)
     category = classification.category if classification else default_category
@@ -3531,15 +3530,14 @@ def flush_loop():
                     )
                     traffic_step_timings["estimated_write"] += time.monotonic() - step_started
 
-                shared_dns_enabled = bool(c.get("dns_forwarder_mode_enabled", False))
                 for (category, ip, destination), cur in remote_destination_deltas.items():
                     step_started = time.monotonic()
-                    write_destination_delta(con, ip, destination, cur, day, now, category, shared_dns_enabled)
+                    write_destination_delta(con, ip, destination, cur, day, now, category)
                     traffic_step_timings["destination_write"] += time.monotonic() - step_started
                     destination_writes += 1
                 for (ip, destination), cur in classification_destination_deltas.items():
                     step_started = time.monotonic()
-                    write_destination_delta(con, ip, destination, cur, day, now, "Unknown", shared_dns_enabled)
+                    write_destination_delta(con, ip, destination, cur, day, now, "Unknown")
                     traffic_step_timings["destination_write"] += time.monotonic() - step_started
                     destination_writes += 1
             traffic_detail_elapsed = time.monotonic() - traffic_detail_started

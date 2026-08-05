@@ -1972,6 +1972,150 @@ def ag_post(endpoint, payload=None):
         return False, {"error": "AdGuard request failed."}
 
 
+def normalize_dns_zone(value):
+    zone = str(value or "").strip().lower().strip(".")
+    if not zone or len(zone) > 253:
+        return ""
+    if zone.startswith("[/") or "/" in zone:
+        return ""
+    return zone if valid_domain_pattern(zone) else ""
+
+
+def normalize_internal_dns_zones(value):
+    zones = []
+    seen = set()
+    for item in cfg_list(value):
+        zone = normalize_dns_zone(item)
+        if zone and zone not in seen:
+            seen.add(zone)
+            zones.append(zone)
+    return zones
+
+
+def normalize_internal_dns_reverse_cidrs(value):
+    cidrs = []
+    seen = set()
+    for item in cfg_list(value):
+        text = str(item or "").strip()
+        if not text:
+            continue
+        try:
+            network = ipaddress.ip_network(text, strict=False)
+        except ValueError:
+            continue
+        if network.version != 4:
+            continue
+        normalized = str(network)
+        if normalized not in seen:
+            seen.add(normalized)
+            cidrs.append(normalized)
+    return cidrs
+
+
+def reverse_zone_for_cidr(cidr):
+    try:
+        network = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return ""
+    if network.version != 4:
+        return ""
+    octets = str(network.network_address).split(".")
+    prefix = int(network.prefixlen)
+    if prefix >= 24:
+        labels = list(reversed(octets[:3]))
+    elif prefix >= 16:
+        labels = list(reversed(octets[:2]))
+    elif prefix >= 8:
+        labels = [octets[0]]
+    else:
+        return ""
+    return ".".join(labels) + ".in-addr.arpa"
+
+
+def internal_dns_upstream_entries(config):
+    if not config.get("internal_dns_enabled"):
+        return []
+    server_ip = str(config.get("internal_dns_server_ip") or "").strip()
+    if not valid_ipv4_ip(server_ip):
+        return []
+    zones = normalize_internal_dns_zones(config.get("internal_dns_zones", []))
+    reverse_zones = [
+        zone for zone in (reverse_zone_for_cidr(cidr) for cidr in normalize_internal_dns_reverse_cidrs(config.get("internal_dns_reverse_cidrs", [])))
+        if zone
+    ]
+    entries = []
+    seen = set()
+    for zone in zones + reverse_zones:
+        entry = f"[/{zone}/]{server_ip}"
+        if entry not in seen:
+            seen.add(entry)
+            entries.append(entry)
+    return entries
+
+
+def adguard_internal_dns_apply(config):
+    server_ip = str(config.get("internal_dns_server_ip") or "").strip()
+    appliance_ip = str(config.get("appliance_ip") or "").strip()
+    adguard_host = urlsplit(str(config.get("adguard_url") or "")).hostname or ""
+    entries = internal_dns_upstream_entries(config)
+    previously_applied = set(cfg_list(config.get("internal_dns_applied_upstreams", [])))
+    if config.get("internal_dns_enabled") and not valid_ipv4_ip(server_ip):
+        return False, "Internal DNS server IP is invalid."
+    loop_ips = {ip for ip in [appliance_ip, adguard_host] if valid_ipv4_ip(ip)}
+    if config.get("internal_dns_enabled") and server_ip in loop_ips:
+        return False, "Internal DNS server cannot be this NetSpecter appliance; that would create a DNS loop."
+    if config.get("internal_dns_enabled") and not entries:
+        return False, "Add at least one internal domain/zone or reverse subnet."
+
+    ok, data = ag_get("/dns_info")
+    if not ok or not isinstance(data, dict):
+        return False, f"Could not read AdGuard DNS settings: {data.get('error') if isinstance(data, dict) else data}"
+    upstreams = [str(item or "").strip() for item in data.get("upstream_dns", []) if str(item or "").strip()]
+    cleaned = [item for item in upstreams if item not in previously_applied]
+    payload = {"upstream_dns": cleaned + entries}
+    post_ok, response = ag_post("/dns_config", payload)
+    if not post_ok:
+        return False, f"Could not update AdGuard DNS settings: {response.get('error') if isinstance(response, dict) else response}"
+    config["internal_dns_applied_upstreams"] = entries
+    save_cfg(config)
+    if not config.get("internal_dns_enabled"):
+        return True, "Internal DNS forwarding disabled and previous NetSpecter entries were removed."
+    return True, f"Applied {len(entries)} internal DNS conditional forwarder(s)."
+
+
+def internal_dns_test(config):
+    server_ip = str(config.get("internal_dns_server_ip") or "").strip()
+    zones = normalize_internal_dns_zones(config.get("internal_dns_zones", []))
+    if not valid_ipv4_ip(server_ip):
+        return False, "Internal DNS server IP is invalid."
+    if not zones:
+        return False, "Add an internal domain/zone before testing."
+    zone = zones[0]
+    tests = [
+        ("SOA", zone),
+        ("SRV", f"_ldap._tcp.{zone}"),
+    ]
+    results = []
+    for qtype, name in tests:
+        try:
+            completed = subprocess.run(
+                ["dig", f"@{server_ip}", name, qtype, "+time=2", "+tries=1", "+short"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=4,
+                check=False,
+            )
+        except FileNotFoundError:
+            return False, "dig is not installed. Install dnsutils to use the internal DNS test."
+        except subprocess.TimeoutExpired:
+            return False, f"Timed out querying {name} {qtype} on {server_ip}."
+        output = completed.stdout.strip()
+        results.append(f"{name} {qtype}: {'ok' if output else 'no answer'}")
+    ok = any("ok" in item for item in results)
+    return ok, "; ".join(results)
+
+
 def shell(title, body, active="Dashboard"):
     """
     Main HTML wrapper used by all NetSpecter pages.
@@ -11135,7 +11279,7 @@ def settings():
     if inferred_appliance_ip and not str(c.get("appliance_ip") or "").strip():
         c["appliance_ip"] = inferred_appliance_ip
     section = request.values.get("section", "network").strip().lower()
-    valid_sections = {"network", "adguard", "unifi", "telegram", "telemetry", "speed", "applications", "lcd", "web"}
+    valid_sections = {"network", "server", "adguard", "unifi", "telegram", "telemetry", "speed", "applications", "lcd", "web"}
     if section not in valid_sections:
         section = "network"
     section_keys = {
@@ -11145,9 +11289,10 @@ def settings():
             "netbios_discovery_enabled", "netbios_discovery_interval_seconds", "netbios_discovery_batch_size",
             "mdns_discovery_enabled", "snmp_name_discovery_enabled", "ssdp_discovery_enabled", "vendor_fallback_names_enabled",
             "collect_interval_seconds", "raw_traffic_retention_hours", "traffic_retention_days", "dns_retention_days",
-            "raw_dns_retention_hours", "dns_forwarder_mode_enabled", "fast_page_mode",
+            "raw_dns_retention_hours", "fast_page_mode",
             "suricata_enabled", "suricata_log_retention_hours", "suricata_active_log_max_mb",
         ],
+        "server": ["internal_dns_enabled", "internal_dns_server_ip", "internal_dns_zones", "internal_dns_reverse_cidrs"],
         "adguard": ["adguard_url", "adguard_user", "adguard_pass", "adguard_querylog_interval_seconds"],
         "telemetry": [
             "snmp_enabled", "snmp_targets", "snmp_version", "snmp_port", "snmp_community", "snmp_poll_seconds",
@@ -11157,6 +11302,7 @@ def settings():
         "web": ["web_host", "web_port", "auth_enabled", "admin_user"],
     }
     hidden_settings = {"app_name", "tagline", "admin_password_hash"} | INTEGRATION_SETTINGS_KEYS
+    hidden_settings.add("internal_dns_applied_upstreams")
     editable_keys = [key for key in c.keys() if key not in hidden_settings]
 
     if request.method == "POST" and section == "lcd":
@@ -11281,6 +11427,26 @@ def settings():
         restart_collector_service()
         return local_redirect(f"/settings?section=applications&saved=1&collector=restarted&notice={quote(notice_text)}&notice_class={notice_class}")
 
+    if request.method == "POST" and section == "server":
+        c["internal_dns_enabled"] = request.form.get("internal_dns_enabled") == "1"
+        c["internal_dns_server_ip"] = str(request.form.get("internal_dns_server_ip", "") or "").strip()
+        c["internal_dns_zones"] = normalize_internal_dns_zones(request.form.get("internal_dns_zones", ""))
+        c["internal_dns_reverse_cidrs"] = normalize_internal_dns_reverse_cidrs(request.form.get("internal_dns_reverse_cidrs", ""))
+        c["app_name"] = "NetSpecter"
+        c["tagline"] = "Monitor | Filter | Protect"
+        action = request.form.get("action", "save")
+        notice_class = "ok"
+        if action == "test":
+            save_cfg(c)
+            ok, detail = internal_dns_test(c)
+            notice_class = "ok" if ok else "warning"
+            notice_text = f"Internal DNS test {'passed' if ok else 'failed'}: {detail}"
+        else:
+            ok, detail = adguard_internal_dns_apply(c)
+            notice_class = "ok" if ok else "warning"
+            notice_text = detail
+        return local_redirect(f"/settings?section=server&saved=1&notice={quote(notice_text)}&notice_class={notice_class}")
+
     if request.method == "POST" and section in section_keys:
         post_keys = set(section_keys[section])
         for key in editable_keys:
@@ -11354,7 +11520,6 @@ def settings():
         "traffic_retention_days": "Number of calendar days of measured traffic history to keep. The appliance UI supports up to 60 days.",
         "dns_retention_days": "Number of calendar days of imported DNS/application activity to keep. The appliance UI supports up to 60 days.",
         "raw_dns_retention_hours": "Hours of raw DNS resolution IP evidence to keep. This powers classification enrichment but is high volume.",
-        "dns_forwarder_mode_enabled": "Enable when clients use a local DNS server/domain controller as a forwarder to NetSpecter. Allows medium-confidence shared DNS attribution only when fresh destination-IP evidence is unambiguous.",
         "suricata_enabled": "Enable Suricata IDS ingestion. Disable temporarily if disk pressure is high; DNS and traffic monitoring will continue.",
         "suricata_log_retention_hours": "Hours of raw Suricata rotated logs to keep. Normalized IDS alerts remain in NetSpecter history.",
         "suricata_active_log_max_mb": "Maximum size for active Suricata eve.json and fast.log before NetSpecter truncates them after import.",
@@ -11418,9 +11583,14 @@ def settings():
         "web_port": "Web Port",
         "auth_enabled": "Login Enabled",
         "admin_user": "Admin Username",
+        "internal_dns_enabled": "Enable Internal / Server DNS",
+        "internal_dns_server_ip": "Internal DNS Server IP",
+        "internal_dns_zones": "Internal Domain / Zone(s)",
+        "internal_dns_reverse_cidrs": "Reverse DNS / Local Subnet(s)",
     }
     section_tabs = [
         ("network", "Network", "fa-network-wired"),
+        ("server", "Server", "fa-server"),
         ("adguard", "AdGuard", "fa-shield-halved"),
         ("unifi", "UniFi", "fa-wifi"),
         ("telegram", "Telegram", "fa-paper-plane"),
@@ -11553,6 +11723,53 @@ document.querySelectorAll('[data-copy-nearest]').forEach(function(button) {{
   }});
 }});
 </script>
+</div>
+"""
+        return shell("Settings", body, "Settings")
+
+    if section == "server":
+        notice_text = request.args.get("notice") or ("Server DNS settings saved." if request.args.get("saved") == "1" else "")
+        notice_class = "setup-warning" if request.args.get("notice_class") == "warning" else "setup-ok"
+        notice = f'<div class="{notice_class}">{h(notice_text)}</div>' if notice_text else ""
+        enabled_checked = " checked" if c.get("internal_dns_enabled") else ""
+        zones_text = ", ".join(normalize_internal_dns_zones(c.get("internal_dns_zones", [])))
+        cidrs_text = ", ".join(normalize_internal_dns_reverse_cidrs(c.get("internal_dns_reverse_cidrs", [])))
+        applied_entries = internal_dns_upstream_entries(c)
+        applied_rows = "".join(f"<li><code>{h(entry)}</code></li>" for entry in applied_entries) or "<li>No conditional forwarders configured.</li>"
+        body = f"""
+{topbar('Settings')}
+<div class="settings-page">
+  <p class="sub settings-intro">Configure network, service and login settings in one place.</p>
+  {settings_section_menu}
+  {notice}
+  <div class="grid settings-status-grid">
+    <div class="card"><div class="label">Design</div><span class="big blue">Client DNS</span><small>Clients should use NetSpecter / AdGuard directly.</small></div>
+    <div class="card"><div class="label">Internal Zones</div><span class="big green">{len(applied_entries)}</span><small>Conditional AdGuard upstream entries.</small></div>
+  </div>
+<div class="panel settings settings-card">
+  <h2>Internal / Server DNS</h2>
+  <p class="sub">Use this when Active Directory or another internal DNS server owns private zones. Clients keep NetSpecter as DNS; NetSpecter forwards only those internal zones to the server.</p>
+  <form method="post">
+    {csrf_input()}
+    <input type="hidden" name="section" value="server">
+    <label><input type="checkbox" name="internal_dns_enabled" value="1" style="width:auto"{enabled_checked}> Enable Internal / Server DNS</label>
+    <small>Do not point client devices at the Windows DNS server. Point clients at NetSpecter so per-client DNS logging remains accurate.</small>
+    <label>Internal DNS server IP</label>
+    <input name="internal_dns_server_ip" value="{h(c.get('internal_dns_server_ip') or '')}" placeholder="192.168.1.10">
+    <small>The Windows DC/DNS server should keep itself as DNS on its NIC. NetSpecter uses this IP only for conditional forwarding.</small>
+    <label>Internal domain / zone(s)</label>
+    <input name="internal_dns_zones" value="{h(zones_text)}" placeholder="wsl.local, corp.example.local">
+    <small>Comma-separated zones forwarded to the internal DNS server. Public domains continue through normal AdGuard upstreams.</small>
+    <label>Reverse DNS / local subnet(s)</label>
+    <input name="internal_dns_reverse_cidrs" value="{h(cidrs_text)}" placeholder="192.168.1.0/24">
+    <small>NetSpecter converts these to reverse zones such as 1.168.192.in-addr.arpa for local PTR lookups.</small>
+    <button name="action" value="save">Save and Apply to AdGuard</button>
+    <button name="action" value="test">Test Internal DNS</button>
+  </form>
+  <h3>Conditional upstream preview</h3>
+  <ul>{applied_rows}</ul>
+  <p class="sub">Loop protection blocks using the NetSpecter appliance IP as the internal DNS target. Avoid configuring the Windows DNS server to conditionally forward the same internal zones back to NetSpecter.</p>
+</div>
 </div>
 """
         return shell("Settings", body, "Settings")

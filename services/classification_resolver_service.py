@@ -6,7 +6,6 @@ from services.application_classification_service import classify_application, si
 
 
 DEFAULT_DNS_TTL_SECONDS = 900
-_SHARED_DNS_CACHE = {}
 
 
 @dataclass
@@ -23,7 +22,6 @@ class Flow:
     asn: str = ""
     provider: str = ""
     flow_id: str = ""
-    shared_dns_enabled: bool = False
 
 
 @dataclass
@@ -73,87 +71,6 @@ def match_dns_resolution(con, client_ip, remote_ip, timestamp):
     ).fetchone()
 
 
-def match_shared_dns_resolution(con, remote_ip, timestamp):
-    """Find a fresh LAN-wide DNS mapping only when it is unambiguous."""
-    remote_ip = str(remote_ip or "").strip()
-    if not remote_ip:
-        return None
-    now_epoch = _timestamp_epoch(timestamp)
-    cached = _SHARED_DNS_CACHE.get(remote_ip)
-    if cached and cached[0] >= now_epoch:
-        return cached[1]
-    if cached:
-        _SHARED_DNS_CACHE.pop(remote_ip, None)
-
-    rows = con.execute(
-        """
-        SELECT domain, expires_at, MAX(ts) AS last_seen
-        FROM dns_resolution_events
-        WHERE resolved_ip=?
-          AND ts <= ?
-          AND expires_at IS NOT NULL
-          AND expires_at >= ?
-        GROUP BY domain, expires_at
-        ORDER BY last_seen DESC
-        LIMIT 25
-        """,
-        (remote_ip, timestamp, timestamp),
-    ).fetchall()
-    if not rows:
-        return None
-
-    candidates = []
-    min_expiry = None
-    for row in rows:
-        domain = str(row["domain"] or "").strip(".").lower()
-        if not domain:
-            continue
-        classified = classify_application(domain=domain, persistent_cache=False)
-        category = classified.get("primary_category") or classified.get("category") or "Unknown"
-        app = classified.get("primary_app") or classified.get("application") or ""
-        family = _domain_family(domain)
-        expires_epoch = _timestamp_epoch(row["expires_at"])
-        if expires_epoch:
-            min_expiry = expires_epoch if min_expiry is None else min(min_expiry, expires_epoch)
-        candidates.append({
-            "domain": domain,
-            "category": category,
-            "app": app,
-            "family": family,
-            "last_seen": row["last_seen"],
-        })
-    if not candidates:
-        return None
-    if all(item["category"] == "Unknown" and not item["app"] for item in candidates):
-        return None
-
-    app_keys = {
-        (item["category"], item["app"].lower())
-        for item in candidates
-        if item["app"]
-    }
-    family_keys = {
-        (item["category"], item["family"])
-        for item in candidates
-        if item["family"]
-    }
-    if len(app_keys) == 1 or len(family_keys) == 1:
-        chosen = candidates[0]
-        result = Classification(
-            category=chosen["category"],
-            application=chosen["app"] or chosen["domain"],
-            evidence_source="shared_dns_resolution",
-            confidence="medium",
-        )
-        if min_expiry and min_expiry >= now_epoch:
-            _SHARED_DNS_CACHE[remote_ip] = (min_expiry, result)
-        return result
-
-    if min_expiry and min_expiry >= now_epoch:
-        _SHARED_DNS_CACHE[remote_ip] = (min_expiry, None)
-    return None
-
-
 def classify_flow(con, flow, emit_timing=False, metadata_first=False):
     started = time.monotonic()
     timings = {}
@@ -184,14 +101,6 @@ def classify_flow(con, flow, emit_timing=False, metadata_first=False):
         mark("domain_classification", step)
         _log_classification_timing("dns_resolution", flow, timings, started, emit_timing)
         return result
-
-    if getattr(flow, "shared_dns_enabled", False):
-        step = time.monotonic()
-        shared_dns_result = match_shared_dns_resolution(con, flow.remote_ip, flow.ts)
-        mark("shared_dns_lookup", step)
-        if shared_dns_result:
-            _log_classification_timing("shared_dns_resolution", flow, timings, started, emit_timing)
-            return shared_dns_result
 
     if flow.tls_sni:
         step = time.monotonic()
@@ -482,18 +391,3 @@ def _expires_at(observed_at, ttl):
         ts = datetime.now()
     return (ts + timedelta(seconds=int(ttl))).strftime("%Y-%m-%d %H:%M:%S")
 
-
-def _timestamp_epoch(value):
-    try:
-        return datetime.strptime(str(value or "")[:19], "%Y-%m-%d %H:%M:%S").timestamp()
-    except (TypeError, ValueError):
-        return 0
-
-
-def _domain_family(domain):
-    labels = [part for part in str(domain or "").strip(".").lower().split(".") if part]
-    if len(labels) < 2:
-        return ".".join(labels)
-    if len(labels) >= 3 and labels[-2] in {"co", "com", "net", "org", "ac", "gov"} and len(labels[-1]) == 2:
-        return ".".join(labels[-3:])
-    return ".".join(labels[-2:])
