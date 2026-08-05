@@ -1355,7 +1355,7 @@ def parse_nmblookup_status(output):
         if mac_match:
             mac = normalize_mac(mac_match.group(1))
             continue
-        match = re.match(r"^([^\s<]{1,63})\s+<00>\s+-\s+(?:(<GROUP>)\s+)?M\s+<ACTIVE>", text)
+        match = re.match(r"^([^\s<]{1,63})\s+<00>\s+-\s+(?:(<GROUP>)\s+)?[A-Z]\s+<ACTIVE>", text)
         if not match or match.group(2):
             continue
         candidate = match.group(1).strip()
@@ -1567,10 +1567,12 @@ def netbios_discovery_pass(config=None):
         return 0
 
     updates = []
+    probed = 0
     for row in rows:
         ip = str(row["ip"] or "").strip()
         override_name = str(row["override_name"] or "").strip()
         has_real_override = bool(override_name and override_name != ip)
+        probed += 1
         discovered_name, discovered_mac, source = discover_device_name(
             ip,
             row["mac"],
@@ -1585,6 +1587,8 @@ def netbios_discovery_pass(config=None):
         updates.append((ip, discovered_name, discovered_mac, vendor, dtype, has_real_override, source or "discovery"))
 
     if not updates:
+        if rows:
+            print(f"Device name discovery checked: candidates={len(rows)} probed={probed} updated=0")
         return 0
 
     try:
@@ -1623,7 +1627,7 @@ def netbios_discovery_pass(config=None):
                     )
                 applied += 1
         if applied:
-            print(f"Device name discovery updated: {applied}")
+            print(f"Device name discovery checked: candidates={len(rows)} probed={probed} updated={applied}")
         return applied
     except Exception as error:
         print(f"NetBIOS discovery database update failed: {error}")
