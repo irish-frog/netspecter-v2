@@ -2,6 +2,7 @@
 import html
 import ipaddress
 import os
+import re
 from datetime import datetime
 
 
@@ -14,6 +15,18 @@ def env_minutes(name, default):
 
 def h(value):
     return html.escape(str(value or ""), quote=True)
+
+
+def normalize_logged_in_user(username):
+    text = str(username or "").strip()
+    if not text:
+        return ""
+    text = text.replace("/", "\\")
+    if "\\" in text:
+        text = text.rsplit("\\", 1)[-1]
+    if "@" in text:
+        text = text.split("@", 1)[0]
+    return re.sub(r"[\x00-\x1f\x7f]", "", text).strip()[:80]
 
 
 def fmt_mb(value):

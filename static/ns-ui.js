@@ -323,6 +323,7 @@
     setText("deviceDrawerIp", ip);
     setText("deviceDrawerMac", data.mac);
     setText("deviceDrawerType", data.type);
+    setText("deviceDrawerUser", data.user && data.user !== "-" ? data.user : "-");
     setText("deviceDrawerVendor", data.vendor);
     setText("deviceDrawerStatus", data.status);
     setText("deviceDrawerFirst", data.first);
@@ -334,6 +335,8 @@
 
     const labelInput = document.getElementById("deviceLabelInput");
     if (labelInput) labelInput.value = data.name || ip;
+    const userInput = document.getElementById("deviceUserInput");
+    if (userInput) userInput.value = data.user && data.user !== "-" ? data.user : "";
 
     const onlineChip = document.getElementById("deviceDrawerOnline");
     if (onlineChip) {
@@ -362,6 +365,8 @@
 
     const labelForm = document.getElementById("deviceLabelForm");
     if (labelForm) labelForm.setAttribute("action", `/device/${encodedIp}/label`);
+    const userForm = document.getElementById("deviceUserForm");
+    if (userForm) userForm.setAttribute("action", `/device/${encodedIp}/user`);
     const ignoreForm = document.getElementById("deviceIgnoreForm");
     if (ignoreForm) ignoreForm.setAttribute("action", `/device/${encodedIp}/ignore`);
     const form = document.getElementById("deviceBlockForm");

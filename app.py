@@ -141,6 +141,7 @@ from netspecter_ui_helpers import (
     fmt_bytes_per_sec,
     fmt_mb,
     h,
+    normalize_logged_in_user,
     parse_local_dt,
     public_ipv4,
     valid_ipv4_ip,
@@ -929,6 +930,29 @@ def ensure_device_overrides_table():
     con.close()
 
 
+def ensure_device_identity_user_columns():
+    con = sqlite3.connect(DB_PATH)
+    con.execute("PRAGMA busy_timeout=30000")
+    for stmt in [
+        "ALTER TABLE device_identities ADD COLUMN logged_in_user TEXT",
+        "ALTER TABLE device_identities ADD COLUMN logged_in_user_source TEXT",
+        "ALTER TABLE device_identities ADD COLUMN logged_in_user_updated_at TEXT",
+        "ALTER TABLE device_identities ADD COLUMN user_probe_failed_at TEXT",
+        "ALTER TABLE device_identities ADD COLUMN user_probe_failure_count INTEGER DEFAULT 0",
+    ]:
+        try:
+            con.execute(stmt)
+        except sqlite3.OperationalError as error:
+            text = str(error).lower()
+            if "duplicate column name" in text:
+                continue
+            if "no such table" in text:
+                break
+            raise
+    con.commit()
+    con.close()
+
+
 def has_real_vendor(vendor):
     text = str(vendor or "").strip().lower()
     return bool(text and text not in ["unknown", "unknown vendor", "private / random mac", "n/a", "none", "-"])
@@ -941,6 +965,22 @@ def private_mac_address(mac):
         return len(text) >= 2 and bool(int(text[:2], 16) & 0x02)
     except ValueError:
         return False
+
+
+def normalize_mac_address(mac):
+    text = re.sub(r"[^0-9A-Fa-f]", "", str(mac or ""))
+    if len(text) != 12:
+        return ""
+    return ":".join(text.upper()[i:i + 2] for i in range(0, 12, 2))
+
+
+def device_identity_key_for(ip, mac):
+    normalized = normalize_mac_address(mac)
+    if normalized and not private_mac_address(normalized):
+        return f"mac:{normalized}"
+    if normalized:
+        return f"private-mac:{normalized}:{ip}"
+    return ""
 
 
 def auto_lock_known_vendors():
@@ -3912,6 +3952,7 @@ def devices():
     }
     sort_col = sort_map.get(sort, "d.last_seen")
     direction_sql = "ASC" if direction == "asc" else "DESC"
+    ensure_device_identity_user_columns()
 
     rows = query(f"""
         SELECT
@@ -3920,12 +3961,17 @@ def devices():
             COALESCE(o.vendor, d.vendor, 'Unknown Vendor') AS display_vendor,
             COALESCE(o.device_type, d.device_type, 'Unknown') AS display_type,
             COALESCE(o.status, d.status, 'Active') AS display_status,
+            COALESCE(di.logged_in_user, '') AS logged_in_user,
+            COALESCE(di.logged_in_user_source, '') AS logged_in_user_source,
+            COALESCE(di.logged_in_user_updated_at, '') AS logged_in_user_updated_at,
             COALESCE(o.ignored, 0) AS ignored,
             CASE WHEN o.ip IS NOT NULL THEN 1 ELSE 0 END AS manual_locked,
             o.updated_at AS override_updated_at
         FROM devices d
         LEFT JOIN device_overrides o
             ON o.ip = d.ip
+        LEFT JOIN device_identities di
+            ON di.current_ip = d.ip
         ORDER BY
             CASE WHEN {sort_col} IS NULL OR {sort_col}='' THEN 1 ELSE 0 END,
             {sort_col} {direction_sql},
@@ -3942,7 +3988,8 @@ def devices():
 
     type_options = [
         "Unknown", "Computer", "Mobile Device", "Apple Device", "Server",
-        "Network Device", "Printer", "Camera", "Media Device", "IoT", "Gateway"
+        "Network Infrastructure", "Network Device", "VoIP Phone", "Printer",
+        "Camera", "Media Device", "IoT", "Gateway"
     ]
     status_options = ["Active", "Known", "Watch", "DNS Blocked", "Blocked", "OK"]
 
@@ -3973,6 +4020,7 @@ def devices():
                 str(row["ip"] or "").lower(),
                 str(row["mac"] or "").lower(),
                 str(row["display_name"] or "").lower(),
+                str(row["logged_in_user"] or "").lower(),
             }
             or (lookup_mac and lookup_mac == row_mac(row))
         ), None)
@@ -3981,6 +4029,7 @@ def devices():
             if lookup_text
             and (
                 lookup_text in str(row["display_name"] or "").lower()
+                or lookup_text in str(row["logged_in_user"] or "").lower()
                 or lookup_text in str(row["mac"] or "").lower()
                 or lookup_text in str(row["ip"] or "").lower()
                 or (lookup_mac and lookup_mac in row_mac(row))
@@ -4015,6 +4064,7 @@ def devices():
         mac = h(r["mac"])
         vendor = h(r["display_vendor"] or "Unknown Vendor")
         dtype = h(r["display_type"] or "Unknown")
+        current_user = h(r["logged_in_user"] or "-")
         status = h(r["display_status"] or "Active")
         ignored = int(r["ignored"] or 0)
         last_seen = h(r["last_seen"])
@@ -4049,7 +4099,7 @@ def devices():
 
         selected_cls = " is-selected" if first_device and r["ip"] == first_device["ip"] else ""
         table += f"""
-<tr class="ns-device-row{selected_cls}" data-ip="{ip}" data-name="{name}" data-mac="{mac}" data-vendor="{vendor}" data-type="{dtype}" data-status="{status}" data-ignored="{ignored}" data-last="{last_seen}" data-first="{h(r['first_seen'] or '-')}" data-online="{'Online' if is_online else 'Offline'}" data-total="{live_total}" data-down="{live_rx}" data-up="{live_tx}">
+<tr class="ns-device-row{selected_cls}" data-ip="{ip}" data-name="{name}" data-user="{current_user}" data-mac="{mac}" data-vendor="{vendor}" data-type="{dtype}" data-status="{status}" data-ignored="{ignored}" data-last="{last_seen}" data-first="{h(r['first_seen'] or '-')}" data-online="{'Online' if is_online else 'Offline'}" data-total="{live_total}" data-down="{live_rx}" data-up="{live_tx}">
   <td>
     <span class="view-val"><span class="device-type-icon">{device_icon}</span><b>{name}</b> {attention_chip} {lock_badge} {private_badge} {lifecycle_badges}</span>
     <input class="edit-field" data-field="name" value="{name}" style="display:none; max-width:170px;">
@@ -4077,6 +4127,9 @@ def devices():
         fd_mac = h(first_device["mac"] or "-")
         fd_vendor = h(first_device["display_vendor"] or "Unknown Vendor")
         fd_type = h(first_device["display_type"] or "Unknown")
+        fd_user = h(first_device["logged_in_user"] or "-")
+        fd_user_source = h(first_device["logged_in_user_source"] or "")
+        fd_user_updated = h(first_device["logged_in_user_updated_at"] or "")
         fd_status = h(first_device["display_status"] or "Active")
         fd_ignored = int(first_device["ignored"] or 0)
         fd_last = h(first_device["last_seen"] or "-")
@@ -4125,6 +4178,7 @@ def devices():
       <span>IP Address</span><b id="deviceDrawerIp" class="mono">{fd_ip}</b>
       <span>MAC Address</span><b id="deviceDrawerMac" class="mono">{fd_mac}</b>
       <span>Type</span><b id="deviceDrawerType">{fd_type}</b>
+      <span>Current User</span><b id="deviceDrawerUser">{fd_user}</b>
       <span>Vendor</span><b id="deviceDrawerVendor">{fd_vendor}</b>
       <span>Status</span><b id="deviceDrawerStatus">{fd_status}</b>
       <span>First Seen</span><b id="deviceDrawerFirst">{fd_first}</b>
@@ -4138,6 +4192,15 @@ def devices():
         <button class="ns-compact-button" type="submit">Save Label</button>
       </div>
       <small class="ns-polish-subtle">Saved labels override collector names and are reused across dashboard, devices and security views.</small>
+    </form>
+    <form id="deviceUserForm" method="post" action="/device/{fd_ip}/user" class="ns-drawer-form">
+      {csrf_input()}
+      <label for="deviceUserInput">Current user</label>
+      <div class="ns-inline-form">
+        <input id="deviceUserInput" name="username" value="{fd_user if fd_user != '-' else ''}" maxlength="80" placeholder="gavin">
+        <button class="ns-compact-button" type="submit">Save User</button>
+      </div>
+      <small class="ns-polish-subtle">Domain prefixes are ignored, so WSL\\gavin is saved as gavin. Source: {fd_user_source or 'manual'} {('updated ' + fd_user_updated) if fd_user_updated else ''}</small>
     </form>
     <div id="deviceToolResult" class="ns-tool-result" role="status" aria-live="polite">Select DNS lookup from Tools to resolve this device.</div>
   </div>
@@ -4553,6 +4616,68 @@ def set_device_label(ip):
         label = label[:80]
     upsert_device_override(ip, name=label or ip)
     return jsonify({"ok": True, "ip": ip, "name": label or ip})
+
+
+@app.route("/device/<ip>/user", methods=["POST"])
+def set_device_current_user(ip):
+    if not valid_lan_ip(ip):
+        return jsonify({"ok": False, "error": "Invalid IP address."}), 400
+    username = normalize_logged_in_user(request.form.get("username", ""))
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ensure_device_identity_user_columns()
+    rows = query(
+        """
+        SELECT d.ip, d.name, d.mac, d.vendor, d.device_type, d.first_seen, d.last_seen
+        FROM devices d
+        WHERE d.ip=?
+        LIMIT 1
+        """,
+        (ip,),
+    )
+    device = rows[0] if rows else {}
+    mac = normalize_mac_address(device["mac"] if device and device["mac"] else "")
+    identity_key = device_identity_key_for(ip, mac) or f"ip:{ip}"
+    name = str((device["name"] if device and device["name"] else "") or ip).strip()
+    vendor = str((device["vendor"] if device and device["vendor"] else "") or "Unknown Vendor").strip()
+    dtype = str((device["device_type"] if device and device["device_type"] else "") or "Unknown").strip()
+    first_seen = str((device["first_seen"] if device and device["first_seen"] else "") or now)
+    last_seen = str((device["last_seen"] if device and device["last_seen"] else "") or now)
+    run_sql(
+        """
+        INSERT INTO device_identities
+            (identity_key, mac, hostname, display_name, current_ip, vendor, device_type,
+             source, confidence, private_mac, logged_in_user, logged_in_user_source,
+             logged_in_user_updated_at, first_seen, last_seen, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'manual', 100, ?, ?, 'manual', ?, ?, ?, ?)
+        ON CONFLICT(identity_key) DO UPDATE SET
+            current_ip=excluded.current_ip,
+            vendor=COALESCE(NULLIF(vendor, ''), excluded.vendor),
+            device_type=CASE
+                WHEN device_type IS NULL OR device_type='' OR device_type='Unknown'
+                THEN excluded.device_type ELSE device_type END,
+            logged_in_user=excluded.logged_in_user,
+            logged_in_user_source=excluded.logged_in_user_source,
+            logged_in_user_updated_at=excluded.logged_in_user_updated_at,
+            last_seen=MAX(last_seen, excluded.last_seen),
+            updated_at=excluded.updated_at
+        """,
+        (
+            identity_key,
+            mac,
+            name if name != ip else "",
+            name,
+            ip,
+            vendor,
+            dtype,
+            1 if mac and private_mac_address(mac) else 0,
+            username,
+            now if username else "",
+            first_seen,
+            last_seen,
+            now,
+        ),
+    )
+    return jsonify({"ok": True, "ip": ip, "username": username})
 
 
 @app.route("/device/<ip>/ignore", methods=["POST"])
