@@ -65,6 +65,29 @@ NetSpecter is installed inline as a transparent bridge. It requires two physical
 
 DNS analytics require clients to use AdGuard Home on the NetSpecter appliance as DNS. See the [Bridge Configuration](docs/NETWORK-BRIDGE.md) and [AdGuard DNS](docs/ADGUARD.md) guides for the full setup path.
 
+### DNS With A Windows Server Or Domain Controller
+
+For accurate per-device DNS and application reporting, client devices should receive the NetSpecter/AdGuard IP as their DNS server from DHCP. Do not point clients directly at the Windows DNS server if you want NetSpecter to attribute DNS activity to each client.
+
+Recommended layout:
+
+```text
+Client devices -> NetSpecter/AdGuard DNS
+NetSpecter/AdGuard -> Windows DNS only for internal AD zones and local reverse DNS
+NetSpecter/AdGuard -> normal public upstreams for internet DNS
+Windows DC NIC DNS -> itself
+```
+
+In NetSpecter, open **Settings -> Server** and enable **Internal / Server DNS**. Enter the Windows DNS server IP, your internal AD DNS zone such as `ad.example.local`, and the local reverse subnet such as `192.168.1.0/24`. Click **Save and Apply to AdGuard**, then use **Test Internal DNS** to check the internal zone and `_ldap._tcp` SRV lookup.
+
+On Windows DHCP, advertise NetSpecter as the DNS server for the client scope:
+
+```powershell
+Set-DhcpServerv4OptionValue -ScopeId <scope> -DnsServer <dns server ip>
+```
+
+Avoid DNS loops: the internal DNS server IP must not be the NetSpecter/AdGuard appliance IP. The Windows DNS server can keep NetSpecter as a public forwarder, but it should not forward the same internal AD zone back to NetSpecter.
+
 ## NetSpecter v2 Requirements
 
 Use these requirements for this repository. If another document says otherwise, check that it is not for the original NetSpecter project.

@@ -11758,7 +11758,7 @@ document.querySelectorAll('[data-copy-nearest]').forEach(function(button) {{
     <input name="internal_dns_server_ip" value="{h(c.get('internal_dns_server_ip') or '')}" placeholder="192.168.1.10">
     <small>The Windows DC/DNS server should keep itself as DNS on its NIC. NetSpecter uses this IP only for conditional forwarding.</small>
     <label>Internal domain / zone(s)</label>
-    <input name="internal_dns_zones" value="{h(zones_text)}" placeholder="wsl.local, corp.example.local">
+    <input name="internal_dns_zones" value="{h(zones_text)}" placeholder="ad.example.local, corp.example.local">
     <small>Comma-separated zones forwarded to the internal DNS server. Public domains continue through normal AdGuard upstreams.</small>
     <label>Reverse DNS / local subnet(s)</label>
     <input name="internal_dns_reverse_cidrs" value="{h(cidrs_text)}" placeholder="192.168.1.0/24">
