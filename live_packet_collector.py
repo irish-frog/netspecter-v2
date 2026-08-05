@@ -1127,7 +1127,7 @@ def vendor_from_mac(mac):
     return load_oui_vendors().get(key, "Unknown Vendor")
 
 
-def classify_device(vendor=""):
+def classify_device(vendor="", name=""):
     """
     Basic device classification based on MAC vendor.
 
@@ -1135,15 +1135,18 @@ def classify_device(vendor=""):
     Manual changes in the web UI are protected by device_overrides and will not
     be overwritten by the collector.
     """
-    text = str(vendor or "").lower()
+    text = f"{vendor or ''} {name or ''}".lower()
 
-    if any(x in text for x in ["ubiquiti", "unifi", "mikrotik", "tp-link", "netgear", "cisco"]):
-        return "Network Device"
+    if any(x in text for x in ["yealink", "grandstream", "polycom", "poly ", "fanvil", "snom", "voip"]):
+        return "VoIP Phone"
+
+    if any(x in text for x in ["ubiquiti", "unifi", "mikrotik", "tp-link", "netgear", "cisco", "aruba"]):
+        return "Network Infrastructure"
 
     if any(x in text for x in ["dahua", "ezviz", "hikvision", "camera"]):
         return "Camera"
 
-    if any(x in text for x in ["epson", "canon", "brother", "hewlett packard", "hp inc", "printer"]):
+    if any(x in text for x in ["ricoh", "epson", "canon", "brother", "hewlett packard", "hp inc", "printer"]):
         return "Printer"
 
     if any(x in text for x in ["apple"]):
@@ -1165,6 +1168,82 @@ def classify_device(vendor=""):
         return "IoT"
 
     return "Unknown"
+
+
+def windows_user_discovery_enabled(config=None):
+    return bool((config or cfg()).get("windows_user_discovery_enabled", False))
+
+
+def windows_user_refresh_seconds(config=None):
+    return positive_int((config or cfg()).get("windows_user_discovery_interval_seconds", 1800), 1800)
+
+
+def windows_user_probe_eligible(vendor="", device_type="", name="", mac="", online=True, config=None):
+    """Gate active logged-in-user discovery behind strong PC evidence and config."""
+    c = config or cfg()
+    if not windows_user_discovery_enabled(c) or not online:
+        return False
+    if identity_private_mac_excluded(mac, c):
+        return False
+    dtype = str(device_type or classify_device(vendor, name) or "").strip().lower()
+    non_windows_types = {
+        "voip phone",
+        "printer",
+        "camera",
+        "network infrastructure",
+        "network device",
+        "mobile device",
+        "apple device",
+        "media device",
+        "iot",
+    }
+    if dtype in non_windows_types:
+        return False
+    text = f"{vendor or ''} {name or ''}".lower()
+    if dtype in {"computer", "server", "windows pc"}:
+        return True
+    return any(x in text for x in ["windows", "desktop-", "laptop-", "dell", "lenovo", "intel", "realtek"])
+
+
+def logged_in_user_stale(row, now_ts=None, config=None):
+    user = str((row or {}).get("logged_in_user") or "").strip()
+    updated_at = str((row or {}).get("logged_in_user_updated_at") or "").strip()
+    if not user or not updated_at:
+        return True
+    try:
+        updated = datetime.strptime(updated_at, "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return True
+    now = now_ts or datetime.now()
+    return (now - updated).total_seconds() >= windows_user_refresh_seconds(config)
+
+
+def update_logged_in_user(con, identity_key, username, source="windows", ts=""):
+    """Store current user separately from hostname, avoiding unchanged rewrites."""
+    identity_key = str(identity_key or "").strip()
+    username = str(username or "").strip()
+    if not identity_key or not username:
+        return False
+    ts = ts or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    existing = con.execute(
+        """
+        SELECT logged_in_user, logged_in_user_source
+        FROM device_identities
+        WHERE identity_key=?
+        """,
+        (identity_key,),
+    ).fetchone()
+    if existing and str(existing["logged_in_user"] or "").strip() == username and str(existing["logged_in_user_source"] or "").strip() == source:
+        return False
+    con.execute(
+        """
+        UPDATE device_identities
+        SET logged_in_user=?, logged_in_user_source=?, logged_in_user_updated_at=?, updated_at=?
+        WHERE identity_key=?
+        """,
+        (username, source, ts, ts, identity_key),
+    )
+    return True
 
 
 def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unknown", ts="", source="traffic", config=None):
@@ -1189,7 +1268,7 @@ def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unkn
 
     existing = con.execute(
         """
-        SELECT display_name, current_ip, source, first_seen, private_mac
+        SELECT display_name, current_ip, last_ip, source, first_seen, private_mac
         FROM device_identities
         WHERE identity_key=?
         """,
@@ -1205,6 +1284,7 @@ def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unkn
     stored_name = observed_name if should_update_name else existing_name or observed_name
     first_seen = min(str(existing["first_seen"] or ts), ts) if existing else ts
     current_ip = str(existing["current_ip"] or "").strip() if existing else ""
+    ip_changed = bool(current_ip and current_ip != ip)
     last_ip = current_ip if current_ip and current_ip != ip else str(existing["last_ip"] or "").strip() if existing else ""
 
     con.execute(
@@ -1261,7 +1341,7 @@ def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unkn
         """,
         (identity_key, ip, normalized_mac, observed_name, source, ts, ts),
     )
-    if carry_name and not observed_name:
+    if carry_name and not observed_name and ip_changed:
         print(f"Device identity carried name {carry_name} from {last_ip or 'previous IP'} to {ip} via {normalized_mac}")
     return display_name
 

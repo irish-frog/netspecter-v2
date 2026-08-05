@@ -577,6 +577,11 @@ def init_db(force=False):
             source TEXT,
             confidence INTEGER DEFAULT 0,
             private_mac INTEGER DEFAULT 0,
+            logged_in_user TEXT,
+            logged_in_user_source TEXT,
+            logged_in_user_updated_at TEXT,
+            user_probe_failed_at TEXT,
+            user_probe_failure_count INTEGER DEFAULT 0,
             first_seen TEXT,
             last_seen TEXT,
             updated_at TEXT
@@ -597,6 +602,19 @@ def init_db(force=False):
     """)
     con.execute("CREATE INDEX IF NOT EXISTS idx_device_identities_mac ON device_identities(mac)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_device_identities_current_ip ON device_identities(current_ip)")
+    for stmt in [
+        "ALTER TABLE device_identities ADD COLUMN logged_in_user TEXT",
+        "ALTER TABLE device_identities ADD COLUMN logged_in_user_source TEXT",
+        "ALTER TABLE device_identities ADD COLUMN logged_in_user_updated_at TEXT",
+        "ALTER TABLE device_identities ADD COLUMN user_probe_failed_at TEXT",
+        "ALTER TABLE device_identities ADD COLUMN user_probe_failure_count INTEGER DEFAULT 0",
+    ]:
+        try:
+            con.execute(stmt)
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                raise
+    con.execute("CREATE INDEX IF NOT EXISTS idx_device_identities_user_refresh ON device_identities(logged_in_user_updated_at)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_device_ip_history_ip ON device_ip_history(ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_device_ip_history_seen ON device_ip_history(last_seen)")
     con.execute("""
