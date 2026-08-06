@@ -36,6 +36,26 @@ def memory_db():
     )
     con.execute(
         """
+        CREATE UNIQUE INDEX idx_dns_resolution_unique_event
+        ON dns_resolution_events(client_ip, domain, resolved_ip, ts, expires_at)
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE estimated_app_traffic (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT NOT NULL,
+            category TEXT NOT NULL,
+            downloaded_mb REAL DEFAULT 0,
+            uploaded_mb REAL DEFAULT 0,
+            total_mb REAL DEFAULT 0,
+            day TEXT,
+            ts TEXT
+        )
+        """
+    )
+    con.execute(
+        """
         CREATE TABLE classified_flow_facts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT NOT NULL,
@@ -163,6 +183,59 @@ def test_classify_flow_prefers_dns_resolution_before_sni(monkeypatch):
     assert result.application == "e7a37f2d.hvcdn.to"
     assert result.evidence_source == "dns_resolution"
     assert result.confidence == "high"
+
+
+def test_classify_flow_ignores_expired_or_other_client_dns_mapping(monkeypatch):
+    con = memory_db()
+    con.executemany(
+        """
+        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("2026-07-24 10:00:00", "192.168.99.50", "expired.example", "203.0.113.10", 60, "2026-07-24 10:01:00"),
+            ("2026-07-24 10:02:00", "192.168.99.51", "other-client.example", "203.0.113.10", 900, "2026-07-24 10:17:00"),
+        ],
+    )
+    monkeypatch.setattr(
+        "services.classification_resolver_service.classify_application",
+        lambda domain="", **_kwargs: {"primary_category": "Video Streaming", "category": "Video Streaming"} if domain else {"primary_category": "Unknown", "category": "Unknown"},
+    )
+
+    result = classify_flow(con, Flow(
+        ts="2026-07-24 10:05:00",
+        local_ip="192.168.99.50",
+        remote_ip="203.0.113.10",
+    ))
+
+    assert result is None
+
+
+def test_classify_flow_uses_most_recent_valid_dns_mapping(monkeypatch):
+    con = memory_db()
+    con.executemany(
+        """
+        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("2026-07-24 10:00:00", "192.168.99.50", "old.example", "203.0.113.10", 900, "2026-07-24 10:15:00"),
+            ("2026-07-24 10:03:00", "192.168.99.50", "new.example", "203.0.113.10", 900, "2026-07-24 10:18:00"),
+        ],
+    )
+    monkeypatch.setattr(
+        "services.classification_resolver_service.classify_application",
+        lambda domain="", **_kwargs: {"primary_category": "File Sharing & Storage", "category": "File Sharing & Storage"} if domain else {"primary_category": "Unknown", "category": "Unknown"},
+    )
+
+    result = classify_flow(con, Flow(
+        ts="2026-07-24 10:05:00",
+        local_ip="192.168.99.50",
+        remote_ip="203.0.113.10",
+    ))
+
+    assert result.application == "new.example"
+    assert result.evidence_source == "dns_resolution"
 
 
 def test_unknown_queue_merges_by_local_remote_port_protocol():
@@ -344,6 +417,65 @@ def test_operator_signature_helper_stores_rule_payload(monkeypatch):
     assert params[7] == '["Operator rule"]'
 
 
+def test_operator_signature_helper_invalidates_signature_cache(monkeypatch):
+    application_signature_service._SIGNATURE_CACHE.update({
+        "expires_at": 999999.0,
+        "category_key": "cached",
+        "signatures": [{"app": "Old"}],
+    })
+    monkeypatch.setattr(application_signature_service, "run_sql", lambda sql, params=(): None)
+
+    create_application_signature("Microsoft Updates", "Software Updates", destination_ips=["13.107.136.10"])
+
+    assert application_signature_service._SIGNATURE_CACHE["expires_at"] == 0.0
+    assert application_signature_service._SIGNATURE_CACHE["category_key"] == ""
+    assert application_signature_service._SIGNATURE_CACHE["signatures"] == []
+
+
+def test_reclassify_unknown_queue_uses_destination_ip_signature_after_unknown_dns(monkeypatch):
+    con = memory_db()
+    con.execute(
+        """
+        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES ('2026-08-06 13:20:00', '192.168.1.89', 'unknown.example', '13.107.136.10', 900, '2026-08-06 13:35:00')
+        """
+    )
+    upsert_unknown_traffic(con, Flow(
+        ts="2026-08-06 13:21:24",
+        local_ip="192.168.1.89",
+        remote_ip="13.107.136.10",
+        port=None,
+        protocol="tcp",
+        bytes=61761126,
+    ))
+
+    def fake_classify_application(domain="", destination_ip="", **_kwargs):
+        if domain:
+            return {"primary_category": "Unknown", "category": "Unknown"}
+        if destination_ip == "13.107.136.10":
+            return {
+                "primary_category": "Software Updates",
+                "category": "Software Updates",
+                "primary_app": "Microsoft Updates",
+            }
+        return {"primary_category": "Unknown", "category": "Unknown"}
+
+    monkeypatch.setattr(
+        "services.classification_resolver_service.classify_application",
+        fake_classify_application,
+    )
+
+    result = reclassify_unknown_queue(con)
+
+    assert result["classified"] == 1
+    queue_row = con.execute("SELECT status FROM unknown_traffic_queue").fetchone()
+    assert queue_row["status"] == "classified"
+    fact = con.execute("SELECT category, application, evidence_source FROM classified_flow_facts").fetchone()
+    assert fact["category"] == "Software Updates"
+    assert fact["application"] == "Microsoft Updates"
+    assert fact["evidence_source"] == "destination_signature"
+
+
 def test_read_nft_counters_parses_classification_counters(monkeypatch):
     payload = {
         "nftables": [
@@ -413,5 +545,102 @@ def test_write_destination_delta_records_fact_or_unknown(monkeypatch):
 
     fact = con.execute("SELECT * FROM classified_flow_facts").fetchone()
     remote = con.execute("SELECT * FROM remote_traffic_intervals").fetchone()
+    estimated = con.execute("SELECT * FROM estimated_app_traffic").fetchone()
     assert fact["application"] == "e7a37f2d.hvcdn.to"
     assert remote["category"] == "Video Streaming"
+    assert estimated["ip"] == "192.168.99.50"
+    assert estimated["category"] == "Video Streaming"
+    assert estimated["total_mb"] == 2048 / 1024 / 1024
+
+
+def test_write_destination_delta_does_not_double_count_existing_estimated_target(monkeypatch):
+    con = memory_db()
+    con.execute(
+        """
+        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES ('2026-07-24 10:00:00', '192.168.99.50', 'outlook.office365.com', '203.0.113.10', 900, '2026-07-24 10:15:00')
+        """
+    )
+    monkeypatch.setattr(
+        "services.classification_resolver_service.classify_application",
+        lambda domain="", **_kwargs: {"primary_category": "Email", "category": "Email"} if domain else {"primary_category": "Unknown", "category": "Unknown"},
+    )
+
+    live_packet_collector.write_destination_delta(
+        con,
+        "192.168.99.50",
+        "203.0.113.10",
+        {"rx": 1024, "tx": 1024},
+        "2026-07-24",
+        "2026-07-24 10:01:00",
+        default_category="Outlook",
+    )
+
+    assert con.execute("SELECT COUNT(*) FROM estimated_app_traffic").fetchone()[0] == 0
+
+
+def test_dns_resolution_event_upsert_avoids_identical_duplicates_and_refreshes_ttl():
+    con = memory_db()
+    rows = [
+        ("2026-07-24 10:00:00", "192.168.99.50", "outlook.office365.com", "203.0.113.10", 6, "2026-07-24 10:00:06", "adguard"),
+        ("2026-07-24 10:00:00", "192.168.99.50", "outlook.office365.com", "203.0.113.10", 8, "2026-07-24 10:00:06", "adguard"),
+        ("2026-07-24 10:00:02", "192.168.99.50", "outlook.office365.com", "203.0.113.10", 8, "2026-07-24 10:00:10", "adguard"),
+    ]
+    con.executemany(
+        """
+        INSERT INTO dns_resolution_events
+            (ts, client_ip, domain, resolved_ip, ttl, expires_at, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(client_ip, domain, resolved_ip, ts, expires_at) DO UPDATE SET
+            ttl=excluded.ttl,
+            source=excluded.source
+        """,
+        rows,
+    )
+
+    stored = con.execute(
+        """
+        SELECT ts, ttl, expires_at
+        FROM dns_resolution_events
+        ORDER BY ts
+        """
+    ).fetchall()
+    assert len(stored) == 2
+    assert stored[0]["ttl"] == 8
+    assert stored[1]["expires_at"] == "2026-07-24 10:00:10"
+
+
+def test_operator_signature_has_priority_over_dns(monkeypatch):
+    con = memory_db()
+    con.execute(
+        """
+        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES ('2026-07-24 10:00:00', '192.168.99.50', 'generic-cdn.example', '203.0.113.10', 900, '2026-07-24 10:15:00')
+        """
+    )
+
+    def fake_classify_application(domain="", destination_ip="", **_kwargs):
+        if destination_ip == "203.0.113.10":
+            return {
+                "primary_category": "Email",
+                "category": "Email",
+                "primary_app": "Operator Outlook Rule",
+                "confidence": 90,
+            }
+        if domain:
+            return {"primary_category": "Cloud Infrastructure", "category": "Cloud Infrastructure"}
+        return {"primary_category": "Unknown", "category": "Unknown"}
+
+    monkeypatch.setattr(
+        "services.classification_resolver_service.classify_application",
+        fake_classify_application,
+    )
+
+    result = classify_flow(con, Flow(
+        ts="2026-07-24 10:01:00",
+        local_ip="192.168.99.50",
+        remote_ip="203.0.113.10",
+    ))
+
+    assert result.application == "Operator Outlook Rule"
+    assert result.evidence_source == "operator_signature"

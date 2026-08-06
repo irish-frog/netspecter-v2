@@ -186,6 +186,10 @@ def init_dns_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_resolution_expires ON dns_resolution_events(expires_at)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_resolution_client_ip_remote_ts ON dns_resolution_events(client_ip, resolved_ip, ts)")
     con.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_dns_resolution_unique_event
+        ON dns_resolution_events(client_ip, domain, resolved_ip, ts, expires_at)
+    """)
+    con.execute("""
         CREATE TABLE IF NOT EXISTS dns_import_state (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             cleared_at TEXT

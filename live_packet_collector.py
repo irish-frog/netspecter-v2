@@ -3237,6 +3237,15 @@ def write_destination_delta(con, ip, destination, cur, day, now, default_categor
         (ip, destination, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
     )
     if classification:
+        if default_category == "Unknown":
+            con.execute(
+                """
+                INSERT INTO estimated_app_traffic
+                    (ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (ip, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
+            )
         write_started = time.monotonic()
         write_classified_flow_fact(con, flow, classification)
         elapsed = time.monotonic() - write_started
@@ -3721,6 +3730,9 @@ def import_adguard_querylog():
                     INSERT INTO dns_resolution_events
                         (ts, client_ip, domain, resolved_ip, ttl, expires_at, source)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(client_ip, domain, resolved_ip, ts, expires_at) DO UPDATE SET
+                        ttl=excluded.ttl,
+                        source=excluded.source
                     """,
                     dns_resolution_rows,
                 )
