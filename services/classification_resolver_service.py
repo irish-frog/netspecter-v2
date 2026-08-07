@@ -56,10 +56,11 @@ def dns_answer_rows(client_ip, domain, answers, observed_at, default_ttl=DEFAULT
 
 
 def match_dns_resolution(con, client_ip, remote_ip, timestamp):
+    table_name = dns_resolution_table_name(con)
     return con.execute(
-        """
+        f"""
         SELECT domain
-        FROM dns_resolution_events
+        FROM {table_name}
         WHERE client_ip=?
           AND resolved_ip=?
           AND ts <= ?
@@ -69,6 +70,24 @@ def match_dns_resolution(con, client_ip, remote_ip, timestamp):
         """,
         (str(client_ip or "").strip(), str(remote_ip or "").strip(), timestamp, timestamp),
     ).fetchone()
+
+
+def dns_resolution_table_name(con):
+    """Prefer the split DNS database table when it is attached."""
+    try:
+        attached = {str(row[1]) for row in con.execute("PRAGMA database_list").fetchall()}
+    except Exception:
+        attached = set()
+    if "dnsdb" in attached:
+        try:
+            row = con.execute(
+                "SELECT 1 FROM dnsdb.sqlite_master WHERE type='table' AND name='dns_resolution_events' LIMIT 1"
+            ).fetchone()
+            if row:
+                return "dnsdb.dns_resolution_events"
+        except Exception:
+            pass
+    return "dns_resolution_events"
 
 
 def classify_flow(con, flow, emit_timing=False, metadata_first=False):

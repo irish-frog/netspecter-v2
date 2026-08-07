@@ -57,6 +57,7 @@ from services.classification_resolver_service import (
     Flow,
     classify_flow,
     dns_answer_rows,
+    dns_resolution_table_name,
     upsert_unknown_traffic,
     write_classified_flow_fact,
 )
@@ -2983,10 +2984,11 @@ def active_classification_targets(config=None):
     con = None
     try:
         con = connect_db(timeout=1, busy_timeout_ms=500)
+        dns_table = dns_resolution_table_name(con)
         rows = con.execute(
-            """
+            f"""
             SELECT client_ip, resolved_ip, MAX(expires_at) AS expires_at, MAX(ts) AS last_seen
-            FROM dns_resolution_events
+            FROM {dns_table}
             WHERE expires_at >= datetime('now', 'localtime')
               AND client_ip IS NOT NULL AND client_ip != ''
               AND resolved_ip IS NOT NULL AND resolved_ip != ''

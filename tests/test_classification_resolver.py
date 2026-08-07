@@ -8,6 +8,7 @@ from services import report_context_service
 from services.classification_resolver_service import (
     Flow,
     classify_flow,
+    dns_resolution_table_name,
     dns_answer_rows,
     upsert_unknown_traffic,
     write_classified_flow_fact,
@@ -604,6 +605,78 @@ def test_active_classification_targets_reads_valid_adguard_client_destination(mo
     })
 
     assert ("192.168.1.44", "13.107.136.10") in targets
+
+
+def test_active_classification_targets_prefers_attached_dnsdb_over_empty_main(monkeypatch):
+    con = memory_db()
+    con.execute("ATTACH DATABASE ':memory:' AS dnsdb")
+    con.execute(
+        """
+        CREATE TABLE dnsdb.dns_resolution_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            client_ip TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            resolved_ip TEXT NOT NULL,
+            ttl INTEGER,
+            expires_at TEXT,
+            source TEXT DEFAULT 'adguard'
+        )
+        """
+    )
+    con.execute(
+        """
+        INSERT INTO dnsdb.dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES ('2026-08-07 10:00:00', '192.168.1.44', 'wslcoza-my.sharepoint.com', '13.107.136.10', 177, datetime('now', 'localtime', '+2 minutes'))
+        """
+    )
+    assert dns_resolution_table_name(con) == "dnsdb.dns_resolution_events"
+    monkeypatch.setattr(live_packet_collector, "connect_db", lambda *args, **_kwargs: con)
+
+    targets = live_packet_collector.active_classification_targets({
+        "lan_prefix": "192.168.1.",
+        "classification_nft_target_limit": 10,
+    })
+
+    assert ("192.168.1.44", "13.107.136.10") in targets
+
+
+def test_classify_flow_prefers_attached_dnsdb_resolution_over_empty_main(monkeypatch):
+    con = memory_db()
+    con.execute("ATTACH DATABASE ':memory:' AS dnsdb")
+    con.execute(
+        """
+        CREATE TABLE dnsdb.dns_resolution_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            client_ip TEXT NOT NULL,
+            domain TEXT NOT NULL,
+            resolved_ip TEXT NOT NULL,
+            ttl INTEGER,
+            expires_at TEXT,
+            source TEXT DEFAULT 'adguard'
+        )
+        """
+    )
+    con.execute(
+        """
+        INSERT INTO dnsdb.dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES ('2026-08-07 10:00:00', '192.168.1.44', 'wslcoza-my.sharepoint.com', '13.107.136.10', 177, '2026-08-07 10:02:57')
+        """
+    )
+    monkeypatch.setattr(
+        "services.classification_resolver_service.classify_application",
+        lambda domain="", **_kwargs: {"primary_category": "File Sharing & Storage", "category": "File Sharing & Storage"} if domain else {"primary_category": "Unknown", "category": "Unknown"},
+    )
+
+    result = classify_flow(con, Flow(
+        ts="2026-08-07 10:01:00",
+        local_ip="192.168.1.44",
+        remote_ip="13.107.136.10",
+    ))
+
+    assert result.application == "wslcoza-my.sharepoint.com"
+    assert result.evidence_source == "dns_resolution"
 
 
 def test_dns_classification_refresh_request_is_throttled():
