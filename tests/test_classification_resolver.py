@@ -553,6 +553,71 @@ def test_write_destination_delta_records_fact_or_unknown(monkeypatch):
     assert estimated["total_mb"] == 2048 / 1024 / 1024
 
 
+def test_adguard_sharepoint_destination_bytes_reach_estimated_app_traffic_once(monkeypatch):
+    con = memory_db()
+    con.execute(
+        """
+        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES ('2026-08-07 10:00:00', '192.168.1.44', 'wslcoza-my.sharepoint.com', '13.107.136.10', 177, '2026-08-07 10:02:57')
+        """
+    )
+    monkeypatch.setattr(
+        "services.classification_resolver_service.classify_application",
+        lambda domain="", **_kwargs: {"primary_category": "File Sharing & Storage", "category": "File Sharing & Storage"} if domain else {"primary_category": "Unknown", "category": "Unknown"},
+    )
+
+    live_packet_collector.write_destination_delta(
+        con,
+        "192.168.1.44",
+        "13.107.136.10",
+        {"rx": 4096, "tx": 1024},
+        "2026-08-07",
+        "2026-08-07 10:01:00",
+    )
+
+    estimated_rows = con.execute("SELECT * FROM estimated_app_traffic").fetchall()
+    fact = con.execute("SELECT * FROM classified_flow_facts").fetchone()
+    remote = con.execute("SELECT * FROM remote_traffic_intervals").fetchone()
+    assert len(estimated_rows) == 1
+    assert estimated_rows[0]["ip"] == "192.168.1.44"
+    assert estimated_rows[0]["category"] == "File Sharing & Storage"
+    assert estimated_rows[0]["total_mb"] == 5120 / 1024 / 1024
+    assert fact["application"] == "wslcoza-my.sharepoint.com"
+    assert fact["evidence_source"] == "dns_resolution"
+    assert remote["remote_ip"] == "13.107.136.10"
+    assert remote["category"] == "File Sharing & Storage"
+
+
+def test_active_classification_targets_reads_valid_adguard_client_destination(monkeypatch):
+    con = memory_db()
+    con.execute(
+        """
+        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES ('2026-08-07 10:00:00', '192.168.1.44', 'wslcoza-my.sharepoint.com', '13.107.136.10', 177, datetime('now', 'localtime', '+2 minutes'))
+        """
+    )
+    monkeypatch.setattr(live_packet_collector, "connect_db", lambda *args, **_kwargs: con)
+
+    targets = live_packet_collector.active_classification_targets({
+        "lan_prefix": "192.168.1.",
+        "classification_nft_target_limit": 10,
+    })
+
+    assert ("192.168.1.44", "13.107.136.10") in targets
+
+
+def test_dns_classification_refresh_request_is_throttled():
+    live_packet_collector.nft_config_refresh_event.clear()
+    live_packet_collector.last_dns_classification_refresh_request = 0.0
+
+    assert live_packet_collector.request_dns_classification_target_refresh("test", now_monotonic=100.0) is True
+    assert live_packet_collector.nft_config_refresh_event.is_set()
+    live_packet_collector.nft_config_refresh_event.clear()
+    assert live_packet_collector.request_dns_classification_target_refresh("test", now_monotonic=110.0) is False
+    assert not live_packet_collector.nft_config_refresh_event.is_set()
+    assert live_packet_collector.request_dns_classification_target_refresh("test", now_monotonic=131.0) is True
+
+
 def test_write_destination_delta_does_not_double_count_existing_estimated_target(monkeypatch):
     con = memory_db()
     con.execute(

@@ -290,6 +290,7 @@ db_contention_lock = threading.Lock()
 db_contention_until = 0.0
 db_contention_failures = 0
 nft_config_refresh_event = threading.Event()
+last_dns_classification_refresh_request = 0.0
 adguard_client_names = {}
 adguard_client_names_lock = threading.Lock()
 adguard_client_names_refreshed_at = 0.0
@@ -320,6 +321,7 @@ oui_vendor_cache = None
 ESTIMATED_APP_NFT_TARGET_LIMIT = 200
 CLASSIFICATION_NFT_TARGET_LIMIT = 300
 NFT_SIGNATURE_REFRESH_SECONDS = 900
+DNS_CLASSIFICATION_REFRESH_MIN_SECONDS = 30
 ADGUARD_CLIENT_REFRESH_SECONDS = 300
 UNIFI_CLIENT_REFRESH_SECONDS = 1800
 DB_CONTENTION_BACKOFF_BASE_SECONDS = 5
@@ -3020,6 +3022,18 @@ def active_classification_targets(config=None):
     return tuple(sorted(set(targets)))
 
 
+def request_dns_classification_target_refresh(reason="dns_resolution", now_monotonic=None):
+    """Ask the packet loop to refresh destination counters after DNS evidence changes."""
+    global last_dns_classification_refresh_request
+    now_monotonic = time.monotonic() if now_monotonic is None else float(now_monotonic)
+    if now_monotonic - last_dns_classification_refresh_request < DNS_CLASSIFICATION_REFRESH_MIN_SECONDS:
+        return False
+    last_dns_classification_refresh_request = now_monotonic
+    nft_config_refresh_event.set()
+    print(f"DNS classification target refresh requested: {reason}")
+    return True
+
+
 def nft_signature(config=None):
     c = config or cfg()
     banned_ips = []
@@ -3743,6 +3757,9 @@ def import_adguard_querylog():
             return
         print(f"DNS querylog batch insert failed: {e}")
         return
+
+    if dns_resolution_rows:
+        request_dns_classification_target_refresh(f"adguard_rows={len(dns_resolution_rows)}")
 
     if dns_rows:
         print(f"AdGuard querylog imported rows: {len(dns_rows)}; DNS answers: {len(dns_resolution_rows)}")

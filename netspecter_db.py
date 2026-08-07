@@ -96,6 +96,16 @@ def attach_history_dbs(con):
         con.execute("PRAGMA trafficdb.busy_timeout=30000")
 
 
+def _index_exists(con, table_name, index_name):
+    for row in con.execute(f"PRAGMA index_list('{table_name}')").fetchall():
+        try:
+            if row[1] == index_name:
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def connect_db():
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB_PATH, timeout=30)
@@ -185,14 +195,15 @@ def init_dns_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_resolution_domain ON dns_resolution_events(domain)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_resolution_expires ON dns_resolution_events(expires_at)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_resolution_client_ip_remote_ts ON dns_resolution_events(client_ip, resolved_ip, ts)")
-    con.execute("""
-        DELETE FROM dns_resolution_events
-        WHERE id NOT IN (
-            SELECT MIN(id)
-            FROM dns_resolution_events
-            GROUP BY client_ip, domain, resolved_ip, ts, expires_at
-        )
-    """)
+    if not _index_exists(con, "dns_resolution_events", "idx_dns_resolution_unique_event"):
+        con.execute("""
+            DELETE FROM dns_resolution_events
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM dns_resolution_events
+                GROUP BY client_ip, domain, resolved_ip, ts, expires_at
+            )
+        """)
     con.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_dns_resolution_unique_event
         ON dns_resolution_events(client_ip, domain, resolved_ip, ts, expires_at)
