@@ -370,6 +370,10 @@ def _is_classified(classification):
     return bool(classification and classification.category and classification.category != "Unknown")
 
 
+def _classified_category(classified):
+    return classified.get("primary_category") or classified.get("category") or "Unknown"
+
+
 def match_static_site_mapping(remote_ip, port=None):
     for mapping in site_application_mappings():
         if mapping.get("ip") == str(remote_ip or "").strip():
@@ -381,10 +385,11 @@ def match_asn_provider(remote_ip="", asn="", provider=""):
     if not (asn or provider):
         return None
     classified = classify_application(destination_ip=remote_ip, asn=asn, provider=provider, persistent_cache=False)
-    if classified.get("primary_category") == "Unknown":
+    category = _classified_category(classified)
+    if category == "Unknown":
         return None
     return Classification(
-        category=classified["primary_category"],
+        category=category,
         application=classified.get("primary_app") or provider or asn,
         evidence_source="asn_provider",
         confidence="medium",
@@ -396,10 +401,11 @@ def match_destination_signature(remote_ip="", protocol="", port=None):
     if not remote_ip:
         return None
     classified = classify_application(destination_ip=remote_ip, protocol=protocol, port=port, persistent_cache=False)
-    if classified.get("primary_category") == "Unknown":
+    category = _classified_category(classified)
+    if category == "Unknown":
         return None
     return Classification(
-        category=classified["primary_category"],
+        category=category,
         application=classified.get("primary_app") or remote_ip,
         evidence_source="destination_signature",
         confidence="high",
@@ -412,10 +418,11 @@ def match_operator_signature(remote_ip="", protocol="", port=None):
         return None
     classified = classify_application(destination_ip=remote_ip, protocol=protocol, port=port, persistent_cache=False)
     confidence = int(classified.get("confidence") or 0)
-    if classified.get("primary_category") == "Unknown" or confidence < 80 or not classified.get("primary_app"):
+    category = _classified_category(classified)
+    if category == "Unknown" or confidence < 80 or not classified.get("primary_app"):
         return None
     return Classification(
-        category=classified["primary_category"],
+        category=category,
         application=classified.get("primary_app") or remote_ip,
         evidence_source="operator_signature",
         confidence="high",

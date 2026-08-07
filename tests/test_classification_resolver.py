@@ -840,3 +840,20 @@ def test_operator_signature_has_priority_over_dns(monkeypatch):
 
     assert result.application == "Operator Outlook Rule"
     assert result.evidence_source == "operator_signature"
+
+
+def test_destination_signature_accepts_category_without_primary_category(monkeypatch):
+    monkeypatch.setattr(
+        "services.classification_resolver_service.classify_application",
+        lambda destination_ip="", **_kwargs: {"category": "Cloud Infrastructure", "primary_app": "Google"},
+    )
+
+    result = classify_flow(memory_db(), Flow(
+        ts="2026-08-07 11:45:00",
+        local_ip="192.168.1.10",
+        remote_ip="172.217.170.131",
+    ))
+
+    assert result.category == "Cloud Infrastructure"
+    assert result.application == "Google"
+    assert result.evidence_source == "destination_signature"
