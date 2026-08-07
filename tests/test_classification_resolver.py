@@ -589,6 +589,64 @@ def test_adguard_sharepoint_destination_bytes_reach_estimated_app_traffic_once(m
     assert remote["category"] == "File Sharing & Storage"
 
 
+def test_destination_delta_writes_attached_trafficdb_tables(monkeypatch):
+    con = memory_db()
+    con.execute("ATTACH DATABASE ':memory:' AS trafficdb")
+    con.execute(
+        """
+        CREATE TABLE trafficdb.estimated_app_traffic (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT NOT NULL,
+            category TEXT NOT NULL,
+            downloaded_mb REAL DEFAULT 0,
+            uploaded_mb REAL DEFAULT 0,
+            total_mb REAL DEFAULT 0,
+            day TEXT,
+            ts TEXT
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE trafficdb.remote_traffic_intervals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT NOT NULL,
+            remote_ip TEXT NOT NULL,
+            category TEXT NOT NULL,
+            downloaded_mb REAL DEFAULT 0,
+            uploaded_mb REAL DEFAULT 0,
+            total_mb REAL DEFAULT 0,
+            day TEXT,
+            ts TEXT
+        )
+        """
+    )
+    con.execute(
+        """
+        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES ('2026-08-07 10:00:00', '192.168.1.44', 'wslcoza-my.sharepoint.com', '13.107.136.10', 177, '2026-08-07 10:02:57')
+        """
+    )
+    monkeypatch.setattr(
+        "services.classification_resolver_service.classify_application",
+        lambda domain="", **_kwargs: {"primary_category": "File Sharing & Storage", "category": "File Sharing & Storage"} if domain else {"primary_category": "Unknown", "category": "Unknown"},
+    )
+
+    live_packet_collector.write_destination_delta(
+        con,
+        "192.168.1.44",
+        "13.107.136.10",
+        {"rx": 4096, "tx": 1024},
+        "2026-08-07",
+        "2026-08-07 10:01:00",
+    )
+
+    assert con.execute("SELECT COUNT(*) FROM estimated_app_traffic").fetchone()[0] == 0
+    assert con.execute("SELECT COUNT(*) FROM remote_traffic_intervals").fetchone()[0] == 0
+    assert con.execute("SELECT COUNT(*) FROM trafficdb.estimated_app_traffic").fetchone()[0] == 1
+    assert con.execute("SELECT COUNT(*) FROM trafficdb.remote_traffic_intervals").fetchone()[0] == 1
+
+
 def test_active_classification_targets_reads_valid_adguard_client_destination(monkeypatch):
     con = memory_db()
     con.execute(

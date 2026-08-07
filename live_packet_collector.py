@@ -3244,9 +3244,11 @@ def write_destination_delta(con, ip, destination, cur, day, now, default_categor
     )
     classification = classify_flow(con, flow, emit_timing=True)
     category = classification.category if classification else default_category
+    remote_table = traffic_table_name(con, "remote_traffic_intervals")
+    estimated_table = traffic_table_name(con, "estimated_app_traffic")
     con.execute(
-        """
-        INSERT INTO remote_traffic_intervals
+        f"""
+        INSERT INTO {remote_table}
             (ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
@@ -3255,8 +3257,8 @@ def write_destination_delta(con, ip, destination, cur, day, now, default_categor
     if classification:
         if default_category == "Unknown":
             con.execute(
-                """
-                INSERT INTO estimated_app_traffic
+                f"""
+                INSERT INTO {estimated_table}
                     (ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -3273,6 +3275,24 @@ def write_destination_delta(con, ip, destination, cur, day, now, default_categor
         elapsed = time.monotonic() - write_started
         if elapsed >= 0.05:
             print(f"destination_classify_write: unknown_queue={elapsed:.3f}s")
+
+
+def traffic_table_name(con, table_name):
+    try:
+        attached = {str(row[1]) for row in con.execute("PRAGMA database_list").fetchall()}
+    except Exception:
+        attached = set()
+    if "trafficdb" in attached:
+        try:
+            row = con.execute(
+                "SELECT 1 FROM trafficdb.sqlite_master WHERE type='table' AND name=? LIMIT 1",
+                (table_name,),
+            ).fetchone()
+            if row:
+                return f"trafficdb.{table_name}"
+        except Exception:
+            pass
+    return table_name
 
 
 def flush_loop():
