@@ -567,10 +567,23 @@ def init_db(force=False):
             status TEXT DEFAULT 'Active',
             first_seen TEXT,
             last_seen TEXT,
+            last_presence_seen TEXT,
+            last_presence_source TEXT,
+            last_presence_check TEXT,
             owner TEXT,
             location TEXT
         )
     """)
+    for stmt in [
+        "ALTER TABLE devices ADD COLUMN last_presence_seen TEXT",
+        "ALTER TABLE devices ADD COLUMN last_presence_source TEXT",
+        "ALTER TABLE devices ADD COLUMN last_presence_check TEXT",
+    ]:
+        try:
+            con.execute(stmt)
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                raise
     con.execute("""
         CREATE TABLE IF NOT EXISTS device_overrides (
             ip TEXT PRIMARY KEY,
@@ -825,6 +838,7 @@ def init_db(force=False):
     con.execute("CREATE INDEX IF NOT EXISTS idx_config_events_severity ON config_change_events(severity)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_config_events_status ON config_change_events(status)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_devices_last_seen ON devices(last_seen)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_devices_presence_seen ON devices(last_presence_seen)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS threat_indicators (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

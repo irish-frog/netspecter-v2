@@ -53,6 +53,7 @@ from netspecter_ids import (
 from netspecter_anomaly import prune_anomalies, run_anomaly_cycle
 from services.microsoft365_endpoints_service import cached_microsoft365_domain_mappings
 from services.application_classification_service import is_reverse_dns_lookup_domain
+from services.device_presence_service import mark_presence, mark_presence_many
 from services.classification_resolver_service import (
     Flow,
     classify_flow,
@@ -1619,6 +1620,7 @@ def netbios_discovery_pass(config=None):
                     """,
                     (ip, device_name, normalize_mac(mac), vendor, dtype, now, now),
                 )
+                mark_presence(con, ip, source, now, now)
                 if name:
                     con.execute(
                         """
@@ -3547,6 +3549,7 @@ def flush_loop():
                     traffic_step_timings["device_write"] += time.monotonic() - step_started
                 if traffic_rows:
                     step_started = time.monotonic()
+                    mark_presence_many(con, {row[0] for row in traffic_rows}, "traffic")
                     con.executemany(
                         """
                         INSERT INTO traffic_intervals

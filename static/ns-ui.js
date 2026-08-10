@@ -317,7 +317,7 @@
     const data = row.dataset;
     const ip = data.ip || "";
     const encodedIp = encodeURIComponent(ip);
-    const online = (data.online || "").toLowerCase() === "online";
+    const presence = (data.online || "unknown").toLowerCase();
     const ignored = data.ignored === "1";
     setText("deviceDrawerName", data.name || ip);
     setText("deviceDrawerIp", ip);
@@ -340,8 +340,8 @@
 
     const onlineChip = document.getElementById("deviceDrawerOnline");
     if (onlineChip) {
-      onlineChip.textContent = online ? "Online" : "Offline";
-      onlineChip.className = `ns-chip ns-chip--${online ? "online" : "offline"}`;
+      onlineChip.textContent = presence === "online" ? "Online" : presence === "offline" ? "Offline" : "Unknown";
+      onlineChip.className = `ns-chip ns-chip--${presence === "online" || presence === "offline" ? presence : "unknown"}`;
     }
 
     const ignoredChip = document.getElementById("deviceDrawerIgnored");

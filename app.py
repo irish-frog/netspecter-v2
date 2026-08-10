@@ -132,6 +132,7 @@ from services.application_classification_service import categories as applicatio
 from services.application_signature_service import create_application_signature
 from services.suricata_classification_service import reclassify_unknown_queue
 from services.microsoft365_endpoints_service import microsoft365_endpoint_cache_status, refresh_microsoft365_endpoints
+from services.device_presence_service import count_states, resolve_presence_states
 from netspecter_ui_helpers import (
     device_age_seconds,
     device_lifecycle_badges,
@@ -2924,6 +2925,20 @@ def lcd_current_speed(snapshot, live):
     return download_mbps, upload_mbps
 
 
+def device_presence_counts(max_checks=4):
+    try:
+        con = connect_db()
+        rows = con.execute("SELECT ip, last_presence_seen, last_presence_source, last_presence_check FROM devices").fetchall()
+        states = resolve_presence_states(con, rows, max_checks=max_checks)
+        con.close()
+        counts = count_states(states)
+        counts["known"] = len(rows)
+        return counts
+    except Exception as error:
+        print(f"Device presence count failed: {error}")
+        return {"known": None, "online": None, "offline": None, "unknown": None}
+
+
 @app.route("/api/lcd/summary")
 def api_lcd_summary():
     c = cfg()
@@ -2949,10 +2964,17 @@ def api_lcd_summary():
     total_today_gb = lcd_number(snapshot.get("total_traffic_today_gb"), 1)
 
     live_speeds = live_snapshot.speeds()
+    presence_counts = device_presence_counts(max_checks=2)
     device_summary = snapshot.get("devices") if isinstance(snapshot.get("devices"), dict) else {}
-    known_devices = lcd_number(device_summary.get("known"), 0)
-    online_devices = lcd_number(device_summary.get("online"), 0)
-    unknown_devices = lcd_number(device_summary.get("new_or_unknown"), 0)
+    known_devices = lcd_number(presence_counts.get("known"), 0)
+    online_devices = lcd_number(presence_counts.get("online"), 0)
+    unknown_devices = lcd_number(presence_counts.get("unknown"), 0)
+    if known_devices is None:
+        known_devices = lcd_number(device_summary.get("known"), 0)
+    if online_devices is None:
+        online_devices = lcd_number(device_summary.get("online"), 0)
+    if unknown_devices is None:
+        unknown_devices = lcd_number(device_summary.get("new_or_unknown"), 0)
     if known_devices is None and live_speeds:
         known_devices = len(live_speeds)
     if online_devices is None and live_speeds:
@@ -3184,8 +3206,17 @@ def api_dashboard_summary():
         """,
         (start_day,),
     )
+    presence_counts = device_presence_counts(max_checks=2)
     snapshot_devices = snapshot.get("devices") if isinstance(snapshot.get("devices"), dict) else {}
-    active = int(snapshot_devices.get("online") or 0) if snapshot_devices.get("online") is not None else int(active_rows[0]["active"] or 0) if active_rows else 0
+    active = (
+        int(presence_counts.get("online") or 0)
+        if presence_counts.get("online") is not None
+        else int(snapshot_devices.get("online") or 0)
+        if snapshot_devices.get("online") is not None
+        else int(active_rows[0]["active"] or 0)
+        if active_rows
+        else 0
+    )
     dns_total = int(dns_rows[0]["total"] or 0) if dns_rows else 0
     domains = domain_rows[0] if domain_rows else {}
     unique_domains = int(domains.get("unique_domains") or 0)
@@ -4188,20 +4219,23 @@ def devices():
         rows = sorted(rows, key=lambda row: 0 if requested_device_matches(row) else 1)
 
     live_speeds = live_all_host_speeds()
+    with connect_db() as presence_con:
+        presence_states = resolve_presence_states(presence_con, rows)
+    presence_counts = count_states(presence_states)
     table = ""
     total_devices = len(rows)
-    online_devices = 0
-    offline_devices = 0
+    online_devices = presence_counts["online"]
+    offline_devices = presence_counts["offline"]
+    unknown_devices = presence_counts["unknown"]
     new_devices = 0
     first_device = next((row for row in rows if requested_device_matches(row)), rows[0] if rows else None)
 
     for idx, r in enumerate(rows):
-        last_age = device_age_seconds(r["last_seen"])
         first_age = device_age_seconds(r["first_seen"])
-        is_online = last_age is not None and last_age <= 300
+        presence = presence_states.get(str(r["ip"]))
+        presence_state = presence.state if presence else "unknown"
+        presence_label = presence.label if presence else "Unknown"
         is_new = first_age is not None and first_age <= 86400
-        online_devices += 1 if is_online else 0
-        offline_devices += 0 if is_online else 1
         new_devices += 1 if is_new else 0
         ip = h(r["ip"])
         name = h(r["display_name"] or r["ip"])
@@ -4213,7 +4247,7 @@ def devices():
         ignored = int(r["ignored"] or 0)
         last_seen = h(r["last_seen"])
         device_icon = icon_for_device(r["display_type"] or "Unknown")
-        status_chip = "online" if is_online else "offline"
+        status_chip = presence_state
         attention_chip = '<span class="ns-chip ns-chip--warn">Ignored</span>' if ignored else ''
         lifecycle_badges = device_lifecycle_badges(r["first_seen"], r["last_seen"])
         lock_badge = (
@@ -4243,7 +4277,7 @@ def devices():
 
         selected_cls = " is-selected" if first_device and r["ip"] == first_device["ip"] else ""
         table += f"""
-<tr class="ns-device-row{selected_cls}" data-ip="{ip}" data-name="{name}" data-user="{current_user}" data-mac="{mac}" data-vendor="{vendor}" data-type="{dtype}" data-status="{status}" data-ignored="{ignored}" data-last="{last_seen}" data-first="{h(r['first_seen'] or '-')}" data-online="{'Online' if is_online else 'Offline'}" data-total="{live_total}" data-down="{live_rx}" data-up="{live_tx}">
+<tr class="ns-device-row{selected_cls}" data-ip="{ip}" data-name="{name}" data-user="{current_user}" data-mac="{mac}" data-vendor="{vendor}" data-type="{dtype}" data-status="{status}" data-ignored="{ignored}" data-last="{last_seen}" data-first="{h(r['first_seen'] or '-')}" data-online="{presence_label}" data-total="{live_total}" data-down="{live_rx}" data-up="{live_tx}">
   <td>
     <span class="view-val"><span class="device-type-icon">{device_icon}</span><b>{name}</b> {attention_chip} {lock_badge} {private_badge} {lifecycle_badges}</span>
     <input class="edit-field" data-field="name" value="{name}" style="display:none; max-width:170px;">
@@ -4255,7 +4289,7 @@ def devices():
     {type_select}
   </td>
   <td>
-    <span class="view-val ns-chip ns-chip--{status_chip}">{'Online' if is_online else 'Offline'}</span>
+    <span class="view-val ns-chip ns-chip--{status_chip}">{presence_label}</span>
     {status_select}
   </td>
   <td><b data-live-ip="{ip}" data-live-field="total">{live_total}</b><br><small>DL <span data-live-ip="{ip}" data-live-field="down">{live_rx}</span> | UL <span data-live-ip="{ip}" data-live-field="up">{live_tx}</span></small></td>
@@ -4283,7 +4317,9 @@ def devices():
         fd_total = fmt_bits_as_bytes(fd_speed.get("total_bps", 0))
         fd_down = fmt_bits_as_bytes(fd_speed.get("rx_bps", 0))
         fd_up = fmt_bits_as_bytes(fd_speed.get("tx_bps", 0))
-        fd_is_online = device_age_seconds(first_device["last_seen"]) is not None and device_age_seconds(first_device["last_seen"]) <= 300
+        fd_presence = presence_states.get(str(first_device["ip"]))
+        fd_presence_state = fd_presence.state if fd_presence else "unknown"
+        fd_presence_label = fd_presence.label if fd_presence else "Unknown"
         fd_alerts = query("SELECT COUNT(*) AS total FROM ids_events WHERE src_ip=? OR dest_ip=?", (first_device["ip"], first_device["ip"]))
         fd_dns = query("SELECT COUNT(*) AS total FROM dns_querylog WHERE client=?", (first_device["ip"],))
         fd_traffic = query(f"SELECT COALESCE(SUM(total_mb), 0) AS total FROM ({traffic_history_source_sql()}) WHERE ip=? AND day>=?", (first_device["ip"], range_start_day()))
@@ -4295,7 +4331,7 @@ def devices():
   <div class="ns-drawer-head">
     <div class="ns-drawer-title">
       <span class="device-type-icon">{fd_icon}</span>
-      <div><h2 id="deviceDrawerName">{fd_name}</h2><span id="deviceDrawerOnline" class="ns-chip ns-chip--{'online' if fd_is_online else 'offline'}">{'Online' if fd_is_online else 'Offline'}</span> <span id="deviceDrawerIgnored" class="ns-chip ns-chip--warn" style="{'display:inline-flex' if fd_ignored else 'display:none'}">Ignored</span></div>
+      <div><h2 id="deviceDrawerName">{fd_name}</h2><span id="deviceDrawerOnline" class="ns-chip ns-chip--{fd_presence_state}">{fd_presence_label}</span> <span id="deviceDrawerIgnored" class="ns-chip ns-chip--warn" style="{'display:inline-flex' if fd_ignored else 'display:none'}">Ignored</span></div>
     </div>
     <div class="ns-tools-wrap">
       <button class="ns-compact-button" type="button" data-tools-trigger>Tools <i class="fa-solid fa-chevron-down"></i></button>
@@ -4414,6 +4450,7 @@ def devices():
 <option value="">All Status</option>
 <option value="online">Online</option>
 <option value="offline">Offline</option>
+<option value="unknown">Unknown</option>
 <option value="Active">Active</option>
 <option value="DNS Blocked">DNS Blocked</option>
 <option value="Blocked">Blocked</option>
@@ -4478,6 +4515,7 @@ def devices():
       <div class="ns-polish-card"><span class="label">Total Devices</span><b class="big">{total_devices}</b></div>
       <div class="ns-polish-card"><span class="label">Online</span><b class="big green">{online_devices}</b></div>
       <div class="ns-polish-card"><span class="label">Offline</span><b class="big red">{offline_devices}</b></div>
+      <div class="ns-polish-card"><span class="label">Unknown</span><b class="big">{unknown_devices}</b></div>
       <div class="ns-polish-card"><span class="label">New (24h)</span><b class="big blue">{new_devices}</b></div>
     </div>
     <div class="ns-table-shell">
