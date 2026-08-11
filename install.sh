@@ -67,17 +67,50 @@ disable_suricata_safely() {
 }
 
 install_speedtest_optional() {
+  # Already installed?
   if command -v librespeed-cli >/dev/null 2>&1 || \
      dpkg-query -W -f='${Status}' librespeed-cli 2>/dev/null | grep -q "install ok installed"; then
+    echo "LibreSpeed CLI already installed."
     return 0
   fi
 
+  # Try apt first (available in Debian Trixie+ and Ubuntu 25.10+)
   echo "Installing LibreSpeed CLI for NetSpecter speed tests..."
-  if apt install -y librespeed-cli; then
+  if apt install -y librespeed-cli 2>/dev/null; then
+    echo "LibreSpeed CLI installed from apt."
     return 0
   fi
 
-  echo "WARNING: librespeed-cli is unavailable from this Debian repository. NetSpecter will install without speed test support until a LibreSpeed CLI path is configured." >&2
+  # Fallback: download prebuilt binary from GitHub releases
+  echo "librespeed-cli not available via apt; downloading prebuilt binary from GitHub..."
+  local ARCH
+  ARCH="$(uname -m)"
+  local BINARY_URL
+  case "$ARCH" in
+    x86_64|amd64)
+      BINARY_URL="https://github.com/librespeed/speedtest-cli/releases/latest/download/librespeed-cli-linux-amd64"
+      ;;
+    aarch64|arm64)
+      BINARY_URL="https://github.com/librespeed/speedtest-cli/releases/latest/download/librespeed-cli-linux-arm64"
+      ;;
+    armv7l|armhf)
+      BINARY_URL="https://github.com/librespeed/speedtest-cli/releases/latest/download/librespeed-cli-linux-armv7"
+      ;;
+    *)
+      echo "WARNING: Unsupported architecture ($ARCH) for LibreSpeed CLI binary download." >&2
+      echo "NetSpecter will install without speed test support. Set librespeed_cli_path in config.json manually." >&2
+      return 0
+      ;;
+  esac
+
+  local DEST="/usr/local/bin/librespeed-cli"
+  if curl -fsSL -o "$DEST" "$BINARY_URL" && chmod +x "$DEST"; then
+    echo "LibreSpeed CLI downloaded to $DEST"
+    return 0
+  fi
+
+  echo "WARNING: Failed to download LibreSpeed CLI binary. NetSpecter will install without speed test support." >&2
+  echo "You can manually install it later: curl -fsSL -o /usr/local/bin/librespeed-cli <URL> && chmod +x /usr/local/bin/librespeed-cli" >&2
   return 0
 }
 
