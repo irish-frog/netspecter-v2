@@ -117,7 +117,7 @@ netspecter -> YOUR-NETSPECTER-IP
 DNS cannot include a port, so you still open:
 
 ```text
-http://netspecter:5050
+https://netspecter:9443
 ```
 
 ## DNS Blocking Is A Soft Block

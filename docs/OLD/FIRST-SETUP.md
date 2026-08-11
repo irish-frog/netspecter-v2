@@ -9,7 +9,7 @@ This guide covers the first login and the minimum settings needed after installa
 Open:
 
 ```text
-http://YOUR-NETSPECTER-IP:5050
+https://YOUR-NETSPECTER-IP:9443
 ```
 
 If no admin exists, NetSpecter redirects to:

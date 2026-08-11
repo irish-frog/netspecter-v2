@@ -161,6 +161,7 @@ def create_application_signature(app, category, domains=None, asn=None, destinat
             now,
         ),
     )
+    _SIGNATURE_CACHE.update({"expires_at": 0.0, "category_key": "", "signatures": []})
 
 
 def _clean_list(values):

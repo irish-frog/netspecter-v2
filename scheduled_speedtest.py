@@ -100,20 +100,23 @@ def parse_metrics(output):
     )
 
 
-def librespeed_command(config):
-    path = str(config.get("librespeed_cli_path") or "librespeed-cli").strip() or "librespeed-cli"
-    resolved = path if Path(path).exists() else shutil.which(path)
-    # Fallback: try /usr/local/bin/librespeed-cli explicitly
+def speedtest_command(config):
+    """Find speedtest-cli (sivel) or fallback to librespeed-cli."""
+    # Try speedtest-cli first (sivel/speedtest-cli)
+    resolved = shutil.which("speedtest-cli")
     if not resolved:
-        fallback = Path("/usr/local/bin/librespeed-cli")
-        if fallback.exists():
-            resolved = str(fallback)
+        # Try librespeed-cli as fallback
+        resolved = shutil.which("librespeed-cli")
+    if not resolved:
+        # Try explicit paths
+        for fallback_path in ["/usr/local/bin/speedtest-cli", "/usr/local/bin/librespeed-cli"]:
+            if Path(fallback_path).exists():
+                resolved = fallback_path
+                break
     if not resolved:
         return None
+
     command = [resolved, "--json"]
-    server_id = str(config.get("librespeed_server_id") or "").strip()
-    if server_id:
-        command.extend(["--server", server_id])
     return command
 
 
@@ -125,9 +128,9 @@ def run_test():
     env.setdefault("LC_ALL", "C.UTF-8")
     success = False
     try:
-        command = librespeed_command(config)
+        command = speedtest_command(config)
         if command is None:
-            raise FileNotFoundError("librespeed-cli not found")
+            raise FileNotFoundError("speedtest-cli not found")
         timeout = max(15, min(300, int(config.get("librespeed_timeout_seconds", 120) or 120)))
         result = subprocess.run(
             command,
@@ -143,7 +146,7 @@ def run_test():
         if not success:
             output = f"Speed test failed (exit {result.returncode}).\n{output}"
     except Exception as error:
-        output = f"Scheduled LibreSpeed test could not run: {error}"
+        output = f"Scheduled speed test could not run: {error}"
     latency, download, upload = parse_metrics(output)
     return (output, latency, download, upload, success)
 

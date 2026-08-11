@@ -22,15 +22,24 @@ journalctl -u netspecter-monitor.service -n 80 --no-pager
 ## Ports
 
 ```bash
-ss -ltnup | grep -E ':53|:80|:5050|:18080|:8090'
+ss -ltnup | grep -E ':53|:80|:5050|:8090|:9443|:18080'
 ```
 
 Expected ports:
 
-- `5050` for NetSpecter web
-- `53` for DNS
-- `80` for AdGuard Home
-- `18080` for Gatus
+- `9443/tcp` for the NetSpecter HTTPS LAN entry point
+- `5050/tcp` for the NetSpecter internal web service, normally bound to `127.0.0.1`
+- `53/tcp` and `53/udp` for AdGuard Home DNS
+- `80/tcp` for AdGuard Home admin UI
+- `18080/tcp` for Gatus, normally bound to `127.0.0.1`
+- `8090/tcp` for Beszel, normally bound to `127.0.0.1`
+
+Optional or temporary ports:
+
+- `3000/tcp` for the first AdGuard Home setup wizard only
+- `161/udp` for outbound SNMP polling targets when SNMP telemetry is enabled
+- `1883/tcp` or `8883/tcp` for outbound MQTT broker connections when MQTT telemetry is enabled
+- `587/tcp` or the configured SMTP port for outbound email alerts
 
 ## DNS
 

@@ -12110,22 +12110,17 @@ def parse_speedtest_metrics(output):
 
 
 def speedtest_command():
-    c = cfg()
-    path = str(c.get("librespeed_cli_path") or "librespeed-cli").strip() or "librespeed-cli"
-    resolved = path if Path(path).exists() else shutil.which(path)
-    # Fallback: try /usr/local/bin/librespeed-cli explicitly
+    # Try speedtest-cli (sivel) first, then librespeed-cli fallback
+    resolved = shutil.which("speedtest-cli") or shutil.which("librespeed-cli")
     if not resolved:
-        fallback = Path("/usr/local/bin/librespeed-cli")
-        if fallback.exists():
-            resolved = str(fallback)
+        for p in ["/usr/local/bin/speedtest-cli", "/usr/local/bin/librespeed-cli"]:
+            if Path(p).exists():
+                resolved = p
+                break
     if not resolved:
         return None
     command = [resolved, "--json"]
-    server_id = str(c.get("librespeed_server_id") or "").strip()
-    if server_id:
-        command.extend(["--server", server_id])
     return command
-
 
 def run_and_store_speedtest(source="manual"):
     success = False
@@ -12137,7 +12132,7 @@ def run_and_store_speedtest(source="manual"):
         speedtest_env.setdefault("HOME", "/root")
         speedtest_env.setdefault("LANG", "C.UTF-8")
         speedtest_env.setdefault("LC_ALL", "C.UTF-8")
-        timeout = max(15, min(300, int(cfg().get("librespeed_timeout_seconds", 120) or 120)))
+        timeout = max(15, min(300, int(cfg().get("speedtest_timeout_seconds", 120) or 120)))
         result = subprocess.run(
             command,
             text=True,
@@ -12153,9 +12148,9 @@ def run_and_store_speedtest(source="manual"):
         else:
             success = True
     except FileNotFoundError:
-        output = "LibreSpeed CLI is not installed. Install librespeed-cli or set librespeed_cli_path in NetSpecter settings."
+        output = "speedtest-cli is not installed. Install speedtest-cli or set speedtest_cli_path in NetSpecter settings."
     except subprocess.TimeoutExpired:
-        output = "LibreSpeed test timed out."
+        output = "Speed test timed out."
     except Exception as error:
         print(f"Speed test failed: {error}")
         output = operation_failed_message("Speed test")
@@ -12252,12 +12247,12 @@ def speed_tests():
         c["scheduled_speedtest_frequency"] = frequency
         c["scheduled_speedtest_time"] = request.form.get("scheduled_speedtest_time", "12:00").strip() or "12:00"
         c["speedtest_provider"] = "librespeed"
-        c["librespeed_cli_path"] = request.form.get("librespeed_cli_path", "librespeed-cli").strip() or "librespeed-cli"
-        c["librespeed_server_id"] = request.form.get("librespeed_server_id", "").strip()
+        c["speedtest_cli_path"] = request.form.get("speedtest_cli_path", "speedtest-cli").strip() or "speedtest-cli"
+        c["speedtest_server_id"] = request.form.get("speedtest_server_id", "").strip()
         try:
-            c["librespeed_timeout_seconds"] = max(15, min(300, int(request.form.get("librespeed_timeout_seconds", "120") or 120)))
+            c["speedtest_timeout_seconds"] = max(15, min(300, int(request.form.get("speedtest_timeout_seconds", "120") or 120)))
         except Exception:
-            c["librespeed_timeout_seconds"] = 120
+            c["speedtest_timeout_seconds"] = 120
         save_cfg(c)
         return redirect("/speed-tests?saved=1#automaticTesting")
 
@@ -12318,9 +12313,9 @@ def speed_tests():
     schedule_checked = " checked" if schedule_count else ""
     frequency_disabled = " disabled" if not schedule_count else ""
     next_run = speedtest_next_run_label(frequency, schedule_time)
-    librespeed_cli_path = str(c.get("librespeed_cli_path") or "librespeed-cli").strip() or "librespeed-cli"
-    librespeed_server_id = str(c.get("librespeed_server_id") or "").strip()
-    librespeed_timeout = max(15, min(300, int(c.get("librespeed_timeout_seconds", 120) or 120)))
+    speedtest_cli_path = str(c.get("speedtest_cli_path") or "speedtest-cli").strip() or "speedtest-cli"
+    speedtest_server_id = str(c.get("speedtest_server_id") or "").strip()
+    librespeed_timeout = max(15, min(300, int(c.get("speedtest_timeout_seconds", 120) or 120)))
     if request.args.get("saved") == "1":
         notice = f'<div class="ns-inline-notice ns-inline-notice--ok">Speed-test schedule saved. {h(next_run) if next_run else "Automatic tests disabled."}</div>'
     show_full_history = request.args.get("history") == "full"
@@ -12453,14 +12448,14 @@ def speed_tests():
         <label>Preferred test time
           <input class="ns-input" type="time" name="scheduled_speedtest_time" value="{h(schedule_time)}"{frequency_disabled}>
         </label>
-        <label>LibreSpeed CLI path
-          <input class="ns-input" name="librespeed_cli_path" value="{h(librespeed_cli_path)}" placeholder="librespeed-cli">
+        <label>Speedtest CLI path
+          <input class="ns-input" name="speedtest_cli_path" value="{h(speedtest_cli_path)}" placeholder="speedtest-cli">
         </label>
-        <label>LibreSpeed server ID
-          <input class="ns-input" name="librespeed_server_id" value="{h(librespeed_server_id)}" placeholder="Optional">
+        <label>Speedtest server ID
+          <input class="ns-input" name="speedtest_server_id" value="{h(speedtest_server_id)}" placeholder="Optional">
         </label>
         <label>Timeout seconds
-          <input class="ns-input" type="number" name="librespeed_timeout_seconds" min="15" max="300" value="{h(librespeed_timeout)}">
+          <input class="ns-input" type="number" name="speedtest_timeout_seconds" min="15" max="300" value="{h(librespeed_timeout)}">
         </label>
         <div class="ns-speed-helper"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Scheduled tests use internet data.</div>
         <button class="ns-button" type="submit"><i class="fa-regular fa-floppy-disk" aria-hidden="true"></i> Save schedule</button>

@@ -64,17 +64,19 @@ bash ./install.sh
 
 The installer installs:
 
-- NetSpecter web UI on port `5050`
+- NetSpecter HTTPS entry point on port `9443`
+- NetSpecter internal web service on `127.0.0.1:5050`
 - NetSpecter collector service
 - AdGuard Home, unless already installed or skipped
 - Gatus monitor engine
+- Beszel appliance metrics hub, unless skipped
 - Suricata when Debian packages are available
 - Required tools such as `nftables`, `tcpdump`, `vnstat`, `dnsutils`, and Python runtime packages
 
 Open NetSpecter:
 
 ```text
-http://YOUR-NETSPECTER-IP:5050
+https://YOUR-NETSPECTER-IP:9443
 ```
 
 If no admin exists yet, NetSpecter redirects to:
@@ -88,15 +90,17 @@ If no admin exists yet, NetSpecter redirects to:
 After installation:
 
 - `netspecter-web.service` is available.
+- `netspecter-https.service` is available.
 - `netspecter-collector.service` is available.
-- The web UI answers on port `5050`.
+- The LAN web UI answers on HTTPS port `9443`.
+- The internal web service listens on localhost port `5050`.
 - Settings can be completed from the browser.
 
 ## Useful Checks
 
 ```bash
-systemctl status netspecter-web netspecter-collector --no-pager -l
-ss -ltnp | grep -E ':5050|:53|:80|:18080'
+systemctl status netspecter-web netspecter-https netspecter-collector --no-pager -l
+ss -ltnup | grep -E ':53|:80|:5050|:8090|:9443|:18080'
 ```
 
 ---
