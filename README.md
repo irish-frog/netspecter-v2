@@ -105,6 +105,24 @@ Use these requirements for this repository. If another document says otherwise, 
 
 The installer creates `/opt/netspecter`, `/etc/netspecter`, `/var/lib/netspecter`, and `/var/log/netspecter`. After installation, use `/opt/netspecter` for updates and service maintenance.
 
+## Speed Test Client
+
+NetSpecter supports manual and scheduled WAN speed tests with either the Ookla `speedtest` binary or Debian/Python `speedtest-cli`.
+
+On boxes that already have Ookla Speedtest installed, set **Speedtest CLI path** in the NetSpecter Internet page to:
+
+```text
+/usr/bin/speedtest
+```
+
+On boxes that use Debian/Python `speedtest-cli`, set the path to:
+
+```text
+speedtest-cli
+```
+
+Do not install Debian `speedtest-cli` over an existing Ookla `speedtest` package if apt reports a file conflict for `/usr/bin/speedtest`. Use the existing `/usr/bin/speedtest` path instead.
+
 ## Quick Install
 
 Fresh Debian 13 appliance, run as `root`:

@@ -42,6 +42,13 @@ NetSpecter records WAN quality signals:
 
 Scheduled speed tests consume internet data; keep disabled unless regular WAN testing is wanted.
 
+NetSpecter can run either:
+
+- Ookla Speedtest: `/usr/bin/speedtest`
+- Debian/Python speedtest-cli: `speedtest-cli`
+
+If a box already has Ookla Speedtest installed, keep it and set **Speedtest CLI path** to `/usr/bin/speedtest`. Do not force-install Debian `speedtest-cli` over it if apt reports a `/usr/bin/speedtest` file conflict.
+
 ## Checks
 
 ```bash
