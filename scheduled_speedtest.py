@@ -84,10 +84,16 @@ def parse_metrics(output):
             latency = latency.get("latency") or latency.get("value")
         download = payload.get("download")
         if isinstance(download, dict):
-            download = download.get("bandwidth") or download.get("bytes") or download.get("value")
+            if download.get("bandwidth") is not None:
+                download = float(download.get("bandwidth")) * 8 / 1000000.0
+            else:
+                download = download.get("bytes") or download.get("value")
         upload = payload.get("upload")
         if isinstance(upload, dict):
-            upload = upload.get("bandwidth") or upload.get("bytes") or upload.get("value")
+            if upload.get("bandwidth") is not None:
+                upload = float(upload.get("bandwidth")) * 8 / 1000000.0
+            else:
+                upload = upload.get("bytes") or upload.get("value")
         return (
             float(latency) if latency is not None else None,
             speed_value_mbps(download),
@@ -101,10 +107,10 @@ def parse_metrics(output):
 
 
 def speedtest_command(config):
-    """Find speedtest-cli (sivel) for scheduled speed tests."""
+    """Find speedtest-cli or Ookla speedtest for scheduled speed tests."""
     configured = str(config.get("speedtest_cli_path") or "").strip()
     candidates = [configured] if configured else []
-    candidates.extend(["speedtest-cli", "/usr/bin/speedtest-cli", "/usr/local/bin/speedtest-cli"])
+    candidates.extend(["speedtest-cli", "/usr/bin/speedtest-cli", "/usr/local/bin/speedtest-cli", "speedtest", "/usr/bin/speedtest"])
     resolved = ""
     for candidate in candidates:
         if not candidate:
@@ -117,6 +123,8 @@ def speedtest_command(config):
             break
     if not resolved:
         return None
+    if os.path.basename(resolved) == "speedtest":
+        return [resolved, "--accept-license", "--accept-gdpr", "--format=json"]
     return [resolved, "--json"]
 
 

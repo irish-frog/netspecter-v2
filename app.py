@@ -12089,10 +12089,16 @@ def parse_speedtest_metrics(output):
             latency = latency.get("latency") or latency.get("value")
         download = payload.get("download")
         if isinstance(download, dict):
-            download = download.get("bandwidth") or download.get("bytes") or download.get("value")
+            if download.get("bandwidth") is not None:
+                download = float(download.get("bandwidth")) * 8 / 1000000.0
+            else:
+                download = download.get("bytes") or download.get("value")
         upload = payload.get("upload")
         if isinstance(upload, dict):
-            upload = upload.get("bandwidth") or upload.get("bytes") or upload.get("value")
+            if upload.get("bandwidth") is not None:
+                upload = float(upload.get("bandwidth")) * 8 / 1000000.0
+            else:
+                upload = upload.get("bytes") or upload.get("value")
         return (
             float(latency) if latency is not None else None,
             _speed_value_mbps(download),
@@ -12112,7 +12118,7 @@ def parse_speedtest_metrics(output):
 def speedtest_command():
     configured = str(cfg().get("speedtest_cli_path") or "").strip()
     candidates = [configured] if configured else []
-    candidates.extend(["speedtest-cli", "/usr/bin/speedtest-cli", "/usr/local/bin/speedtest-cli"])
+    candidates.extend(["speedtest-cli", "/usr/bin/speedtest-cli", "/usr/local/bin/speedtest-cli", "speedtest", "/usr/bin/speedtest"])
     resolved = ""
     for candidate in candidates:
         if not candidate:
@@ -12125,6 +12131,8 @@ def speedtest_command():
             break
     if not resolved:
         return None
+    if os.path.basename(resolved) == "speedtest":
+        return [resolved, "--accept-license", "--accept-gdpr", "--format=json"]
     return [resolved, "--json"]
 
 def run_and_store_speedtest(source="manual"):
@@ -12153,7 +12161,7 @@ def run_and_store_speedtest(source="manual"):
         else:
             success = True
     except FileNotFoundError:
-        output = "speedtest-cli is not installed. Install speedtest-cli or set speedtest_cli_path in NetSpecter settings."
+        output = "No supported speed test client is installed. Install speedtest-cli or set speedtest_cli_path to /usr/bin/speedtest."
     except subprocess.TimeoutExpired:
         output = "Speed test timed out."
     except Exception as error:
