@@ -12113,6 +12113,11 @@ def speedtest_command():
     c = cfg()
     path = str(c.get("librespeed_cli_path") or "librespeed-cli").strip() or "librespeed-cli"
     resolved = path if Path(path).exists() else shutil.which(path)
+    # Fallback: try /usr/local/bin/librespeed-cli explicitly
+    if not resolved:
+        fallback = Path("/usr/local/bin/librespeed-cli")
+        if fallback.exists():
+            resolved = str(fallback)
     if not resolved:
         return None
     command = [resolved, "--json"]

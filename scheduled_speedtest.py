@@ -103,6 +103,11 @@ def parse_metrics(output):
 def librespeed_command(config):
     path = str(config.get("librespeed_cli_path") or "librespeed-cli").strip() or "librespeed-cli"
     resolved = path if Path(path).exists() else shutil.which(path)
+    # Fallback: try /usr/local/bin/librespeed-cli explicitly
+    if not resolved:
+        fallback = Path("/usr/local/bin/librespeed-cli")
+        if fallback.exists():
+            resolved = str(fallback)
     if not resolved:
         return None
     command = [resolved, "--json"]
