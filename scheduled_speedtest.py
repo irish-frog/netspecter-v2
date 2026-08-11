@@ -101,23 +101,23 @@ def parse_metrics(output):
 
 
 def speedtest_command(config):
-    """Find speedtest-cli (sivel) or fallback to librespeed-cli."""
-    # Try speedtest-cli first (sivel/speedtest-cli)
-    resolved = shutil.which("speedtest-cli")
-    if not resolved:
-        # Try librespeed-cli as fallback
-        resolved = shutil.which("librespeed-cli")
-    if not resolved:
-        # Try explicit paths
-        for fallback_path in ["/usr/local/bin/speedtest-cli", "/usr/local/bin/librespeed-cli"]:
-            if Path(fallback_path).exists():
-                resolved = fallback_path
-                break
+    """Find speedtest-cli (sivel) for scheduled speed tests."""
+    configured = str(config.get("speedtest_cli_path") or "").strip()
+    candidates = [configured] if configured else []
+    candidates.extend(["speedtest-cli", "/usr/bin/speedtest-cli", "/usr/local/bin/speedtest-cli"])
+    resolved = ""
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if "librespeed" in candidate.lower():
+            continue
+        path = shutil.which(candidate) if os.path.basename(candidate) == candidate else candidate
+        if path and Path(path).exists():
+            resolved = path
+            break
     if not resolved:
         return None
-
-    command = [resolved, "--json"]
-    return command
+    return [resolved, "--json"]
 
 
 def run_test():
@@ -131,7 +131,7 @@ def run_test():
         command = speedtest_command(config)
         if command is None:
             raise FileNotFoundError("speedtest-cli not found")
-        timeout = max(15, min(300, int(config.get("librespeed_timeout_seconds", 120) or 120)))
+        timeout = max(15, min(300, int(config.get("speedtest_timeout_seconds", 120) or 120)))
         result = subprocess.run(
             command,
             text=True,

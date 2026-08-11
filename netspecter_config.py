@@ -109,7 +109,7 @@ DEFAULT_CONFIG = {
     "windows_user_discovery_timeout_seconds": 3,
     "windows_user_discovery_max_concurrency": 2,
     "speedtest_provider": "speedtest-cli",
-    "speedtest_cli_path": "librespeed-cli",
+    "speedtest_cli_path": "speedtest-cli",
     "speedtest_server_id": "",
     "speedtest_timeout_seconds": 120,
     "scheduled_speedtests_per_day": 0,

@@ -67,13 +67,18 @@ disable_suricata_safely() {
 }
 
 install_speedtest_optional() {
-  # Already installed?
-  if command -v speedtest-cli >/dev/null 2>&1 || \n     "$INSTALL_DIR/venv/bin/pip" show speedtest-cli >/dev/null 2>&1; then
+  if command -v speedtest-cli >/dev/null 2>&1 || "$INSTALL_DIR/venv/bin/pip" show speedtest-cli >/dev/null 2>&1; then
     echo "speedtest-cli already installed."
     return 0
   fi
 
-  echo "Installing speedtest-cli (sivel) for NetSpecter speed tests..."
+  echo "Installing speedtest-cli for NetSpecter speed tests..."
+  if apt install -y speedtest-cli; then
+    echo "speedtest-cli installed via apt."
+    return 0
+  fi
+
+  echo "apt install failed; trying pip speedtest-cli..."
   if "$INSTALL_DIR/venv/bin/pip" install speedtest-cli; then
     echo "speedtest-cli installed via pip."
     return 0

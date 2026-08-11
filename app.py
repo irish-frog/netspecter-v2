@@ -12110,24 +12110,29 @@ def parse_speedtest_metrics(output):
 
 
 def speedtest_command():
-    # Try speedtest-cli (sivel) first, then librespeed-cli fallback
-    resolved = shutil.which("speedtest-cli") or shutil.which("librespeed-cli")
-    if not resolved:
-        for p in ["/usr/local/bin/speedtest-cli", "/usr/local/bin/librespeed-cli"]:
-            if Path(p).exists():
-                resolved = p
-                break
+    configured = str(cfg().get("speedtest_cli_path") or "").strip()
+    candidates = [configured] if configured else []
+    candidates.extend(["speedtest-cli", "/usr/bin/speedtest-cli", "/usr/local/bin/speedtest-cli"])
+    resolved = ""
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if "librespeed" in candidate.lower():
+            continue
+        path = shutil.which(candidate) if os.path.basename(candidate) == candidate else candidate
+        if path and Path(path).exists():
+            resolved = path
+            break
     if not resolved:
         return None
-    command = [resolved, "--json"]
-    return command
+    return [resolved, "--json"]
 
 def run_and_store_speedtest(source="manual"):
     success = False
     try:
         command = speedtest_command()
         if not command:
-            raise FileNotFoundError("No supported speed test client found")
+            raise FileNotFoundError("speedtest-cli not found")
         speedtest_env = os.environ.copy()
         speedtest_env.setdefault("HOME", "/root")
         speedtest_env.setdefault("LANG", "C.UTF-8")
@@ -12246,7 +12251,7 @@ def speed_tests():
         c["scheduled_speedtests_per_day"] = 1 if frequency in ("daily", "weekly") else 0
         c["scheduled_speedtest_frequency"] = frequency
         c["scheduled_speedtest_time"] = request.form.get("scheduled_speedtest_time", "12:00").strip() or "12:00"
-        c["speedtest_provider"] = "librespeed"
+        c["speedtest_provider"] = "speedtest-cli"
         c["speedtest_cli_path"] = request.form.get("speedtest_cli_path", "speedtest-cli").strip() or "speedtest-cli"
         c["speedtest_server_id"] = request.form.get("speedtest_server_id", "").strip()
         try:
@@ -12315,7 +12320,7 @@ def speed_tests():
     next_run = speedtest_next_run_label(frequency, schedule_time)
     speedtest_cli_path = str(c.get("speedtest_cli_path") or "speedtest-cli").strip() or "speedtest-cli"
     speedtest_server_id = str(c.get("speedtest_server_id") or "").strip()
-    librespeed_timeout = max(15, min(300, int(c.get("speedtest_timeout_seconds", 120) or 120)))
+    speedtest_timeout = max(15, min(300, int(c.get("speedtest_timeout_seconds", 120) or 120)))
     if request.args.get("saved") == "1":
         notice = f'<div class="ns-inline-notice ns-inline-notice--ok">Speed-test schedule saved. {h(next_run) if next_run else "Automatic tests disabled."}</div>'
     show_full_history = request.args.get("history") == "full"
@@ -12455,7 +12460,7 @@ def speed_tests():
           <input class="ns-input" name="speedtest_server_id" value="{h(speedtest_server_id)}" placeholder="Optional">
         </label>
         <label>Timeout seconds
-          <input class="ns-input" type="number" name="speedtest_timeout_seconds" min="15" max="300" value="{h(librespeed_timeout)}">
+          <input class="ns-input" type="number" name="speedtest_timeout_seconds" min="15" max="300" value="{h(speedtest_timeout)}">
         </label>
         <div class="ns-speed-helper"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Scheduled tests use internet data.</div>
         <button class="ns-button" type="submit"><i class="fa-regular fa-floppy-disk" aria-hidden="true"></i> Save schedule</button>
@@ -12700,4 +12705,3 @@ if __name__ == "__main__":
         host=str(c.get("web_host", "0.0.0.0") or "0.0.0.0"),
         port=int(c.get("web_port", 5050) or 5050),
     )
-
