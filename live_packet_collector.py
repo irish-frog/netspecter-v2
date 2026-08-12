@@ -324,6 +324,7 @@ ESTIMATED_APP_NFT_TARGET_LIMIT = 200
 CLASSIFICATION_NFT_TARGET_LIMIT = 300
 NFT_SIGNATURE_REFRESH_SECONDS = 900
 DNS_CLASSIFICATION_REFRESH_MIN_SECONDS = 30
+DNS_CLASSIFICATION_NFT_REBUILD_MIN_SECONDS = 120
 ADGUARD_CLIENT_REFRESH_SECONDS = 300
 UNIFI_CLIENT_REFRESH_SECONDS = 1800
 DB_CONTENTION_BACKOFF_BASE_SECONDS = 5
@@ -3312,6 +3313,7 @@ def flush_loop():
     init_db()
     last_flush_at = time.monotonic()
     last_signature_check = 0
+    last_forced_signature_rebuild = 0.0
 
     while True:
         cycle_started = time.monotonic()
@@ -3321,11 +3323,17 @@ def flush_loop():
             now_monotonic = time.monotonic()
             signature_refresh_seconds = NFT_SIGNATURE_REFRESH_SECONDS
             forced_refresh = nft_config_refresh_event.is_set()
+            if forced_refresh and nft_config_signature is not None:
+                elapsed_forced_rebuild = now_monotonic - last_forced_signature_rebuild
+                if elapsed_forced_rebuild < DNS_CLASSIFICATION_NFT_REBUILD_MIN_SECONDS:
+                    forced_refresh = False
             if forced_refresh or nft_config_signature is None or now_monotonic - last_signature_check >= signature_refresh_seconds:
                 signature = nft_signature(c)
                 last_signature_check = now_monotonic
                 if signature != nft_config_signature:
                     install_nft_counters(c)
+                    if nft_config_refresh_event.is_set():
+                        last_forced_signature_rebuild = now_monotonic
                 nft_config_refresh_event.clear()
 
             current_counters, current_estimated_counters, current_classification_counters = read_nft_counters()
