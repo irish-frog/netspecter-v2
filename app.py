@@ -12117,6 +12117,7 @@ def parse_speedtest_metrics(output):
 
 def speedtest_command():
     configured = str(cfg().get("speedtest_cli_path") or "").strip()
+    server_id = str(cfg().get("speedtest_server_id") or "").strip()
     candidates = [configured] if configured else []
     candidates.extend(["speedtest-cli", "/usr/bin/speedtest-cli", "/usr/local/bin/speedtest-cli", "speedtest", "/usr/bin/speedtest"])
     resolved = ""
@@ -12132,8 +12133,14 @@ def speedtest_command():
     if not resolved:
         return None
     if os.path.basename(resolved) == "speedtest":
-        return [resolved, "--accept-license", "--accept-gdpr", "--format=json"]
-    return [resolved, "--json"]
+        command = [resolved, "--accept-license", "--accept-gdpr", "--format=json"]
+        if server_id:
+            command.extend(["--server-id", server_id])
+        return command
+    command = [resolved, "--json"]
+    if server_id:
+        command.extend(["--server", server_id])
+    return command
 
 def run_and_store_speedtest(source="manual"):
     success = False

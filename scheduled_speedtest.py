@@ -5,7 +5,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import netspecter_live_snapshot as live_snapshot
@@ -28,6 +28,23 @@ def scheduled_runs():
         return min(5, max(0, int(config.get("scheduled_speedtests_per_day", 0) or 0)))
     except Exception:
         return 0
+
+
+def scheduled_frequency(config):
+    frequency = str(config.get("scheduled_speedtest_frequency") or "").strip().lower()
+    if frequency in {"daily", "weekly"}:
+        return frequency
+    return "daily" if int(config.get("scheduled_speedtests_per_day", 0) or 0) else "disabled"
+
+
+def scheduled_time(config):
+    text = str(config.get("scheduled_speedtest_time") or "12:00").strip()
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})", text)
+    if not match:
+        return (12, 0)
+    hour = max(0, min(23, int(match.group(1))))
+    minute = max(0, min(59, int(match.group(2))))
+    return (hour, minute)
 
 
 def load_config():
@@ -109,6 +126,7 @@ def parse_metrics(output):
 def speedtest_command(config):
     """Find speedtest-cli or Ookla speedtest for scheduled speed tests."""
     configured = str(config.get("speedtest_cli_path") or "").strip()
+    server_id = str(config.get("speedtest_server_id") or "").strip()
     candidates = [configured] if configured else []
     candidates.extend(["speedtest-cli", "/usr/bin/speedtest-cli", "/usr/local/bin/speedtest-cli", "speedtest", "/usr/bin/speedtest"])
     resolved = ""
@@ -124,8 +142,14 @@ def speedtest_command(config):
     if not resolved:
         return None
     if os.path.basename(resolved) == "speedtest":
-        return [resolved, "--accept-license", "--accept-gdpr", "--format=json"]
-    return [resolved, "--json"]
+        command = [resolved, "--accept-license", "--accept-gdpr", "--format=json"]
+        if server_id:
+            command.extend(["--server-id", server_id])
+        return command
+    command = [resolved, "--json"]
+    if server_id:
+        command.extend(["--server", server_id])
+    return command
 
 
 def run_test():
@@ -160,19 +184,40 @@ def run_test():
 
 
 def main():
-    runs = scheduled_runs()
+    config = load_config()
+    runs = min(5, max(0, int(config.get("scheduled_speedtests_per_day", 0) or 0)))
     if runs == 0:
         return
     now = datetime.now()
-    due = sum(1 for hour in SLOTS[runs] if now.hour >= hour)
+    frequency = scheduled_frequency(config)
+    if frequency == "disabled":
+        return
+    if runs == 1:
+        hour, minute = scheduled_time(config)
+        due = 1 if (now.hour, now.minute) >= (hour, minute) else 0
+    else:
+        due = sum(1 for hour in SLOTS[runs] if now.hour >= hour)
     if due == 0:
         return
     con = connect_db()
     try:
-        completed = con.execute(
-            "SELECT COUNT(*) FROM speed_tests WHERE source='scheduled' AND substr(ts, 1, 10)=?",
-            (now.strftime("%Y-%m-%d"),),
-        ).fetchone()[0]
+        if frequency == "weekly" and runs == 1:
+            week_start = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
+            next_week = (now - timedelta(days=now.weekday()) + timedelta(days=7)).strftime("%Y-%m-%d")
+            completed = con.execute(
+                """
+                SELECT COUNT(*) FROM speed_tests
+                WHERE source='scheduled'
+                  AND substr(ts, 1, 10) >= ?
+                  AND substr(ts, 1, 10) < ?
+                """,
+                (week_start, next_week),
+            ).fetchone()[0]
+        else:
+            completed = con.execute(
+                "SELECT COUNT(*) FROM speed_tests WHERE source='scheduled' AND substr(ts, 1, 10)=?",
+                (now.strftime("%Y-%m-%d"),),
+            ).fetchone()[0]
     finally:
         con.close()
     if completed >= due:
