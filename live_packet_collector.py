@@ -1346,7 +1346,7 @@ def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unkn
         (identity_key, ip, normalized_mac, observed_name, source, ts, ts),
     )
     if carry_name and not observed_name and ip_changed:
-        print(f"Device identity carried name {carry_name} from {last_ip or 'previous IP'} to {ip} via {normalized_mac}")
+        print("Device identity carried a saved display name after an IP change")
     return display_name
 
 
