@@ -1,6 +1,4 @@
 from netspecter_db import query
-from services.application_classification_service import classify_application
-
 AI_CATEGORY = "AI Services"
 
 
@@ -90,10 +88,10 @@ def ai_attribution_summary(filters, start_time, end_time, include_dns_correlatio
         tuple(app_params),
     )
     for row in app_rows:
-        classified = classify_application(row["category"])
-        if classified["category"] != AI_CATEGORY:
+        category = str(row["category"] or "").strip()
+        if category != AI_CATEGORY:
             continue
-        service = str(row["category"] or AI_CATEGORY)
+        service = category or AI_CATEGORY
         item = services.setdefault(service, _empty_service(service))
         item["service_detected"] = True
         item["devices"].add(str(row["ip"] or ""))
