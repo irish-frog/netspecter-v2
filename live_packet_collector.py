@@ -2978,7 +2978,12 @@ def active_classification_targets(config=None):
         requested_limit = CLASSIFICATION_NFT_TARGET_LIMIT
     if requested_limit <= 0:
         return tuple()
-    limit = min(max(1, requested_limit), 1000)
+    limit = min(max(1, requested_limit), 5000)
+    try:
+        lookback_hours = int(c.get("classification_dns_target_lookback_hours", 6) or 6)
+    except (TypeError, ValueError):
+        lookback_hours = 6
+    lookback_hours = min(max(1, lookback_hours), 24)
     try:
         network = lan_network(c)
     except ValueError:
@@ -2992,14 +2997,16 @@ def active_classification_targets(config=None):
             f"""
             SELECT client_ip, resolved_ip, MAX(expires_at) AS expires_at, MAX(ts) AS last_seen
             FROM {dns_table}
-            WHERE expires_at >= datetime('now', 'localtime')
+            WHERE ts >= datetime('now', 'localtime', ?)
               AND client_ip IS NOT NULL AND client_ip != ''
               AND resolved_ip IS NOT NULL AND resolved_ip != ''
             GROUP BY client_ip, resolved_ip
-            ORDER BY MAX(ts) DESC
+            ORDER BY
+              CASE WHEN MAX(expires_at) >= datetime('now', 'localtime') THEN 0 ELSE 1 END,
+              MAX(ts) DESC
             LIMIT ?
             """,
-            (limit,),
+            (f"-{lookback_hours} hours", limit),
         ).fetchall()
     except Exception as error:
         print(f"Classification target refresh failed: {error}")

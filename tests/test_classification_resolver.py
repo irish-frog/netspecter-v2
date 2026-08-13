@@ -665,6 +665,25 @@ def test_active_classification_targets_reads_valid_adguard_client_destination(mo
     assert ("192.168.1.44", "13.107.136.10") in targets
 
 
+def test_active_classification_targets_keeps_recent_expired_dns_destination(monkeypatch):
+    con = memory_db()
+    con.execute(
+        """
+        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES (datetime('now', 'localtime', '-2 hours'), '192.168.1.44', 'wslcoza-my.sharepoint.com', '13.107.136.10', 177, datetime('now', 'localtime', '-90 minutes'))
+        """
+    )
+    monkeypatch.setattr(live_packet_collector, "connect_db", lambda *args, **_kwargs: con)
+
+    targets = live_packet_collector.active_classification_targets({
+        "lan_prefix": "192.168.1.",
+        "classification_nft_target_limit": 10,
+        "classification_dns_target_lookback_hours": 6,
+    })
+
+    assert ("192.168.1.44", "13.107.136.10") in targets
+
+
 def test_active_classification_targets_prefers_attached_dnsdb_over_empty_main(monkeypatch):
     con = memory_db()
     con.execute("ATTACH DATABASE ':memory:' AS dnsdb")

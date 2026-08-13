@@ -59,6 +59,7 @@ DEFAULT_CONFIG = {
     "dns_retention_days": 60,
     "raw_dns_retention_hours": 2,
     "classification_nft_target_limit": 0,
+    "classification_dns_target_lookback_hours": 6,
     "internal_dns_enabled": False,
     "internal_dns_server_ip": "",
     "internal_dns_zones": [],
