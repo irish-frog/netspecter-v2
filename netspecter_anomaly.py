@@ -3,6 +3,7 @@ import math
 import shutil
 from datetime import datetime, timedelta
 
+from netspecter_config import security_features_enabled
 from netspecter_paths import DATA_ROOT
 
 
@@ -392,6 +393,8 @@ def detect_for_day(con, day, config):
 
 
 def run_anomaly_cycle(connect_db, config, target_day=None):
+    if not security_features_enabled(config) or not config.get("anomaly_enabled", False):
+        return 0
     started = datetime.now()
     batch_started = __import__("time").monotonic()
     batch_size = max(100, min(5000, int(config.get("anomaly_ids_batch_size", 1000) or 1000)))
@@ -531,6 +534,8 @@ def baseline_summary(connect_db):
 
 
 def prune_anomalies(connect_db, config):
+    if not security_features_enabled(config):
+        return
     days = int(config.get("anomaly_retention_days", 180) or 180)
     max_events = int(config.get("anomaly_max_events", 100000) or 100000)
     min_free_mb = int(config.get("anomaly_min_free_mb", 512) or 512)

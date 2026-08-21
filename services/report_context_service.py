@@ -1,6 +1,7 @@
 import re
 from datetime import datetime, timedelta
 
+from netspecter_config import cfg, security_features_enabled
 from netspecter_db import query
 from services.ai_attribution_service import ai_attribution_summary
 from services.application_classification_service import category_summary, unclassified_device_summary
@@ -201,7 +202,7 @@ def build_reporting_context_from_request(args):
         "unknown_traffic_trend": unknown_traffic_trend(filters, start_time, end_time),
         "unclassified_devices": unclassified_device_summary(start_time, end_time, filters, 8),
         "ai_summary": ai_attribution_summary(filters, start_time, end_time),
-        "findings": build_rule_based_findings(overview),
+        "findings": build_rule_based_findings(overview) if security_features_enabled(cfg()) else [],
         "selected_users": [],
         "report_type": report_type,
         "period": period if period in {"7d", "30d", "custom"} else "30d",
@@ -276,6 +277,7 @@ def reporting_overview(filters, start_time, end_time, traffic):
     )
     active_devices = _scalar(active_devices_sql, tuple(app_params if application else traffic_params))
 
+    security_enabled = security_features_enabled(cfg())
     return {
         "devices": len(device_ids) if device_ids else active_devices if application else _scalar("SELECT COUNT(*) FROM devices"),
         "active_devices": active_devices,
@@ -303,7 +305,7 @@ def reporting_overview(filters, start_time, end_time, traffic):
             """,
             tuple(destination_params),
         ),
-        "ids_alerts": _scalar("SELECT COUNT(*) FROM ids_events WHERE event_type='alert' AND ts BETWEEN ? AND ?", (start_time, end_time)),
+        "ids_alerts": _scalar("SELECT COUNT(*) FROM ids_events WHERE event_type='alert' AND ts BETWEEN ? AND ?", (start_time, end_time)) if security_enabled else 0,
         "open_incidents": _scalar(
             """
             SELECT COUNT(*)
@@ -311,7 +313,7 @@ def reporting_overview(filters, start_time, end_time, traffic):
             WHERE status NOT IN ('resolved', 'closed') AND last_event_ts BETWEEN ? AND ?
             """,
             (start_time, end_time),
-        ),
+        ) if security_enabled else 0,
         "internet_issues": _scalar(
             """
             SELECT COUNT(*)

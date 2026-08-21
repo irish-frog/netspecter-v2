@@ -77,6 +77,7 @@ from netspecter_internet_quality import collect_quality_summary, insert_quality_
 import netspecter_live_snapshot as live_snapshot
 from netspecter_threat_intel import correlate_once, prune_threat_intel, refresh_feeds
 from netspecter_config import save_cfg as save_shared_cfg
+from netspecter_config import security_features_enabled
 
 try:
     import requests
@@ -209,7 +210,8 @@ DEFAULT_CONFIG = {
     "smtp_from": "",
     "smtp_to": "",
     "ids_email_cooldown_minutes": 480,
-    "suricata_enabled": True,
+    "security_features_enabled": False,
+    "suricata_enabled": False,
     "ids_alert_retention_days": 30,
     "ids_ignored_retention_days": 3,
     "ids_low_priority_retention_days": 7,
@@ -235,7 +237,7 @@ DEFAULT_CONFIG = {
     "config_change_retention_days": 180,
     "config_change_max_events": 100000,
     "config_change_min_free_mb": 512,
-    "threat_intel_enabled": True,
+    "threat_intel_enabled": False,
     "threat_intel_sources": ["spamhaus_drop"],
     "threat_intel_refresh_hours": 24,
     "threat_intel_download_timeout_seconds": 15,
@@ -252,6 +254,7 @@ DEFAULT_CONFIG = {
     "incident_max_records": 50000,
     "incident_min_free_mb": 512,
     "anomaly_learning_only": True,
+    "anomaly_enabled": False,
     "anomaly_min_learning_days": 7,
     "anomaly_recommended_learning_days": 14,
     "anomaly_interval_seconds": 3600,
@@ -2450,7 +2453,7 @@ def process_ids_auto_blocks(config):
 
 def import_suricata_eve(config):
     global last_ids_default_reclassify, last_unknown_reclassify
-    if not (config or {}).get("suricata_enabled", True):
+    if not security_features_enabled(config) or not (config or {}).get("suricata_enabled", False):
         return
     try:
         contention_remaining = database_contention_remaining()
@@ -2495,6 +2498,8 @@ def import_suricata_eve(config):
 
 
 def run_suricata_classification_enrichment(batch_size=500):
+    if not security_features_enabled(cfg()):
+        return {"processed": 0, "classified": 0, "unknown": 0}
     try:
         if database_contention_remaining() > 0:
             return {"processed": 0, "classified": 0, "unknown": 0}
@@ -2609,13 +2614,15 @@ def prune_history(config=None):
         con.commit()
         con.execute("PRAGMA wal_checkpoint(PASSIVE)")
         con.close()
-        reclassify_default_ids_alerts(connect_db)
-        prune_ids_history(connect_db, c)
+        if security_features_enabled(c):
+            reclassify_default_ids_alerts(connect_db)
+            prune_ids_history(connect_db, c)
         prune_quality_history(connect_db, c)
         prune_config_changes(connect_db, c)
-        prune_threat_intel(connect_db, c)
-        prune_incidents(connect_db, c)
-        prune_anomalies(connect_db, c)
+        if security_features_enabled(c):
+            prune_threat_intel(connect_db, c)
+            prune_incidents(connect_db, c)
+            prune_anomalies(connect_db, c)
     except Exception as e:
         print(f"History retention cleanup failed: {e}")
 
@@ -3827,23 +3834,24 @@ def adguard_querylog_loop():
             if now_mono - last_netbios_discovery >= netbios_interval:
                 last_netbios_discovery = now_mono
                 run_timed_step("NetBIOS/device discovery", netbios_discovery_pass, c)
-            suricata_interval = positive_int(c.get("suricata_import_interval_seconds", 60), 60, 15)
-            if c.get("suricata_enabled", True) and now_mono - last_suricata_import >= suricata_interval:
-                last_suricata_import = now_mono
-                run_timed_step("Suricata/eve import", import_suricata_eve, c)
-            ids_interval = positive_int(c.get("ids_maintenance_interval_seconds", 60), 60, 15)
-            if now_mono - last_ids_maintenance >= ids_interval:
-                last_ids_maintenance = now_mono
-                auto_blocked = run_timed_step("IDS/auto block", process_ids_auto_blocks, c)
-                if auto_blocked:
-                    print(f"IDS automatic blocks applied: {auto_blocked}")
-                run_timed_step("IDS/email notify", process_ids_email_alerts, c)
-            incident_interval = positive_int(c.get("incident_build_interval_seconds", 120), 120, 30)
-            if now_mono - last_incident_build >= incident_interval:
-                last_incident_build = now_mono
-                created = run_timed_step("Incidents/build", build_incidents_once, connect_db, c)
-                if created:
-                    print(f"Security incidents created: {created}")
+            if security_features_enabled(c):
+                suricata_interval = positive_int(c.get("suricata_import_interval_seconds", 60), 60, 15)
+                if c.get("suricata_enabled", False) and now_mono - last_suricata_import >= suricata_interval:
+                    last_suricata_import = now_mono
+                    run_timed_step("Suricata/eve import", import_suricata_eve, c)
+                ids_interval = positive_int(c.get("ids_maintenance_interval_seconds", 60), 60, 15)
+                if now_mono - last_ids_maintenance >= ids_interval:
+                    last_ids_maintenance = now_mono
+                    auto_blocked = run_timed_step("IDS/auto block", process_ids_auto_blocks, c)
+                    if auto_blocked:
+                        print(f"IDS automatic blocks applied: {auto_blocked}")
+                    run_timed_step("IDS/email notify", process_ids_email_alerts, c)
+                incident_interval = positive_int(c.get("incident_build_interval_seconds", 120), 120, 30)
+                if now_mono - last_incident_build >= incident_interval:
+                    last_incident_build = now_mono
+                    created = run_timed_step("Incidents/build", build_incidents_once, connect_db, c)
+                    if created:
+                        print(f"Security incidents created: {created}")
             run_timed_step("AdGuard/querylog import", import_adguard_querylog)
         except Exception as e:
             print(f"AdGuard querylog loop failed: {e}")
@@ -3904,7 +3912,7 @@ def threat_intel_loop():
 
     while True:
         c = cfg()
-        if not c.get("threat_intel_enabled", True):
+        if not security_features_enabled(c) or not c.get("threat_intel_enabled", False):
             time.sleep(300)
             continue
         refresh_seconds = positive_int(c.get("threat_intel_refresh_hours", 24), 24, 1) * 3600
@@ -3929,6 +3937,9 @@ def anomaly_baseline_loop():
     while True:
         c = cfg()
         interval = positive_int(c.get("anomaly_interval_seconds", 3600), 3600, 300)
+        if not security_features_enabled(c) or not c.get("anomaly_enabled", False):
+            time.sleep(interval)
+            continue
         started = time.monotonic()
         try:
             created = run_timed_step("Anomaly baseline", run_anomaly_cycle, connect_db, c)
@@ -3987,13 +3998,15 @@ if __name__ == "__main__":
     config_monitor_thread = threading.Thread(target=config_change_monitor_loop, daemon=True)
     config_monitor_thread.start()
 
-    # Thread 7: Local threat-intelligence enrichment.
-    threat_thread = threading.Thread(target=threat_intel_loop, daemon=True)
-    threat_thread.start()
+    security_started = security_features_enabled(startup_config)
+    if security_started:
+        # Thread 7: Local threat-intelligence enrichment.
+        threat_thread = threading.Thread(target=threat_intel_loop, daemon=True)
+        threat_thread.start()
 
-    # Thread 8: Explainable network baseline and anomaly detection.
-    anomaly_thread = threading.Thread(target=anomaly_baseline_loop, daemon=True)
-    anomaly_thread.start()
+        # Thread 8: Explainable network baseline and anomaly detection.
+        anomaly_thread = threading.Thread(target=anomaly_baseline_loop, daemon=True)
+        anomaly_thread.start()
 
     # Thread 9: Slow retention cleanup, kept away from the live packet loop.
     retention_thread = threading.Thread(target=retention_cleanup_loop, daemon=True)
@@ -4008,8 +4021,7 @@ if __name__ == "__main__":
     print(f"MQTT telemetry collector {'started' if mqtt_started else 'disabled'}")
     print("Internet quality monitor started")
     print("Configuration change monitor started")
-    print("Threat intelligence enrichment started")
-    print("Anomaly baseline monitor started in learning-only mode")
+    print(f"Security features {'started' if security_started else 'disabled'}")
     print("Retention cleanup scheduler started")
     write_heartbeat("OK", "collector started")
 

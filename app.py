@@ -78,6 +78,7 @@ from netspecter_config import (
     appliance_ip_from_host,
     apply_appliance_ip_urls,
     save_cfg,
+    security_features_enabled,
 )
 from netspecter_anomaly import anomaly_detail, baseline_summary, list_anomalies, mark_expected
 from netspecter_db import cache_delete_prefix, cache_get, cache_set, cache_value, cached_query as db_cached_query, connect_db, init_db, load_json, query, run_sql, save_json
@@ -223,6 +224,19 @@ DEVICE_ICONS = {
 
 
 app.secret_key = get_or_create_session_secret()
+
+
+def security_disabled_response(title="Security Features"):
+    body = f"""
+{topbar(title)}
+<div class="settings-page">
+  <div class="panel settings settings-card">
+    <h2>{h(title)} Disabled</h2>
+    <p class="sub">IDS alerts, Suricata event ingestion, threat intelligence, anomaly detection, security reports, dashboard widgets, alert generation, notifications, and alert retention are disabled for this appliance. The legacy package and routes remain installed for service compatibility and upgrades.</p>
+  </div>
+</div>
+"""
+    return shell(title, body, "Dashboard")
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
@@ -2156,6 +2170,7 @@ def shell(title, body, active="Dashboard"):
     #   Display name, URL, supplied PNG icon name
     # ---------------------------------------------------
 
+    security_enabled = security_features_enabled(cfg())
     nav_groups = [
         (
             "Overview",
@@ -2184,7 +2199,7 @@ def shell(title, body, active="Dashboard"):
                 ("Reporting", "/reporting", "exports"),
             ],
         ),
-        (
+        *([(
             "Security",
             False,
             [
@@ -2193,7 +2208,7 @@ def shell(title, body, active="Dashboard"):
                 ("Incidents", "/incidents", "ids"),
                 ("Anomalies", "/anomalies", "monitor"),
             ],
-        ),
+        )] if security_enabled else []),
         (
             "Services",
             False,
@@ -2980,7 +2995,8 @@ def api_lcd_summary():
     if online_devices is None and live_speeds:
         online_devices = sum(1 for row in live_speeds.values() if float(row.get("total_bps") or 0) > 0)
 
-    active_alerts = lcd_number(snapshot.get("active_alerts"), 0)
+    security_enabled = security_features_enabled(c)
+    active_alerts = lcd_number(snapshot.get("active_alerts"), 0) if security_enabled else 0
     if active_alerts is None:
         active_alerts = 0
 
@@ -3014,11 +3030,12 @@ def api_lcd_summary():
     internet_status = lcd_internet_status(latest)
     services = {
         "dns": lcd_state(dns_ok, dns_warning),
-        "ids": lcd_state(None if active_alerts is None else active_alerts == 0),
         "collector": collector_service_state,
         "database": lcd_state(database_ok),
         "bridge": lcd_state(bridge_ok),
     }
+    if security_enabled:
+        services["ids"] = lcd_state(None if active_alerts is None else active_alerts == 0)
     any_down = services["database"] == "down" or internet_status == "offline"
     any_warning = any(value in {"warning", "unknown"} for value in services.values())
     if (active_alerts is not None and active_alerts > 0) or any_down or internet_status == "offline":
@@ -4320,10 +4337,14 @@ def devices():
         fd_presence = presence_states.get(str(first_device["ip"]))
         fd_presence_state = fd_presence.state if fd_presence else "unknown"
         fd_presence_label = fd_presence.label if fd_presence else "Unknown"
-        fd_alerts = query("SELECT COUNT(*) AS total FROM ids_events WHERE src_ip=? OR dest_ip=?", (first_device["ip"], first_device["ip"]))
+        security_enabled = security_features_enabled(cfg())
+        fd_alerts = query("SELECT COUNT(*) AS total FROM ids_events WHERE src_ip=? OR dest_ip=?", (first_device["ip"], first_device["ip"])) if security_enabled else []
         fd_dns = query("SELECT COUNT(*) AS total FROM dns_querylog WHERE client=?", (first_device["ip"],))
         fd_traffic = query(f"SELECT COALESCE(SUM(total_mb), 0) AS total FROM ({traffic_history_source_sql()}) WHERE ip=? AND day>=?", (first_device["ip"], range_start_day()))
         fd_alert_count = int(fd_alerts[0]["total"] or 0) if fd_alerts else 0
+        fd_security_menu = '<div class="divider">Security actions</div>' if security_enabled else ''
+        fd_history_security_option = '<option value="security">Security</option>' if security_enabled else ''
+        fd_alert_metric = f'<div class="ns-mini-metric"><span>IDS Alerts</span><b>{fd_alert_count}</b></div>' if security_enabled else ''
         fd_dns_count = int(fd_dns[0]["total"] or 0) if fd_dns else 0
         fd_traffic_total = fmt_mb(fd_traffic[0]["total"] if fd_traffic else 0)
         drawer = f"""
@@ -4342,7 +4363,7 @@ def devices():
         <button id="deviceToolHistory" type="button" data-drawer-tab-jump="history"><i class="fa-solid fa-clock-rotate-left"></i> Open device history</button>
         <button type="button" data-drawer-tab-jump="overview"><i class="fa-solid fa-tag"></i> Set device label</button>
         <button type="button" data-confirm-target="#confirmIgnoreDevice"><i class="fa-solid fa-eye-slash"></i> <span id="deviceIgnoreMenuText">{'Unignore device' if fd_ignored else 'Ignore device'}</span></button>
-        <div class="divider">Security actions</div>
+        {fd_security_menu}
         <button class="danger" type="button" data-confirm-target="#confirmBlockDevice"><i class="fa-solid fa-ban"></i> Block device IP</button>
       </div>
     </div>
@@ -4404,7 +4425,7 @@ def devices():
   </div>
   <div class="ns-drawer-panel" data-drawer-panel="history">
     <div class="ns-filter-bar ns-drawer-filter">
-      <select id="deviceHistoryType"><option value="">All events</option><option value="inventory">Inventory</option><option value="action">Actions</option><option value="security">Security</option></select>
+      <select id="deviceHistoryType"><option value="">All events</option><option value="inventory">Inventory</option><option value="action">Actions</option>{fd_history_security_option}</select>
       <select id="deviceHistoryRange"><option value="1d">Today</option><option value="7d">7 Days</option><option value="30d">30 Days</option></select>
       <button type="button" data-device-history-refresh>Apply</button>
     </div>
@@ -4412,7 +4433,7 @@ def devices():
   </div>
   <div class="ns-drawer-panel" data-drawer-panel="alerts">
     <div class="ns-mini-metrics">
-      <div class="ns-mini-metric"><span>IDS Alerts</span><b>{fd_alert_count}</b></div>
+      {fd_alert_metric}
       <div class="ns-mini-metric"><span>DNS Queries</span><b>{fd_dns_count:,}</b></div>
     </div>
     <div id="deviceAlertsList" class="ns-drawer-list"></div>
@@ -4552,6 +4573,7 @@ document.addEventListener("DOMContentLoaded", function() {{
 def device_drawer_payload(ip, period="1d", history_type=""):
     period_days = {"1d": 1, "7d": 7, "30d": 30}.get(period, 1)
     start_day = (datetime.now() - timedelta(days=period_days - 1)).strftime("%Y-%m-%d")
+    security_enabled = security_features_enabled(cfg())
     def optional_query(sql, params=()):
         try:
             return query(sql, params)
@@ -4602,7 +4624,7 @@ def device_drawer_payload(ip, period="1d", history_type=""):
         LIMIT 5
         """,
         (ip, ip),
-    )
+    ) if security_enabled else []
     anomalies = optional_query(
         """
         SELECT id, ts, rule, severity, status, reason
@@ -4612,7 +4634,7 @@ def device_drawer_payload(ip, period="1d", history_type=""):
         LIMIT 8
         """,
         (ip,),
-    )
+    ) if security_enabled else []
     incidents = optional_query(
         """
         SELECT id, severity, status, title, first_event_ts, last_event_ts
@@ -4622,7 +4644,7 @@ def device_drawer_payload(ip, period="1d", history_type=""):
         LIMIT 8
         """,
         (ip,),
-    )
+    ) if security_enabled else []
     inventory = optional_query("SELECT first_seen, last_seen FROM devices WHERE ip=? LIMIT 1", (ip,))
     overrides = optional_query("SELECT updated_at, ignored FROM device_overrides WHERE ip=? LIMIT 1", (ip,))
     history = []
@@ -7128,6 +7150,8 @@ def send_smtp_message(config, subject, body):
 
 @app.route("/ids-alerts", methods=["GET", "POST"])
 def ids_alerts():
+    if not security_features_enabled(cfg()):
+        return security_disabled_response("IDS Alerts")
     c = cfg()
     action_notice = ""
     action_ok = True
@@ -7955,6 +7979,8 @@ def ids_alerts():
 
 @app.route("/ids-alerts/<int:event_id>")
 def ids_alert_detail(event_id):
+    if not security_features_enabled(cfg()):
+        return security_disabled_response("IDS Event Detail")
     rows = query("SELECT * FROM ids_events WHERE id=?", (event_id,))
     if not rows:
         return shell("IDS Event", f"{topbar('IDS Event')}<div class=\"panel\"><h2>Event Not Found</h2><p class=\"sub\">This IDS event is no longer available.</p><a class=\"btn\" href=\"/ids-alerts\">Back to IDS Alerts</a></div>", "IDS Alerts"), 404
@@ -8034,6 +8060,8 @@ def ids_alert_detail(event_id):
 
 @app.route("/incidents")
 def incidents_page():
+    if not security_features_enabled(cfg()):
+        return security_disabled_response("Security Incidents")
     rows = ""
     for incident in list_incidents(connect_db, 200):
         incident_id, severity, device_ip, device_mac, device_name, first_ts, last_ts, status, assigned_to, title = incident
@@ -8067,6 +8095,8 @@ def incidents_page():
 
 @app.route("/incidents/<int:incident_id>", methods=["GET", "POST"])
 def incident_investigation(incident_id):
+    if not security_features_enabled(cfg()):
+        return security_disabled_response("Incident Investigation")
     if request.method == "POST":
         action = request.form.get("action", "")
         if action == "update":
@@ -8181,6 +8211,8 @@ def incident_investigation(incident_id):
 
 @app.route("/anomalies")
 def anomalies_page():
+    if not security_features_enabled(cfg()):
+        return security_disabled_response("Anomalies")
     summary = baseline_summary(connect_db)
     c = cfg()
     min_days = int(c.get("anomaly_min_learning_days", 7) or 7)
@@ -8226,6 +8258,8 @@ def anomalies_page():
 
 @app.route("/anomalies/<int:event_id>", methods=["GET", "POST"])
 def anomaly_event_detail(event_id):
+    if not security_features_enabled(cfg()):
+        return security_disabled_response("Anomaly Detail")
     if request.method == "POST":
         action = request.form.get("action", "")
         if action in ("expected", "learn"):

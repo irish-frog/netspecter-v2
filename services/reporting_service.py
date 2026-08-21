@@ -1,6 +1,7 @@
 import time
 from datetime import datetime, timedelta
 
+from netspecter_config import cfg, security_features_enabled
 from netspecter_db import query
 from services.application_classification_service import reverse_dns_exclusion_sql
 
@@ -35,6 +36,7 @@ def parse_period(start_value=None, end_value=None):
 
 
 def get_site_overview(start_time, end_time):
+    security_enabled = security_features_enabled(cfg())
     return {
         "devices": _scalar("SELECT COUNT(*) FROM devices"),
         "active_devices": _scalar(
@@ -76,7 +78,7 @@ def get_site_overview(start_time, end_time):
             WHERE event_type='alert' AND ts BETWEEN ? AND ?
             """,
             (start_time, end_time),
-        ),
+        ) if security_enabled else 0,
         "open_incidents": _scalar(
             """
             SELECT COUNT(*)
@@ -84,7 +86,7 @@ def get_site_overview(start_time, end_time):
             WHERE status NOT IN ('resolved', 'closed') AND last_event_ts BETWEEN ? AND ?
             """,
             (start_time, end_time),
-        ),
+        ) if security_enabled else 0,
         "internet_issues": _scalar(
             """
             SELECT COUNT(*)
@@ -488,6 +490,8 @@ def list_domains(start_time, end_time, limit=100):
 
 
 def get_ids_summary(filters, start_time, end_time, limit=DEFAULT_LIMIT):
+    if not security_features_enabled(cfg()):
+        return []
     where, params = _filter_clause(filters, {"device_ids": "src_ip"})
     return _timed_query(
         f"""
@@ -504,6 +508,8 @@ def get_ids_summary(filters, start_time, end_time, limit=DEFAULT_LIMIT):
 
 
 def get_incident_summary(filters, start_time, end_time, limit=DEFAULT_LIMIT):
+    if not security_features_enabled(cfg()):
+        return []
     where, params = _filter_clause(filters, {"device_ids": "device_ip"})
     return _timed_query(
         f"""
@@ -628,20 +634,21 @@ def get_activity_timeline(filters, start_time, end_time, limit=DEFAULT_LIMIT):
         (start_time, end_time, *device_params, _limit(limit // 2)),
         "timeline_dns",
     ))
-    rows.extend(_timed_query(
-        """
-        SELECT ts, 'IDS Alert' AS category, src_ip AS device, dest_ip AS destination,
-               signature AS description,
-               CASE WHEN severity <= 2 THEN 'high' WHEN severity = 3 THEN 'medium' ELSE 'low' END AS severity,
-               '/ids-alerts/' || id AS detail_url
-        FROM ids_events
-        WHERE event_type='alert' AND ts BETWEEN ? AND ?
-        ORDER BY ts DESC
-        LIMIT ?
-        """,
-        (start_time, end_time, _limit(limit // 2)),
-        "timeline_ids",
-    ))
+    if security_features_enabled(cfg()):
+        rows.extend(_timed_query(
+            """
+            SELECT ts, 'IDS Alert' AS category, src_ip AS device, dest_ip AS destination,
+                   signature AS description,
+                   CASE WHEN severity <= 2 THEN 'high' WHEN severity = 3 THEN 'medium' ELSE 'low' END AS severity,
+                   '/ids-alerts/' || id AS detail_url
+            FROM ids_events
+            WHERE event_type='alert' AND ts BETWEEN ? AND ?
+            ORDER BY ts DESC
+            LIMIT ?
+            """,
+            (start_time, end_time, _limit(limit // 2)),
+            "timeline_ids",
+        ))
     return sorted(rows, key=lambda row: str(row["ts"] or ""), reverse=True)[:_limit(limit)]
 
 

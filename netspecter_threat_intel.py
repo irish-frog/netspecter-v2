@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+from netspecter_config import security_features_enabled
 from netspecter_paths import DATA_ROOT
 
 
@@ -310,6 +311,8 @@ def upsert_indicators(con, source, feed, indicators, ttl_days=7):
 
 
 def refresh_feeds(connect_db, config):
+    if not security_features_enabled(config):
+        return {}
     con = connect_db()
     ensure_schema(con)
     results = {}
@@ -465,6 +468,8 @@ def safe_event_key(prefix, *parts):
 
 
 def correlate_once(connect_db, config):
+    if not security_features_enabled(config):
+        return 0
     batch_size = max(100, min(5000, int(config.get("threat_intel_batch_size", 1000) or 1000)))
     started = time.monotonic()
     con = connect_db()
@@ -538,6 +543,8 @@ def insert_correlation(con, key, ts, rep, src_ip="", dest_ip="", domain="", devi
 
 
 def prune_threat_intel(connect_db, config):
+    if not security_features_enabled(config):
+        return
     days = int(config.get("threat_intel_retention_days", 30) or 30)
     max_corr = int(config.get("threat_intel_max_correlations", 100000) or 100000)
     min_free_mb = int(config.get("threat_intel_min_free_mb", 512) or 512)

@@ -17,6 +17,7 @@ from app import (
     record_monitor_event,
     send_telegram_message,
 )
+from netspecter_config import security_features_enabled
 from netspecter_ids import recent_structured_alerts
 
 
@@ -413,6 +414,8 @@ def upsert_suricata_log_incident(assessment):
 
 
 def sweep_suricata_logs():
+    if not security_features_enabled(cfg()):
+        return
     upsert_suricata_log_incident(assess_suricata_logs())
 
 
@@ -465,6 +468,8 @@ def sweep():
 
 def sweep_ids_alerts():
     config = cfg()
+    if not security_features_enabled(config):
+        return
     if not config.get("ids_telegram_enabled") or not config.get("telegram_enabled"):
         return
     try:

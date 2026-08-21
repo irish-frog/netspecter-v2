@@ -285,21 +285,14 @@ refresh_suricata_rules() {
     echo "Suricata rules are present and less than 14 days old; skipping rule refresh."
   fi
 
-  if [ "$refresh_rules" -eq 0 ]; then
-    echo "Suricata rules are fresh; skipping validation restart."
-    if suricata_interface_available && ! systemctl is-active --quiet suricata; then
-      timeout 20s systemctl enable --now suricata >/dev/null 2>&1 || true
-    fi
-  elif suricata_interface_available && suricata -T -c /etc/suricata/suricata.yaml >/dev/null 2>&1; then
-    systemctl reset-failed suricata >/dev/null 2>&1 || true
-    timeout 20s systemctl restart suricata >/dev/null 2>&1 || true
-  else
-    echo "WARNING: Suricata configuration validation failed; not restarting Suricata." >&2
-  fi
+  echo "Suricata package/rules are maintained for compatibility, but IDS runtime is disabled."
+  disable_suricata_safely
   guard_suricata_restart_loop
 }
 
 reclassify_ids_alerts() {
+  echo "IDS alert reclassification skipped because NetSpecter security features are disabled."
+  return 0
   local python_bin="${NETSPECTER_PYTHON:-/opt/netspecter/venv/bin/python}"
   if [ ! -x "$python_bin" ]; then
     python_bin="$(command -v python3 || true)"

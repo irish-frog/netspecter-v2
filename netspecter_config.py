@@ -116,6 +116,7 @@ DEFAULT_CONFIG = {
     "scheduled_speedtests_per_day": 0,
     "scheduled_speedtest_frequency": "disabled",
     "scheduled_speedtest_time": "12:00",
+    "security_features_enabled": False,
     "ids_unknown_only": False,
     "ids_excluded_ips": [],
     "ids_exceptions": [],
@@ -165,7 +166,7 @@ DEFAULT_CONFIG = {
     "config_change_retention_days": 180,
     "config_change_max_events": 100000,
     "config_change_min_free_mb": 512,
-    "threat_intel_enabled": True,
+    "threat_intel_enabled": False,
     "threat_intel_sources": ["spamhaus_drop"],
     "threat_intel_refresh_hours": 24,
     "threat_intel_download_timeout_seconds": 15,
@@ -184,6 +185,7 @@ DEFAULT_CONFIG = {
     "incident_max_records": 50000,
     "incident_min_free_mb": 512,
     "anomaly_learning_only": True,
+    "anomaly_enabled": False,
     "anomaly_min_learning_days": 7,
     "anomaly_recommended_learning_days": 14,
     "anomaly_interval_seconds": 3600,
@@ -206,12 +208,18 @@ DEFAULT_CONFIG = {
     "telegram_chat_id": "",
 }
 
+
+def security_features_enabled(config=None):
+    c = config if isinstance(config, dict) else cfg()
+    return bool(c.get("security_features_enabled", False))
+
 SENSITIVE_CONFIG_KEYS = {"adguard_pass", "unifi_password", "smtp_password", "snmp_community", "mqtt_password", "telegram_bot_token", "netlic_licence_key", "netlic_signing_secret"}
 INTEGRATION_SETTINGS_KEYS = {
     "adguard_client_import_enabled", "unifi_enabled", "unifi_client_import_enabled", "unifi_connector_url", "unifi_site_id",
     "unifi_username", "unifi_password", "unifi_skip_tls_verify",
     "speedtest_provider", "speedtest_cli_path", "speedtest_server_id", "speedtest_timeout_seconds",
     "scheduled_speedtests_per_day", "scheduled_speedtest_frequency", "scheduled_speedtest_time",
+    "security_features_enabled", "suricata_enabled",
     "ids_unknown_only", "ids_excluded_ips", "ids_exceptions", "ids_banned_ips", "ids_banned_domains", "ids_auto_ban_enabled",
     "ids_email_enabled", "ids_telegram_enabled", "smtp_host", "smtp_port", "smtp_security",
     "smtp_username", "smtp_password", "smtp_from", "smtp_to",
@@ -232,7 +240,7 @@ INTEGRATION_SETTINGS_KEYS = {
     "incident_trigger_severities", "incident_window_minutes", "incident_dedupe_minutes",
     "incident_max_per_device_per_day", "incident_retention_days",
     "incident_max_records", "incident_min_free_mb",
-    "anomaly_learning_only", "anomaly_min_learning_days", "anomaly_recommended_learning_days",
+    "anomaly_enabled", "anomaly_learning_only", "anomaly_min_learning_days", "anomaly_recommended_learning_days",
     "anomaly_interval_seconds", "anomaly_upload_min_mb", "anomaly_upload_multiplier",
     "anomaly_destination_multiplier", "anomaly_dns_multiplier", "anomaly_new_ip_min",
     "anomaly_excluded_devices", "anomaly_device_type_thresholds", "anomaly_retention_days",
