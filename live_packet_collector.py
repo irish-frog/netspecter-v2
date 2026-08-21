@@ -325,6 +325,8 @@ last_netbios_discovery = 0.0
 oui_vendor_cache = None
 ESTIMATED_APP_NFT_TARGET_LIMIT = 200
 CLASSIFICATION_NFT_TARGET_LIMIT = 300
+CLASSIFICATION_CONNTRACK_SCAN_LIMIT = 20000
+CLASSIFICATION_CONNTRACK_PER_DEVICE_LIMIT = 24
 NFT_SIGNATURE_REFRESH_SECONDS = 900
 DNS_CLASSIFICATION_REFRESH_MIN_SECONDS = 30
 DNS_CLASSIFICATION_NFT_REBUILD_MIN_SECONDS = 120
@@ -332,6 +334,15 @@ ADGUARD_CLIENT_REFRESH_SECONDS = 300
 UNIFI_CLIENT_REFRESH_SECONDS = 1800
 DB_CONTENTION_BACKOFF_BASE_SECONDS = 5
 DB_CONTENTION_BACKOFF_MAX_SECONDS = 60
+ATTRIBUTION_EVIDENCE_SOURCES = {
+    "dns_resolution",
+    "tls_sni",
+    "http_host",
+    "static_site_mapping",
+    "asn_provider",
+    "destination_signature",
+    "operator_signature",
+}
 MICROSOFT365_MAPPING_CACHE = {"ts": 0.0, "enabled": None, "items": []}
 MONITORED_APP_DOMAIN_KEYS = {
     "Nextcloud": ("nextcloud.com", "owncloud.com"),
@@ -2977,7 +2988,7 @@ def active_estimated_app_targets():
 
 
 def active_classification_targets(config=None):
-    """Return recent DNS client/destination pairs for lightweight byte classification."""
+    """Return bounded client/destination pairs for lightweight byte classification."""
     c = config or cfg()
     try:
         requested_limit = int(c.get("classification_nft_target_limit", CLASSIFICATION_NFT_TARGET_LIMIT))
@@ -2995,6 +3006,12 @@ def active_classification_targets(config=None):
         network = lan_network(c)
     except ValueError:
         return tuple()
+    dns_targets = dns_classification_targets(c, network, limit, lookback_hours)
+    conntrack_targets = conntrack_classification_targets(c, network, max(0, limit - len(dns_targets)))
+    return tuple(sorted(dict.fromkeys((*dns_targets, *conntrack_targets)))[:limit])
+
+
+def dns_classification_targets(config, network, limit, lookback_hours):
     rows = []
     con = None
     try:
@@ -3039,6 +3056,95 @@ def active_classification_targets(config=None):
             continue
         targets.append((client, destination))
     return tuple(sorted(set(targets)))
+
+
+def conntrack_classification_targets(config, network, limit):
+    """Sample active conntrack entries to find non-DNS-derived high-volume candidates."""
+    if limit <= 0 or not config.get("destination_attribution_conntrack_enabled", True):
+        return tuple()
+    try:
+        per_device_limit = int(config.get("classification_conntrack_per_device_limit", CLASSIFICATION_CONNTRACK_PER_DEVICE_LIMIT) or CLASSIFICATION_CONNTRACK_PER_DEVICE_LIMIT)
+    except (TypeError, ValueError):
+        per_device_limit = CLASSIFICATION_CONNTRACK_PER_DEVICE_LIMIT
+    per_device_limit = min(max(1, per_device_limit), 128)
+    try:
+        scan_limit = int(config.get("classification_conntrack_scan_limit", CLASSIFICATION_CONNTRACK_SCAN_LIMIT) or CLASSIFICATION_CONNTRACK_SCAN_LIMIT)
+    except (TypeError, ValueError):
+        scan_limit = CLASSIFICATION_CONNTRACK_SCAN_LIMIT
+    scan_limit = min(max(100, scan_limit), 100000)
+
+    counts = {}
+    per_device = {}
+    for line in iter_conntrack_lines(scan_limit):
+        pair = conntrack_lan_external_pair(line, network)
+        if not pair:
+            continue
+        client, destination = pair
+        device_seen = per_device.setdefault(client, set())
+        if destination not in device_seen and len(device_seen) >= per_device_limit:
+            continue
+        device_seen.add(destination)
+        counts[pair] = counts.get(pair, 0) + conntrack_protocol_weight(line)
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0][0], item[0][1]))
+    return tuple(pair for pair, _score in ranked[:limit])
+
+
+def iter_conntrack_lines(scan_limit):
+    paths = [Path("/proc/net/nf_conntrack"), Path("/proc/net/ip_conntrack")]
+    read = 0
+    for path in paths:
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    if read >= scan_limit:
+                        return
+                    read += 1
+                    yield line.strip()
+            return
+        except OSError:
+            continue
+    if shutil.which("conntrack"):
+        result = subprocess.run(
+            ["conntrack", "-L", "-f", "ipv4"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+            check=False,
+        )
+        for line in result.stdout.splitlines()[:scan_limit]:
+            yield line.strip()
+
+
+def conntrack_lan_external_pair(line, network):
+    values = {}
+    for key, value in re.findall(r"\b(src|dst)=([0-9.]+)\b", str(line or "")):
+        values.setdefault(key, []).append(value)
+    candidates = []
+    for src, dst in zip(values.get("src", []), values.get("dst", [])):
+        try:
+            src_ip = ipaddress.ip_address(src)
+            dst_ip = ipaddress.ip_address(dst)
+        except ValueError:
+            continue
+        if src_ip.version != 4 or dst_ip.version != 4:
+            continue
+        if src_ip in network and dst_ip not in network and not dst_ip.is_unspecified:
+            candidates.append((str(src_ip), str(dst_ip)))
+        elif dst_ip in network and src_ip not in network and not src_ip.is_unspecified:
+            candidates.append((str(dst_ip), str(src_ip)))
+    return candidates[0] if candidates else None
+
+
+def conntrack_protocol_weight(line):
+    text = str(line or "").lower()
+    if " established " in f" {text} ":
+        return 4
+    if " assured " in f" {text} ":
+        return 3
+    if " udp " in f" {text} ":
+        return 2
+    return 1
 
 
 def request_dns_classification_target_refresh(reason="dns_resolution", now_monotonic=None):
@@ -3272,7 +3378,7 @@ def write_destination_delta(con, ip, destination, cur, day, now, default_categor
         (ip, destination, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
     )
     if classification:
-        if default_category == "Unknown":
+        if default_category == "Unknown" and is_attribution_ready_classification(classification):
             con.execute(
                 f"""
                 INSERT INTO {estimated_table}
@@ -3292,6 +3398,12 @@ def write_destination_delta(con, ip, destination, cur, day, now, default_categor
         elapsed = time.monotonic() - write_started
         if elapsed >= 0.05:
             print(f"destination_classify_write: unknown_queue={elapsed:.3f}s")
+
+
+def is_attribution_ready_classification(classification):
+    if not classification or classification.category == "Unknown":
+        return False
+    return str(classification.evidence_source or "") in ATTRIBUTION_EVIDENCE_SOURCES
 
 
 def traffic_table_name(con, table_name):

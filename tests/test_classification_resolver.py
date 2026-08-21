@@ -6,6 +6,7 @@ import subprocess
 import live_packet_collector
 from services import report_context_service
 from services.classification_resolver_service import (
+    Classification,
     Flow,
     classify_flow,
     dns_resolution_table_name,
@@ -665,6 +666,50 @@ def test_active_classification_targets_reads_valid_adguard_client_destination(mo
     assert ("192.168.1.44", "13.107.136.10") in targets
 
 
+def test_conntrack_classification_targets_extracts_lan_external_pairs():
+    network = live_packet_collector.lan_network({"lan_prefix": "192.168.1."})
+    lines = [
+        "ipv4 2 tcp 6 431999 ESTABLISHED src=192.168.1.142 dst=169.1.36.238 sport=54321 dport=443 src=169.1.36.238 dst=165.255.241.41 sport=443 dport=54321 [ASSURED]",
+        "ipv4 2 udp 17 29 src=169.1.36.238 dst=192.168.1.142 sport=443 dport=54321 src=192.168.1.142 dst=169.1.36.238 sport=54321 dport=443",
+        "ipv4 2 tcp 6 11 src=192.168.1.1 dst=192.168.1.142 sport=1 dport=1",
+    ]
+
+    targets = [
+        live_packet_collector.conntrack_lan_external_pair(line, network)
+        for line in lines
+    ]
+
+    assert targets[0] == ("192.168.1.142", "169.1.36.238")
+    assert targets[1] == ("192.168.1.142", "169.1.36.238")
+    assert targets[2] is None
+
+
+def test_active_classification_targets_includes_bounded_conntrack_pairs(monkeypatch):
+    con = memory_db()
+    monkeypatch.setattr(live_packet_collector, "connect_db", lambda *args, **_kwargs: con)
+    monkeypatch.setattr(
+        live_packet_collector,
+        "iter_conntrack_lines",
+        lambda _limit: iter([
+            "ipv4 2 tcp 6 431999 ESTABLISHED src=192.168.1.142 dst=169.1.36.238 sport=54321 dport=443 src=169.1.36.238 dst=165.255.241.41 sport=443 dport=54321 [ASSURED]",
+            "ipv4 2 tcp 6 431999 ESTABLISHED src=192.168.1.142 dst=169.1.36.237 sport=54322 dport=443 src=169.1.36.237 dst=165.255.241.41 sport=443 dport=54322 [ASSURED]",
+            "ipv4 2 tcp 6 431999 ESTABLISHED src=192.168.1.142 dst=169.1.36.236 sport=54323 dport=443 src=169.1.36.236 dst=165.255.241.41 sport=443 dport=54323 [ASSURED]",
+        ]),
+    )
+
+    targets = live_packet_collector.active_classification_targets({
+        "lan_prefix": "192.168.1.",
+        "classification_nft_target_limit": 2,
+        "destination_attribution_conntrack_enabled": True,
+        "classification_conntrack_per_device_limit": 2,
+    })
+
+    assert targets == (
+        ("192.168.1.142", "169.1.36.237"),
+        ("192.168.1.142", "169.1.36.238"),
+    )
+
+
 def test_active_classification_targets_keeps_recent_expired_dns_destination(monkeypatch):
     con = memory_db()
     con.execute(
@@ -791,6 +836,29 @@ def test_write_destination_delta_does_not_double_count_existing_estimated_target
         default_category="Outlook",
     )
 
+    assert con.execute("SELECT COUNT(*) FROM estimated_app_traffic").fetchone()[0] == 0
+
+
+def test_write_destination_delta_does_not_promote_low_confidence_port_protocol(monkeypatch):
+    con = memory_db()
+    monkeypatch.setattr(
+        live_packet_collector,
+        "classify_flow",
+        lambda _con, _flow, emit_timing=False: Classification("Web Browsing", "HTTPS", "port_protocol", "low"),
+    )
+
+    live_packet_collector.write_destination_delta(
+        con,
+        "192.168.99.50",
+        "203.0.113.10",
+        {"rx": 1024, "tx": 1024},
+        "2026-07-24",
+        "2026-07-24 10:01:00",
+        default_category="Unknown",
+    )
+
+    remote = con.execute("SELECT category FROM remote_traffic_intervals").fetchone()
+    assert remote["category"] == "Web Browsing"
     assert con.execute("SELECT COUNT(*) FROM estimated_app_traffic").fetchone()[0] == 0
 
 

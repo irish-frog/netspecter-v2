@@ -58,8 +58,11 @@ DEFAULT_CONFIG = {
     "raw_traffic_retention_hours": 2,
     "dns_retention_days": 60,
     "raw_dns_retention_hours": 2,
-    "classification_nft_target_limit": 0,
+    "classification_nft_target_limit": 300,
     "classification_dns_target_lookback_hours": 6,
+    "destination_attribution_conntrack_enabled": True,
+    "classification_conntrack_scan_limit": 20000,
+    "classification_conntrack_per_device_limit": 24,
     "internal_dns_enabled": False,
     "internal_dns_server_ip": "",
     "internal_dns_zones": [],
@@ -231,6 +234,9 @@ INTEGRATION_SETTINGS_KEYS = {
     "internet_quality_dns_query", "internet_quality_interval_seconds",
     "internet_quality_ping_count", "internet_quality_ping_timeout_seconds",
     "internet_quality_retention_days", "internet_quality_max_rows", "internet_quality_min_free_mb",
+    "classification_nft_target_limit", "classification_dns_target_lookback_hours",
+    "destination_attribution_conntrack_enabled", "classification_conntrack_scan_limit",
+    "classification_conntrack_per_device_limit",
     "config_change_monitor_interval_seconds", "config_change_retention_days",
     "config_change_max_events", "config_change_min_free_mb",
     "threat_intel_enabled", "threat_intel_sources", "threat_intel_refresh_hours",
@@ -368,6 +374,14 @@ def cfg():
     changed = bool(unsupported_keys)
     if unsupported_keys:
         data = {key: value for key, value in data.items() if key in DEFAULT_CONFIG}
+
+    try:
+        current_classification_limit = int(data.get("classification_nft_target_limit") or 0)
+    except (TypeError, ValueError):
+        current_classification_limit = 0
+    if "destination_attribution_conntrack_enabled" not in data and current_classification_limit <= 0:
+        data["classification_nft_target_limit"] = DEFAULT_CONFIG["classification_nft_target_limit"]
+        changed = True
 
     for key, value in DEFAULT_CONFIG.items():
         if key not in data:
