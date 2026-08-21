@@ -966,6 +966,19 @@ def test_netflow_v5_parser_extracts_ipv4_flow():
     assert rows[0]["protocol"] == 6
 
 
+def test_netflow_promotion_accumulates_across_batches():
+    live_packet_collector.sampled_visibility_targets.clear()
+    live_packet_collector.netflow_promotion_totals.clear()
+    pair = ("192.168.1.57", "40.104.14.210")
+
+    first = live_packet_collector.promote_netflow_destinations({pair: 30 * 1024 * 1024}, 50 * 1024 * 1024, 10, 10)
+    second = live_packet_collector.promote_netflow_destinations({pair: 25 * 1024 * 1024}, 50 * 1024 * 1024, 10, 10)
+
+    assert first == 0
+    assert second == 1
+    assert pair in live_packet_collector.sampled_visibility_targets
+
+
 def test_active_classification_targets_prefers_attached_dnsdb_over_empty_main(monkeypatch):
     con = memory_db()
     con.execute("ATTACH DATABASE ':memory:' AS dnsdb")

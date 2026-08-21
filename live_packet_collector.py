@@ -338,6 +338,8 @@ estimated_app_targets = {}
 estimated_targets_lock = threading.Lock()
 sampled_visibility_targets = {}
 sampled_visibility_targets_lock = threading.Lock()
+netflow_promotion_totals = {}
+netflow_promotion_lock = threading.Lock()
 netflow_templates = {}
 last_suricata_import = 0.0
 last_ids_default_reclassify = 0.0
@@ -3834,7 +3836,23 @@ def normalize_netflow_row(row, network):
 
 
 def promote_netflow_destinations(aggregate, threshold_bytes, target_limit, per_device_limit):
-    ranked = sorted(aggregate.items(), key=lambda item: (-item[1], item[0][0], item[0][1]))
+    now = time.time()
+    window_seconds = 1800
+    with netflow_promotion_lock:
+        expired = [
+            pair for pair, row in netflow_promotion_totals.items()
+            if float(row.get("updated", 0) or 0) + window_seconds < now
+        ]
+        for pair in expired:
+            netflow_promotion_totals.pop(pair, None)
+        for pair, byte_count in aggregate.items():
+            row = netflow_promotion_totals.setdefault(pair, {"bytes": 0, "updated": now})
+            row["bytes"] = int(row.get("bytes", 0) or 0) + int(byte_count or 0)
+            row["updated"] = now
+        ranked = sorted(
+            ((pair, int(row.get("bytes", 0) or 0)) for pair, row in netflow_promotion_totals.items()),
+            key=lambda item: (-item[1], item[0][0], item[0][1]),
+        )
     per_device = {}
     promoted = 0
     expires = time.time() + 1800
