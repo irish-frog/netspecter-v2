@@ -64,6 +64,7 @@ fi
 
 estimated_rows="$(sum_from_sql "SELECT COUNT(*) FROM estimated_app_traffic WHERE ts >= datetime('now', 'localtime', '-$WINDOW_MINUTES minutes');" "$traffic_db")"
 destination_rows="$(sum_from_sql "SELECT COUNT(*) FROM remote_traffic_intervals WHERE ts >= datetime('now', 'localtime', '-$WINDOW_MINUTES minutes');" "$traffic_db")"
+raw_flow_rows="$(sum_from_sql "SELECT COUNT(*) FROM raw_flow_events WHERE ts >= datetime('now', 'localtime', '-$WINDOW_MINUTES minutes');" "$traffic_db")"
 
 echo "NetSpecter attribution impact sample"
 echo "Window: last ${WINDOW_MINUTES} minute(s)"
@@ -78,6 +79,8 @@ metric "estimated_nft_rules" "$(rule_count 'netspecter:estimated:')"
 metric "traffic_db" "$traffic_db"
 metric "estimated_rows_window" "$estimated_rows"
 metric "destination_rows_window" "$destination_rows"
+metric "raw_flow_rows_window" "$raw_flow_rows"
 metric "estimated_rows_per_sec" "$(awk -v rows="$estimated_rows" -v minutes="$WINDOW_MINUTES" 'BEGIN { if (rows ~ /^[0-9]+$/) printf "%.3f", rows / (minutes * 60); else print "n/a" }')"
 metric "destination_rows_per_sec" "$(awk -v rows="$destination_rows" -v minutes="$WINDOW_MINUTES" 'BEGIN { if (rows ~ /^[0-9]+$/) printf "%.3f", rows / (minutes * 60); else print "n/a" }')"
+metric "raw_flow_rows_per_sec" "$(awk -v rows="$raw_flow_rows" -v minutes="$WINDOW_MINUTES" 'BEGIN { if (rows ~ /^[0-9]+$/) printf "%.3f", rows / (minutes * 60); else print "n/a" }')"
 metric "collector_rss" "$rss_kb"

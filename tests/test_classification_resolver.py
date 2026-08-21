@@ -930,6 +930,42 @@ def test_tcpdump_sampler_uses_packet_size_fallback_without_length():
     assert pairs[("192.168.1.57", "40.104.14.210")] == 3000
 
 
+def test_netflow_v5_parser_extracts_ipv4_flow():
+    import struct
+
+    header = struct.pack("!HHIIIIBBH", 5, 1, 0, 1787314682, 0, 1, 0, 0, 0)
+    record = struct.pack(
+        "!IIIHHIIIIHHBBBBHHBBH",
+        int.from_bytes(bytes([192, 168, 1, 57]), "big"),
+        int.from_bytes(bytes([40, 104, 14, 210]), "big"),
+        0,
+        0,
+        0,
+        12,
+        15000,
+        0,
+        0,
+        51514,
+        443,
+        0,
+        0,
+        6,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+
+    rows = live_packet_collector.parse_netflow_packet(header + record)
+
+    assert rows[0]["src_ip"] == "192.168.1.57"
+    assert rows[0]["dst_ip"] == "40.104.14.210"
+    assert rows[0]["bytes"] == 15000
+    assert rows[0]["protocol"] == 6
+
+
 def test_active_classification_targets_prefers_attached_dnsdb_over_empty_main(monkeypatch):
     con = memory_db()
     con.execute("ATTACH DATABASE ':memory:' AS dnsdb")

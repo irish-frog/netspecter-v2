@@ -320,6 +320,87 @@ def init_traffic_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_ts_ip ON remote_traffic_intervals(ts, ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_ts_ip_remote ON remote_traffic_intervals(ts, ip, remote_ip)")
     con.execute("""
+        CREATE TABLE IF NOT EXISTS raw_flow_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            day TEXT NOT NULL,
+            local_ip TEXT NOT NULL,
+            remote_ip TEXT NOT NULL,
+            protocol INTEGER,
+            local_port INTEGER,
+            remote_port INTEGER,
+            bytes INTEGER NOT NULL,
+            packets INTEGER DEFAULT 0,
+            source TEXT DEFAULT 'netflow'
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_raw_flow_day_local ON raw_flow_events(day, local_ip)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_raw_flow_ts_local_remote ON raw_flow_events(ts, local_ip, remote_ip)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS destination_identity (
+            remote_ip TEXT NOT NULL,
+            hostname TEXT NOT NULL DEFAULT '',
+            application TEXT,
+            category TEXT,
+            source TEXT,
+            first_seen INTEGER,
+            last_seen INTEGER,
+            PRIMARY KEY(remote_ip, hostname)
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_destination_identity_remote ON destination_identity(remote_ip)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS hourly_device_usage (
+            hour TEXT NOT NULL,
+            day TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            downloaded_mb REAL DEFAULT 0,
+            uploaded_mb REAL DEFAULT 0,
+            total_mb REAL DEFAULT 0,
+            PRIMARY KEY(hour, ip)
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_hourly_device_usage_day_ip ON hourly_device_usage(day, ip)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS daily_device_usage (
+            day TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            downloaded_mb REAL DEFAULT 0,
+            uploaded_mb REAL DEFAULT 0,
+            total_mb REAL DEFAULT 0,
+            PRIMARY KEY(day, ip)
+        )
+    """)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS hourly_app_usage (
+            hour TEXT NOT NULL,
+            day TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            application TEXT NOT NULL,
+            category TEXT NOT NULL,
+            source TEXT DEFAULT '',
+            downloaded_mb REAL DEFAULT 0,
+            uploaded_mb REAL DEFAULT 0,
+            total_mb REAL DEFAULT 0,
+            PRIMARY KEY(hour, ip, application, category, source)
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_hourly_app_usage_day_category ON hourly_app_usage(day, category)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS daily_app_usage (
+            day TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            application TEXT NOT NULL,
+            category TEXT NOT NULL,
+            source TEXT DEFAULT '',
+            downloaded_mb REAL DEFAULT 0,
+            uploaded_mb REAL DEFAULT 0,
+            total_mb REAL DEFAULT 0,
+            PRIMARY KEY(day, ip, application, category, source)
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_daily_app_usage_day_category ON daily_app_usage(day, category)")
+    con.execute("""
         CREATE TABLE IF NOT EXISTS application_signatures (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             app TEXT NOT NULL,

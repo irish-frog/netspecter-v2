@@ -47,6 +47,7 @@ metric "estimated_nft_rules" "$(rule_count 'netspecter:estimated:')"
 metric "classification_targets" "$(awk -v n="$(rule_count 'netspecter:classify:')" 'BEGIN { if (n ~ /^[0-9]+$/) printf "%d", n / 2; else print n }')"
 metric "visibility_targets" "$(awk -v n="$(rule_count 'netspecter:visible:')" 'BEGIN { if (n ~ /^[0-9]+$/) printf "%d", n / 2; else print n }')"
 metric "estimated_targets" "$(awk -v n="$(rule_count 'netspecter:estimated:')" 'BEGIN { if (n ~ /^[0-9]+$/) printf "%d", n / 2; else print n }')"
+metric "raw_flow_rows_today" "$(sqlite3 "$traffic_db" "SELECT COUNT(*) FROM raw_flow_events WHERE day=date('now','localtime');" 2>/dev/null || echo n/a)"
 echo
 
 echo "Conntrack availability"
@@ -58,7 +59,7 @@ echo
 
 echo "Recent collector target install log"
 journalctl -u "$SERVICE" -n 300 --no-pager 2>/dev/null |
-  grep -Ei "nftables traffic counters installed|classification target|visibility target|Destination sampler|conntrack|Destination visibility|Recent visibility|failed|error" |
+  grep -Ei "nftables traffic counters installed|classification target|visibility target|Destination sampler|NetFlow|conntrack|Destination visibility|Recent visibility|failed|error" |
   tail -20 || true
 echo
 

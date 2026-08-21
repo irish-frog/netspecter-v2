@@ -76,6 +76,10 @@ class SplitDatabaseTests(unittest.TestCase):
         self.assertIn("traffic_intervals", traffic_tables)
         self.assertIn("estimated_app_traffic", traffic_tables)
         self.assertIn("remote_traffic_intervals", traffic_tables)
+        self.assertIn("raw_flow_events", traffic_tables)
+        self.assertIn("destination_identity", traffic_tables)
+        self.assertIn("hourly_app_usage", traffic_tables)
+        self.assertIn("daily_app_usage", traffic_tables)
         self.assertIn("internet_quality", traffic_tables)
 
         con = netspecter_db.connect_db()

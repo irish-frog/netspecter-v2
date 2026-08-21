@@ -30,9 +30,11 @@ import os
 import re
 import signal
 import shutil
+import socket
 import smtplib
 import sqlite3
 import ssl
+import struct
 import subprocess
 import threading
 import time
@@ -181,6 +183,15 @@ DEFAULT_CONFIG = {
     "destination_sampler_per_device_limit": 24,
     "destination_sampler_min_observed_bytes": 32768,
     "destination_sampler_target_ttl_seconds": 900,
+    "flow_visibility_enabled": True,
+    "netflow_receiver_host": "127.0.0.1",
+    "netflow_receiver_port": 2055,
+    "netflow_raw_retention_days": 14,
+    "netflow_promote_threshold_mb": 50,
+    "netflow_promote_target_limit": 240,
+    "netflow_promote_per_device_limit": 24,
+    "softflowd_active_timeout_seconds": 60,
+    "softflowd_inactive_timeout_seconds": 15,
 
     "adguard_url": "http://127.0.0.1",
     "adguard_user": "admin",
@@ -327,6 +338,7 @@ estimated_app_targets = {}
 estimated_targets_lock = threading.Lock()
 sampled_visibility_targets = {}
 sampled_visibility_targets_lock = threading.Lock()
+netflow_templates = {}
 last_suricata_import = 0.0
 last_ids_default_reclassify = 0.0
 last_unknown_reclassify = 0.0
@@ -2588,6 +2600,7 @@ def prune_history(config=None):
     """Apply configured history retention without altering today's totals."""
     c = config or cfg()
     traffic_days = positive_int(c.get("traffic_retention_days", 60), 60, 1)
+    raw_flow_days = positive_int(c.get("netflow_raw_retention_days", 14), 14, 1)
     quality_days = positive_int(c.get("internet_quality_retention_days", 60), 60, 1)
     config_days = positive_int(c.get("config_change_retention_days", 180), 180, 1)
     threat_days = positive_int(c.get("threat_intel_retention_days", 30), 30, 1)
@@ -2595,6 +2608,7 @@ def prune_history(config=None):
     quality_cutoff = f"-{quality_days - 1} days"
     config_cutoff = f"-{config_days - 1} days"
     threat_cutoff = f"-{threat_days - 1} days"
+    raw_flow_cutoff = f"-{raw_flow_days - 1} days"
 
     try:
         con = connect_db()
@@ -2614,6 +2628,10 @@ def prune_history(config=None):
         con.execute(
             "DELETE FROM remote_traffic_intervals WHERE day < date('now', 'localtime', ?)",
             (traffic_cutoff,),
+        )
+        con.execute(
+            "DELETE FROM raw_flow_events WHERE day < date('now', 'localtime', ?)",
+            (raw_flow_cutoff,),
         )
         from services.dns_rollup_service import prune_dns_history
         prune_dns_history(con, c)
@@ -3559,6 +3577,283 @@ def tcpdump_endpoint_ip(value):
     if len(parts) < 4:
         return ""
     return ".".join(parts[:4])
+
+
+def netflow_receiver_loop():
+    """Receive softflowd NetFlow and promote high-volume destinations."""
+    sock = None
+    bound = None
+    pending = []
+    last_flush = time.monotonic()
+    while True:
+        c = cfg()
+        if not c.get("flow_visibility_enabled", True):
+            if sock:
+                sock.close()
+                sock = None
+                bound = None
+            time.sleep(30)
+            continue
+        host = str(c.get("netflow_receiver_host") or "127.0.0.1")
+        try:
+            port = int(c.get("netflow_receiver_port", 2055) or 2055)
+        except (TypeError, ValueError):
+            port = 2055
+        endpoint = (host, port)
+        try:
+            if sock is None or bound != endpoint:
+                if sock:
+                    sock.close()
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind(endpoint)
+                sock.settimeout(2.0)
+                bound = endpoint
+                print(f"NetFlow receiver listening on {host}:{port}")
+            try:
+                packet, _addr = sock.recvfrom(65535)
+                pending.extend(parse_netflow_packet(packet))
+            except socket.timeout:
+                pass
+            now = time.monotonic()
+            if pending and (len(pending) >= 200 or now - last_flush >= 10):
+                write_netflow_batch(c, pending)
+                pending = []
+                last_flush = now
+        except Exception as error:
+            print(f"NetFlow receiver failed: {error}")
+            if sock:
+                sock.close()
+                sock = None
+                bound = None
+            time.sleep(10)
+
+
+def parse_netflow_packet(packet):
+    if len(packet or b"") < 2:
+        return []
+    version = struct.unpack("!H", packet[:2])[0]
+    if version == 5:
+        return parse_netflow_v5(packet)
+    if version == 9:
+        return parse_netflow_v9(packet)
+    return []
+
+
+def parse_netflow_v5(packet):
+    if len(packet) < 24:
+        return []
+    _version, count, _sys_uptime, unix_secs, _unix_nsecs, *_rest = struct.unpack("!HHIIIIBBH", packet[:24])
+    rows = []
+    offset = 24
+    for _idx in range(min(count, 30)):
+        record = packet[offset:offset + 48]
+        offset += 48
+        if len(record) < 48:
+            break
+        srcaddr, dstaddr, _nexthop, _input, _output, packets, octets, *_tail = struct.unpack("!IIIHHIIIIHHBBBBHHBBH", record)
+        protocol = record[38]
+        src_port = struct.unpack("!H", record[32:34])[0]
+        dst_port = struct.unpack("!H", record[34:36])[0]
+        rows.append({
+            "ts": datetime.fromtimestamp(unix_secs).strftime("%Y-%m-%d %H:%M:%S"),
+            "src_ip": int_to_ipv4(srcaddr),
+            "dst_ip": int_to_ipv4(dstaddr),
+            "src_port": src_port,
+            "dst_port": dst_port,
+            "protocol": protocol,
+            "bytes": int(octets or 0),
+            "packets": int(packets or 0),
+        })
+    return rows
+
+
+def parse_netflow_v9(packet):
+    if len(packet) < 20:
+        return []
+    _version, _count, _sys_uptime, unix_secs, _sequence, source_id = struct.unpack("!HHIIII", packet[:20])
+    rows = []
+    offset = 20
+    while offset + 4 <= len(packet):
+        flowset_id, length = struct.unpack("!HH", packet[offset:offset + 4])
+        if length < 4 or offset + length > len(packet):
+            break
+        payload = packet[offset + 4:offset + length]
+        if flowset_id == 0:
+            parse_netflow_v9_templates(source_id, payload)
+        elif flowset_id >= 256:
+            rows.extend(parse_netflow_v9_data(source_id, flowset_id, payload, unix_secs))
+        offset += length
+    return rows
+
+
+def parse_netflow_v9_templates(source_id, payload):
+    offset = 0
+    while offset + 4 <= len(payload):
+        template_id, field_count = struct.unpack("!HH", payload[offset:offset + 4])
+        offset += 4
+        fields = []
+        for _idx in range(field_count):
+            if offset + 4 > len(payload):
+                return
+            field_type, field_length = struct.unpack("!HH", payload[offset:offset + 4])
+            offset += 4
+            fields.append((field_type, field_length))
+        netflow_templates[(source_id, template_id)] = fields
+
+
+def parse_netflow_v9_data(source_id, template_id, payload, unix_secs):
+    fields = netflow_templates.get((source_id, template_id))
+    if not fields:
+        return []
+    record_len = sum(length for _field_type, length in fields)
+    if record_len <= 0:
+        return []
+    rows = []
+    offset = 0
+    while offset + record_len <= len(payload):
+        record = payload[offset:offset + record_len]
+        offset += record_len
+        values = {}
+        pos = 0
+        for field_type, field_length in fields:
+            values[field_type] = record[pos:pos + field_length]
+            pos += field_length
+        row = netflow_values_to_row(values, unix_secs)
+        if row:
+            rows.append(row)
+    return rows
+
+
+def netflow_values_to_row(values, unix_secs):
+    src = netflow_ipv4(values.get(8))
+    dst = netflow_ipv4(values.get(12))
+    if not src or not dst:
+        return None
+    return {
+        "ts": datetime.fromtimestamp(unix_secs).strftime("%Y-%m-%d %H:%M:%S"),
+        "src_ip": src,
+        "dst_ip": dst,
+        "src_port": netflow_int(values.get(7)),
+        "dst_port": netflow_int(values.get(11)),
+        "protocol": netflow_int(values.get(4)),
+        "bytes": netflow_int(values.get(1)),
+        "packets": netflow_int(values.get(2)),
+    }
+
+
+def netflow_ipv4(raw):
+    if not raw or len(raw) != 4:
+        return ""
+    return ".".join(str(part) for part in raw)
+
+
+def netflow_int(raw):
+    if not raw:
+        return 0
+    return int.from_bytes(raw, "big", signed=False)
+
+
+def int_to_ipv4(value):
+    return ".".join(str(part) for part in value.to_bytes(4, "big"))
+
+
+def write_netflow_batch(config, rows):
+    try:
+        network = lan_network(config)
+    except ValueError:
+        return
+    flow_rows = []
+    aggregate = {}
+    now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    day = now_ts[:10]
+    for row in rows:
+        normalized = normalize_netflow_row(row, network)
+        if not normalized:
+            continue
+        local_ip, remote_ip, local_port, remote_port, protocol, byte_count, packets, ts = normalized
+        flow_rows.append((ts or now_ts, (ts or now_ts)[:10], local_ip, remote_ip, protocol, local_port, remote_port, byte_count, packets, "netflow"))
+        aggregate[(local_ip, remote_ip)] = aggregate.get((local_ip, remote_ip), 0) + byte_count
+    if not flow_rows:
+        return
+    try:
+        threshold_bytes = int(float(config.get("netflow_promote_threshold_mb", 50) or 50) * 1024 * 1024)
+    except (TypeError, ValueError):
+        threshold_bytes = 50 * 1024 * 1024
+    try:
+        target_limit = int(config.get("netflow_promote_target_limit", 240) or 240)
+    except (TypeError, ValueError):
+        target_limit = 240
+    try:
+        per_device_limit = int(config.get("netflow_promote_per_device_limit", 24) or 24)
+    except (TypeError, ValueError):
+        per_device_limit = 24
+    promoted = promote_netflow_destinations(aggregate, threshold_bytes, target_limit, per_device_limit)
+    try:
+        with timed_db_write("netflow_batch") as con:
+            table = traffic_table_name(con, "raw_flow_events")
+            con.executemany(
+                f"""
+                INSERT INTO {table}
+                    (ts, day, local_ip, remote_ip, protocol, local_port, remote_port, bytes, packets, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                flow_rows,
+            )
+    except sqlite3.OperationalError as error:
+        if "database is locked" in str(error).lower():
+            note_database_contention("NetFlow batch write", error)
+        else:
+            print(f"NetFlow batch write failed: {error}")
+    except Exception as error:
+        print(f"NetFlow batch write failed: {error}")
+    print(f"NetFlow batch: flows={len(flow_rows)} pairs={len(aggregate)} promoted={promoted} threshold_mb={threshold_bytes / 1024 / 1024:.1f}")
+
+
+def normalize_netflow_row(row, network):
+    try:
+        src_ip = ipaddress.ip_address(str(row.get("src_ip") or ""))
+        dst_ip = ipaddress.ip_address(str(row.get("dst_ip") or ""))
+    except ValueError:
+        return None
+    if src_ip.version != 4 or dst_ip.version != 4:
+        return None
+    byte_count = int(row.get("bytes") or 0)
+    if byte_count <= 0:
+        return None
+    packets = int(row.get("packets") or 0)
+    protocol = int(row.get("protocol") or 0)
+    src_port = int(row.get("src_port") or 0)
+    dst_port = int(row.get("dst_port") or 0)
+    ts = str(row.get("ts") or "")
+    if src_ip in network and dst_ip not in network and not dst_ip.is_unspecified:
+        return str(src_ip), str(dst_ip), src_port, dst_port, protocol, byte_count, packets, ts
+    if dst_ip in network and src_ip not in network and not src_ip.is_unspecified:
+        return str(dst_ip), str(src_ip), dst_port, src_port, protocol, byte_count, packets, ts
+    return None
+
+
+def promote_netflow_destinations(aggregate, threshold_bytes, target_limit, per_device_limit):
+    ranked = sorted(aggregate.items(), key=lambda item: (-item[1], item[0][0], item[0][1]))
+    per_device = {}
+    promoted = 0
+    expires = time.time() + 1800
+    with sampled_visibility_targets_lock:
+        for pair, byte_count in ranked:
+            if byte_count < threshold_bytes:
+                continue
+            client, destination = pair
+            device_seen = per_device.setdefault(client, set())
+            if destination not in device_seen and len(device_seen) >= per_device_limit:
+                continue
+            device_seen.add(destination)
+            sampled_visibility_targets[pair] = {"score": byte_count, "expires": expires}
+            promoted += 1
+            if promoted >= target_limit:
+                break
+    if promoted:
+        nft_config_refresh_event.set()
+    return promoted
 
 
 def request_dns_classification_target_refresh(reason="dns_resolution", now_monotonic=None):
@@ -4585,17 +4880,21 @@ if __name__ == "__main__":
     destination_sampler_thread = threading.Thread(target=destination_sampler_loop, daemon=True)
     destination_sampler_thread.start()
 
+    # Thread 8: softflowd/NetFlow destination visibility.
+    netflow_thread = threading.Thread(target=netflow_receiver_loop, daemon=True)
+    netflow_thread.start()
+
     security_started = security_features_enabled(startup_config)
     if security_started:
-        # Thread 8: Local threat-intelligence enrichment.
+        # Thread 9: Local threat-intelligence enrichment.
         threat_thread = threading.Thread(target=threat_intel_loop, daemon=True)
         threat_thread.start()
 
-        # Thread 9: Explainable network baseline and anomaly detection.
+        # Thread 10: Explainable network baseline and anomaly detection.
         anomaly_thread = threading.Thread(target=anomaly_baseline_loop, daemon=True)
         anomaly_thread.start()
 
-    # Thread 10: Slow retention cleanup, kept away from the live packet loop.
+    # Thread 11: Slow retention cleanup, kept away from the live packet loop.
     retention_thread = threading.Thread(target=retention_cleanup_loop, daemon=True)
     retention_thread.start()
 
@@ -4609,6 +4908,7 @@ if __name__ == "__main__":
     print("Internet quality monitor started")
     print("Configuration change monitor started")
     print("Destination sampler started")
+    print("NetFlow receiver started")
     print(f"Security features {'started' if security_started else 'disabled'}")
     print("Retention cleanup scheduler started")
     write_heartbeat("OK", "collector started")
