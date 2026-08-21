@@ -3546,7 +3546,7 @@ def parse_tcpdump_ip_pair(line):
     if not match:
         return None
     length_match = re.search(r"\blength\s+([0-9]+)", str(line or ""))
-    observed_bytes = int(length_match.group(1)) if length_match else 1
+    observed_bytes = int(length_match.group(1)) if length_match else 1500
     src = tcpdump_endpoint_ip(match.group(1))
     dst = tcpdump_endpoint_ip(match.group(2))
     if not src or not dst:

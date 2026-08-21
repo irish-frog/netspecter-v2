@@ -914,6 +914,22 @@ def test_tcpdump_sampler_extracts_lan_external_pairs():
     assert ("192.168.1.121", "192.168.1.1") not in pairs
 
 
+def test_tcpdump_sampler_uses_packet_size_fallback_without_length():
+    network = live_packet_collector.lan_network({"lan_prefix": "192.168.1."})
+    output = "\n".join([
+        "1787314682.123 IP 192.168.1.57.51514 > 40.104.14.210.443: tcp",
+        "1787314682.124 IP 40.104.14.210.443 > 192.168.1.57.51514: tcp",
+    ])
+
+    pairs = live_packet_collector.sample_pairs_from_tcpdump(
+        output,
+        {"192.168.1.57"},
+        network,
+    )
+
+    assert pairs[("192.168.1.57", "40.104.14.210")] == 3000
+
+
 def test_active_classification_targets_prefers_attached_dnsdb_over_empty_main(monkeypatch):
     con = memory_db()
     con.execute("ATTACH DATABASE ':memory:' AS dnsdb")
