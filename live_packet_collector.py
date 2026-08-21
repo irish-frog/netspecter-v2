@@ -3016,7 +3016,12 @@ def active_classification_targets(config=None):
         return tuple()
     dns_targets = dns_classification_targets(c, network, limit, lookback_hours)
     conntrack_targets = conntrack_classification_targets(c, network, max(0, limit - len(dns_targets)))
-    return tuple(sorted(dict.fromkeys((*dns_targets, *conntrack_targets)))[:limit])
+    targets = tuple(sorted(dict.fromkeys((*dns_targets, *conntrack_targets)))[:limit])
+    print(
+        "Classification target refresh: "
+        f"limit={limit} dns={len(dns_targets)} conntrack={len(conntrack_targets)} active={len(targets)}"
+    )
+    return targets
 
 
 def active_visibility_targets(config=None, excluded_pairs=None):
@@ -3042,6 +3047,7 @@ def active_visibility_targets(config=None, excluded_pairs=None):
         return tuple()
     devices = low_visibility_devices(c, limit)
     if not devices:
+        print(f"Destination visibility target refresh: limit={limit} eligible_devices=0 active=0")
         return tuple()
     excluded = set(excluded_pairs or ())
     recent_targets = recent_visibility_targets_for_devices(
@@ -3062,7 +3068,13 @@ def active_visibility_targets(config=None, excluded_pairs=None):
         excluded,
     )
     targets = (*recent_targets, *conntrack_targets)
-    return tuple(sorted(targets)[:limit])
+    active = tuple(sorted(targets)[:limit])
+    print(
+        "Destination visibility target refresh: "
+        f"limit={limit} eligible_devices={len(devices)} excluded={len(excluded_pairs or ())} "
+        f"recent={len(recent_targets)} conntrack={len(conntrack_targets)} active={len(active)}"
+    )
+    return active
 
 
 def low_visibility_devices(config, target_limit):
