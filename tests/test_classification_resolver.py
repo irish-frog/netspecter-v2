@@ -896,6 +896,24 @@ def test_active_visibility_targets_falls_back_to_recent_destination_rows(monkeyp
     assert targets == (("192.168.1.67", "142.251.216.74"),)
 
 
+def test_tcpdump_sampler_extracts_lan_external_pairs():
+    network = live_packet_collector.lan_network({"lan_prefix": "192.168.1."})
+    output = "\n".join([
+        "1787314682.123 IP 192.168.1.57.51514 > 40.104.14.210.443: tcp 0 length 1460",
+        "1787314682.124 IP 40.104.14.210.443 > 192.168.1.57.51514: tcp 0 length 1200",
+        "1787314682.125 IP 192.168.1.121.44444 > 192.168.1.1.53: UDP, length 40",
+    ])
+
+    pairs = live_packet_collector.sample_pairs_from_tcpdump(
+        output,
+        {"192.168.1.57", "192.168.1.121"},
+        network,
+    )
+
+    assert pairs[("192.168.1.57", "40.104.14.210")] == 2660
+    assert ("192.168.1.121", "192.168.1.1") not in pairs
+
+
 def test_active_classification_targets_prefers_attached_dnsdb_over_empty_main(monkeypatch):
     con = memory_db()
     con.execute("ATTACH DATABASE ':memory:' AS dnsdb")

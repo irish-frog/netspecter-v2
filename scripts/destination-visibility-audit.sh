@@ -49,9 +49,16 @@ metric "visibility_targets" "$(awk -v n="$(rule_count 'netspecter:visible:')" 'B
 metric "estimated_targets" "$(awk -v n="$(rule_count 'netspecter:estimated:')" 'BEGIN { if (n ~ /^[0-9]+$/) printf "%d", n / 2; else print n }')"
 echo
 
+echo "Conntrack availability"
+metric "/proc/net/nf_conntrack" "$([ -r /proc/net/nf_conntrack ] && echo readable || echo unavailable)"
+metric "/proc/net/ip_conntrack" "$([ -r /proc/net/ip_conntrack ] && echo readable || echo unavailable)"
+metric "conntrack_binary" "$(command -v conntrack 2>/dev/null || echo unavailable)"
+metric "nf_conntrack_module" "$(lsmod 2>/dev/null | awk '$1=="nf_conntrack" {print $1 " loaded"; found=1} END {if (!found) print "not_loaded_or_lsmod_unavailable"}')"
+echo
+
 echo "Recent collector target install log"
 journalctl -u "$SERVICE" -n 300 --no-pager 2>/dev/null |
-  grep -Ei "nftables traffic counters installed|classification target|visibility target|conntrack|Destination visibility|Recent visibility|failed|error" |
+  grep -Ei "nftables traffic counters installed|classification target|visibility target|Destination sampler|conntrack|Destination visibility|Recent visibility|failed|error" |
   tail -20 || true
 echo
 

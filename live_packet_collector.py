@@ -173,6 +173,14 @@ DEFAULT_CONFIG = {
     "microsoft365_endpoint_import_enabled": False,
     "microsoft365_endpoint_instance": "worldwide",
     "microsoft365_endpoint_cache_hours": 168,
+    "destination_sampler_enabled": True,
+    "destination_sampler_interval_seconds": 120,
+    "destination_sampler_duration_seconds": 20,
+    "destination_sampler_device_limit": 10,
+    "destination_sampler_target_limit": 240,
+    "destination_sampler_per_device_limit": 24,
+    "destination_sampler_min_observed_bytes": 32768,
+    "destination_sampler_target_ttl_seconds": 900,
 
     "adguard_url": "http://127.0.0.1",
     "adguard_user": "admin",
@@ -317,6 +325,8 @@ live_traffic_today = {"day": "", "downloaded_mb": 0.0, "uploaded_mb": 0.0, "tota
 device_inventory_write_cache = {}
 estimated_app_targets = {}
 estimated_targets_lock = threading.Lock()
+sampled_visibility_targets = {}
+sampled_visibility_targets_lock = threading.Lock()
 last_suricata_import = 0.0
 last_ids_default_reclassify = 0.0
 last_unknown_reclassify = 0.0
@@ -3059,20 +3069,28 @@ def active_visibility_targets(config=None, excluded_pairs=None):
         excluded,
     )
     excluded.update(recent_targets)
-    conntrack_targets = conntrack_targets_for_devices(
+    sampled_targets = sampled_visibility_target_pairs(
         c,
-        network,
-        devices,
         max(0, limit - len(recent_targets)),
         per_device_limit,
         excluded,
     )
-    targets = (*recent_targets, *conntrack_targets)
+    excluded.update(sampled_targets)
+    conntrack_targets = conntrack_targets_for_devices(
+        c,
+        network,
+        devices,
+        max(0, limit - len(recent_targets) - len(sampled_targets)),
+        per_device_limit,
+        excluded,
+    )
+    targets = (*recent_targets, *sampled_targets, *conntrack_targets)
     active = tuple(sorted(targets)[:limit])
     print(
         "Destination visibility target refresh: "
         f"limit={limit} eligible_devices={len(devices)} excluded={len(excluded_pairs or ())} "
-        f"recent={len(recent_targets)} conntrack={len(conntrack_targets)} active={len(active)}"
+        f"recent={len(recent_targets)} sampled={len(sampled_targets)} "
+        f"conntrack={len(conntrack_targets)} active={len(active)}"
     )
     return active
 
@@ -3157,6 +3175,34 @@ def conntrack_targets_for_devices(config, network, devices, limit, per_device_li
         counts[pair] = counts.get(pair, 0) + conntrack_protocol_weight(line)
     ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0][0], item[0][1]))
     return tuple(pair for pair, _score in ranked[:limit])
+
+
+def sampled_visibility_target_pairs(config, limit, per_device_limit, excluded_pairs=None):
+    now = time.time()
+    excluded = set(excluded_pairs or ())
+    with sampled_visibility_targets_lock:
+        expired = [pair for pair, row in sampled_visibility_targets.items() if float(row.get("expires", 0) or 0) <= now]
+        for pair in expired:
+            sampled_visibility_targets.pop(pair, None)
+        ranked = sorted(
+            (
+                (float(row.get("score", 0) or 0), pair[0], pair[1])
+                for pair, row in sampled_visibility_targets.items()
+                if pair not in excluded
+            ),
+            key=lambda item: (-item[0], item[1], item[2]),
+        )
+    per_device = {}
+    targets = []
+    for _score, client, destination in ranked:
+        device_seen = per_device.setdefault(client, set())
+        if destination not in device_seen and len(device_seen) >= per_device_limit:
+            continue
+        device_seen.add(destination)
+        targets.append((client, destination))
+        if len(targets) >= limit:
+            break
+    return tuple(targets)
 
 
 def recent_visibility_targets_for_devices(config, network, devices, limit, per_device_limit, excluded_pairs=None):
@@ -3357,6 +3403,162 @@ def conntrack_protocol_weight(line):
     if " udp " in f" {text} ":
         return 2
     return 1
+
+
+def destination_sampler_loop():
+    """Discover high-volume device/destination pairs when conntrack is unavailable."""
+    while True:
+        started = time.monotonic()
+        c = cfg()
+        interval = positive_int(c.get("destination_sampler_interval_seconds", 120), 120, 30)
+        try:
+            if c.get("destination_sampler_enabled", True):
+                sample_destination_pairs(c)
+        except Exception as error:
+            print(f"Destination sampler failed: {error}")
+        elapsed = time.monotonic() - started
+        time.sleep(max(1, interval - elapsed))
+
+
+def sample_destination_pairs(config):
+    tcpdump_path = shutil.which("tcpdump")
+    if not tcpdump_path:
+        print("Destination sampler skipped: tcpdump unavailable")
+        return
+    try:
+        network = lan_network(config)
+    except ValueError as error:
+        print(f"Destination sampler skipped: {error}")
+        return
+    try:
+        device_limit = int(config.get("destination_sampler_device_limit", 10) or 10)
+    except (TypeError, ValueError):
+        device_limit = 10
+    device_limit = min(max(1, device_limit), 50)
+    try:
+        duration = int(config.get("destination_sampler_duration_seconds", 20) or 20)
+    except (TypeError, ValueError):
+        duration = 20
+    duration = min(max(5, duration), 60)
+    try:
+        target_limit = int(config.get("destination_sampler_target_limit", 240) or 240)
+    except (TypeError, ValueError):
+        target_limit = 240
+    target_limit = min(max(1, target_limit), 1000)
+    try:
+        per_device_limit = int(config.get("destination_sampler_per_device_limit", 24) or 24)
+    except (TypeError, ValueError):
+        per_device_limit = 24
+    per_device_limit = min(max(1, per_device_limit), 64)
+    try:
+        min_observed_bytes = int(config.get("destination_sampler_min_observed_bytes", 32768) or 32768)
+    except (TypeError, ValueError):
+        min_observed_bytes = 32768
+    min_observed_bytes = max(0, min_observed_bytes)
+    try:
+        ttl_seconds = int(config.get("destination_sampler_target_ttl_seconds", 900) or 900)
+    except (TypeError, ValueError):
+        ttl_seconds = 900
+    ttl_seconds = min(max(60, ttl_seconds), 3600)
+
+    devices = low_visibility_devices(config, device_limit)
+    if not devices:
+        print("Destination sampler skipped: no low-visibility devices")
+        return
+    packet_filter = "ip and (" + " or ".join(f"host {ip}" for ip in devices) + ")"
+    command = [
+        tcpdump_path,
+        "-ni",
+        str(config.get("packet_iface") or "br0"),
+        "-nn",
+        "-tt",
+        "-q",
+        packet_filter,
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=duration,
+            check=False,
+        )
+        output = result.stdout or ""
+    except subprocess.TimeoutExpired as error:
+        output = error.stdout or ""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+    counts = sample_pairs_from_tcpdump(output, set(devices), network)
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0][0], item[0][1]))
+    per_device = {}
+    promoted = 0
+    expires = time.time() + ttl_seconds
+    with sampled_visibility_targets_lock:
+        for pair, score in ranked:
+            if score < min_observed_bytes:
+                continue
+            client, destination = pair
+            device_seen = per_device.setdefault(client, set())
+            if destination not in device_seen and len(device_seen) >= per_device_limit:
+                continue
+            device_seen.add(destination)
+            sampled_visibility_targets[pair] = {"score": score, "expires": expires}
+            promoted += 1
+            if promoted >= target_limit:
+                break
+    if promoted:
+        nft_config_refresh_event.set()
+    print(
+        "Destination sampler: "
+        f"devices={len(devices)} observed_pairs={len(counts)} promoted={promoted} "
+        f"duration={duration}s min_bytes={min_observed_bytes}"
+    )
+
+
+def sample_pairs_from_tcpdump(output, devices, network):
+    counts = {}
+    for line in str(output or "").splitlines():
+        parsed = parse_tcpdump_ip_pair(line)
+        if not parsed:
+            continue
+        src, dst, observed_bytes = parsed
+        try:
+            src_ip = ipaddress.ip_address(src)
+            dst_ip = ipaddress.ip_address(dst)
+        except ValueError:
+            continue
+        if src in devices and dst_ip.version == 4 and dst_ip not in network and not dst_ip.is_unspecified:
+            pair = (src, dst)
+        elif dst in devices and src_ip.version == 4 and src_ip not in network and not src_ip.is_unspecified:
+            pair = (dst, src)
+        else:
+            continue
+        counts[pair] = counts.get(pair, 0) + max(1, observed_bytes)
+    return counts
+
+
+def parse_tcpdump_ip_pair(line):
+    match = re.search(
+        r"\bIP\s+([0-9.]+)\s+>\s+([0-9.]+):",
+        str(line or ""),
+    )
+    if not match:
+        return None
+    length_match = re.search(r"\blength\s+([0-9]+)", str(line or ""))
+    observed_bytes = int(length_match.group(1)) if length_match else 1
+    src = tcpdump_endpoint_ip(match.group(1))
+    dst = tcpdump_endpoint_ip(match.group(2))
+    if not src or not dst:
+        return None
+    return src, dst, observed_bytes
+
+
+def tcpdump_endpoint_ip(value):
+    parts = str(value or "").strip(".").split(".")
+    if len(parts) < 4:
+        return ""
+    return ".".join(parts[:4])
 
 
 def request_dns_classification_target_refresh(reason="dns_resolution", now_monotonic=None):
@@ -4379,17 +4581,21 @@ if __name__ == "__main__":
     config_monitor_thread = threading.Thread(target=config_change_monitor_loop, daemon=True)
     config_monitor_thread.start()
 
+    # Thread 7: Bounded destination discovery when conntrack is unavailable.
+    destination_sampler_thread = threading.Thread(target=destination_sampler_loop, daemon=True)
+    destination_sampler_thread.start()
+
     security_started = security_features_enabled(startup_config)
     if security_started:
-        # Thread 7: Local threat-intelligence enrichment.
+        # Thread 8: Local threat-intelligence enrichment.
         threat_thread = threading.Thread(target=threat_intel_loop, daemon=True)
         threat_thread.start()
 
-        # Thread 8: Explainable network baseline and anomaly detection.
+        # Thread 9: Explainable network baseline and anomaly detection.
         anomaly_thread = threading.Thread(target=anomaly_baseline_loop, daemon=True)
         anomaly_thread.start()
 
-    # Thread 9: Slow retention cleanup, kept away from the live packet loop.
+    # Thread 10: Slow retention cleanup, kept away from the live packet loop.
     retention_thread = threading.Thread(target=retention_cleanup_loop, daemon=True)
     retention_thread.start()
 
@@ -4402,6 +4608,7 @@ if __name__ == "__main__":
     print(f"MQTT telemetry collector {'started' if mqtt_started else 'disabled'}")
     print("Internet quality monitor started")
     print("Configuration change monitor started")
+    print("Destination sampler started")
     print(f"Security features {'started' if security_started else 'disabled'}")
     print("Retention cleanup scheduler started")
     write_heartbeat("OK", "collector started")
