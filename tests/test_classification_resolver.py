@@ -685,8 +685,7 @@ def test_conntrack_classification_targets_extracts_lan_external_pairs():
 
 
 def test_active_classification_targets_includes_bounded_conntrack_pairs(monkeypatch):
-    con = memory_db()
-    monkeypatch.setattr(live_packet_collector, "connect_db", lambda *args, **_kwargs: con)
+    monkeypatch.setattr(live_packet_collector, "dns_classification_targets", lambda *_args: tuple())
     monkeypatch.setattr(
         live_packet_collector,
         "iter_conntrack_lines",
@@ -708,6 +707,55 @@ def test_active_classification_targets_includes_bounded_conntrack_pairs(monkeypa
         ("192.168.1.142", "169.1.36.237"),
         ("192.168.1.142", "169.1.36.238"),
     )
+
+
+def test_active_classification_targets_global_cap_wins_over_per_device_conntrack_limit(monkeypatch):
+    monkeypatch.setattr(live_packet_collector, "dns_classification_targets", lambda *_args: tuple())
+
+    lines = []
+    for device in range(1, 101):
+        for dest in range(1, 6):
+            lines.append(
+                "ipv4 2 tcp 6 431999 ESTABLISHED "
+                f"src=192.168.1.{device} dst=169.1.{device}.{dest} sport=5{device:02d}{dest} dport=443 "
+                f"src=169.1.{device}.{dest} dst=165.255.241.41 sport=443 dport=5{device:02d}{dest} [ASSURED]"
+            )
+    monkeypatch.setattr(live_packet_collector, "iter_conntrack_lines", lambda _limit: iter(lines))
+
+    targets = live_packet_collector.active_classification_targets({
+        "lan_prefix": "192.168.1.",
+        "classification_nft_target_limit": 300,
+        "destination_attribution_conntrack_enabled": True,
+        "classification_conntrack_per_device_limit": 5,
+    })
+
+    assert len(targets) == 300
+    assert len(set(targets)) == 300
+
+
+def test_conntrack_classification_targets_disappear_when_conntrack_source_disappears(monkeypatch):
+    monkeypatch.setattr(live_packet_collector, "dns_classification_targets", lambda *_args: tuple())
+    config = {
+        "lan_prefix": "192.168.1.",
+        "classification_nft_target_limit": 300,
+        "destination_attribution_conntrack_enabled": True,
+    }
+
+    monkeypatch.setattr(
+        live_packet_collector,
+        "iter_conntrack_lines",
+        lambda _limit: iter([
+            "ipv4 2 tcp 6 431999 ESTABLISHED src=192.168.1.142 dst=169.1.36.238 sport=54321 dport=443 src=169.1.36.238 dst=165.255.241.41 sport=443 dport=54321 [ASSURED]",
+        ]),
+    )
+    first_signature = live_packet_collector.nft_signature(config)
+
+    monkeypatch.setattr(live_packet_collector, "iter_conntrack_lines", lambda _limit: iter([]))
+    second_signature = live_packet_collector.nft_signature(config)
+
+    assert ("192.168.1.142", "169.1.36.238") in first_signature[-1]
+    assert ("192.168.1.142", "169.1.36.238") not in second_signature[-1]
+    assert second_signature[-1] == tuple()
 
 
 def test_active_classification_targets_keeps_recent_expired_dns_destination(monkeypatch):
@@ -837,6 +885,56 @@ def test_write_destination_delta_does_not_double_count_existing_estimated_target
     )
 
     assert con.execute("SELECT COUNT(*) FROM estimated_app_traffic").fetchone()[0] == 0
+
+
+def test_same_bytes_with_dns_and_destination_classification_create_one_attribution_record(monkeypatch):
+    con = memory_db()
+    con.execute(
+        """
+        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES ('2026-07-24 10:00:00', '192.168.99.50', 'outlook.office365.com', '203.0.113.10', 900, '2026-07-24 10:15:00')
+        """
+    )
+    monkeypatch.setattr(
+        "services.classification_resolver_service.classify_application",
+        lambda domain="", destination_ip="", **_kwargs: (
+            {"primary_category": "Email", "category": "Email", "primary_app": "Outlook"}
+            if domain or destination_ip == "203.0.113.10"
+            else {"primary_category": "Unknown", "category": "Unknown"}
+        ),
+    )
+    cur = {"rx": 4096, "tx": 4096}
+
+    con.execute(
+        """
+        INSERT INTO estimated_app_traffic
+            (ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "192.168.99.50",
+            "Outlook",
+            cur["rx"] / 1024 / 1024,
+            cur["tx"] / 1024 / 1024,
+            (cur["rx"] + cur["tx"]) / 1024 / 1024,
+            "2026-07-24",
+            "2026-07-24 10:01:00",
+        ),
+    )
+    live_packet_collector.write_destination_delta(
+        con,
+        "192.168.99.50",
+        "203.0.113.10",
+        cur,
+        "2026-07-24",
+        "2026-07-24 10:01:00",
+        default_category="Outlook",
+    )
+
+    rows = con.execute("SELECT category, total_mb FROM estimated_app_traffic").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["category"] == "Outlook"
+    assert rows[0]["total_mb"] == (cur["rx"] + cur["tx"]) / 1024 / 1024
 
 
 def test_write_destination_delta_does_not_promote_low_confidence_port_protocol(monkeypatch):
