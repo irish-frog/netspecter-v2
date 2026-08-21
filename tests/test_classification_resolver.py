@@ -92,6 +92,22 @@ def memory_db():
     )
     con.execute(
         """
+        CREATE TABLE traffic_intervals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT NOT NULL,
+            name TEXT,
+            mac TEXT,
+            downloaded_mb REAL DEFAULT 0,
+            uploaded_mb REAL DEFAULT 0,
+            total_mb REAL DEFAULT 0,
+            live_bps REAL DEFAULT 0,
+            day TEXT,
+            ts TEXT
+        )
+        """
+    )
+    con.execute(
+        """
         CREATE TABLE unknown_traffic_queue (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             first_seen TEXT NOT NULL,
@@ -492,10 +508,30 @@ def test_read_nft_counters_parses_classification_counters(monkeypatch):
         lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, json.dumps(payload), ""),
     )
 
-    _device, _estimated, classification = live_packet_collector.read_nft_counters()
+    _device, _estimated, classification, _visibility = live_packet_collector.read_nft_counters()
 
     assert classification[("tx", "192.168.99.50", "203.0.113.10")] == 100
     assert classification[("rx", "192.168.99.50", "203.0.113.10")] == 250
+
+
+def test_read_nft_counters_parses_visibility_counters(monkeypatch):
+    payload = {
+        "nftables": [
+            {"rule": {"comment": "netspecter:visible:tx:192.168.99.50:203.0.113.10", "expr": [{"counter": {"bytes": 100}}]}},
+            {"rule": {"comment": "netspecter:visible:rx:192.168.99.50:203.0.113.10", "expr": [{"counter": {"bytes": 250}}]}},
+        ]
+    }
+
+    monkeypatch.setattr(
+        live_packet_collector.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, json.dumps(payload), ""),
+    )
+
+    _device, _estimated, _classification, visibility = live_packet_collector.read_nft_counters()
+
+    assert visibility[("tx", "192.168.99.50", "203.0.113.10")] == 100
+    assert visibility[("rx", "192.168.99.50", "203.0.113.10")] == 250
 
 
 def test_configured_local_app_ip_creates_estimated_target_from_dns_answer():
@@ -775,6 +811,62 @@ def test_active_classification_targets_keeps_recent_expired_dns_destination(monk
     })
 
     assert ("192.168.1.44", "13.107.136.10") in targets
+
+
+def test_low_visibility_devices_selects_high_volume_under_visible_devices(monkeypatch):
+    con = memory_db()
+    con.executemany(
+        """
+        INSERT INTO traffic_intervals (ip, total_mb, day, ts)
+        VALUES (?, ?, date('now', 'localtime'), datetime('now', 'localtime'))
+        """,
+        [
+            ("192.168.1.67", 1000.0),
+            ("192.168.1.153", 120.0),
+            ("192.168.1.10", 10.0),
+        ],
+    )
+    con.executemany(
+        """
+        INSERT INTO remote_traffic_intervals (ip, remote_ip, category, total_mb, day, ts)
+        VALUES (?, ?, ?, ?, date('now', 'localtime'), datetime('now', 'localtime'))
+        """,
+        [
+            ("192.168.1.67", "203.0.113.10", "Unknown", 150.0),
+            ("192.168.1.153", "203.0.113.20", "Social Media", 100.0),
+        ],
+    )
+    monkeypatch.setattr(live_packet_collector, "connect_db", lambda *args, **_kwargs: con)
+
+    devices = live_packet_collector.low_visibility_devices({
+        "destination_visibility_device_limit": 10,
+        "destination_visibility_min_total_mb": 50,
+        "destination_visibility_max_visible_pct": 50,
+    }, 10)
+
+    assert devices == ("192.168.1.67",)
+
+
+def test_active_visibility_targets_uses_conntrack_for_under_visible_devices(monkeypatch):
+    monkeypatch.setattr(live_packet_collector, "low_visibility_devices", lambda *_args: ("192.168.1.67",))
+    monkeypatch.setattr(
+        live_packet_collector,
+        "iter_conntrack_lines",
+        lambda _limit: iter([
+            "ipv4 2 tcp 6 431999 ESTABLISHED src=192.168.1.67 dst=142.251.216.74 sport=54321 dport=443 src=142.251.216.74 dst=165.255.241.41 sport=443 dport=54321 [ASSURED]",
+            "ipv4 2 tcp 6 431999 ESTABLISHED src=192.168.1.67 dst=102.132.104.23 sport=54322 dport=443 src=102.132.104.23 dst=165.255.241.41 sport=443 dport=54322 [ASSURED]",
+            "ipv4 2 tcp 6 431999 ESTABLISHED src=192.168.1.39 dst=108.177.15.207 sport=54323 dport=443 src=108.177.15.207 dst=165.255.241.41 sport=443 dport=54323 [ASSURED]",
+        ]),
+    )
+
+    targets = live_packet_collector.active_visibility_targets({
+        "lan_prefix": "192.168.1.",
+        "destination_visibility_probe_enabled": True,
+        "destination_visibility_nft_target_limit": 10,
+        "destination_visibility_per_device_limit": 12,
+    }, excluded_pairs={("192.168.1.67", "102.132.104.23")})
+
+    assert targets == (("192.168.1.67", "142.251.216.74"),)
 
 
 def test_active_classification_targets_prefers_attached_dnsdb_over_empty_main(monkeypatch):

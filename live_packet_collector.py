@@ -311,6 +311,7 @@ nft_config_signature = None
 nft_previous_counters = {}
 nft_previous_estimated_counters = {}
 nft_previous_classification_counters = {}
+nft_previous_visibility_counters = {}
 nft_active_ips = set()
 live_traffic_today = {"day": "", "downloaded_mb": 0.0, "uploaded_mb": 0.0, "total_mb": 0.0}
 device_inventory_write_cache = {}
@@ -328,6 +329,12 @@ ESTIMATED_APP_NFT_TARGET_LIMIT = 200
 CLASSIFICATION_NFT_TARGET_LIMIT = 300
 CLASSIFICATION_CONNTRACK_SCAN_LIMIT = 20000
 CLASSIFICATION_CONNTRACK_PER_DEVICE_LIMIT = 24
+DESTINATION_VISIBILITY_NFT_TARGET_LIMIT = 240
+DESTINATION_VISIBILITY_PER_DEVICE_LIMIT = 12
+DESTINATION_VISIBILITY_DEVICE_LIMIT = 20
+DESTINATION_VISIBILITY_MIN_TOTAL_MB = 50
+DESTINATION_VISIBILITY_MAX_VISIBLE_PCT = 50
+DESTINATION_VISIBILITY_MIN_WRITE_MB = 1.0
 NFT_SIGNATURE_REFRESH_SECONDS = 900
 DNS_CLASSIFICATION_REFRESH_MIN_SECONDS = 30
 DNS_CLASSIFICATION_NFT_REBUILD_MIN_SECONDS = 120
@@ -3012,6 +3019,124 @@ def active_classification_targets(config=None):
     return tuple(sorted(dict.fromkeys((*dns_targets, *conntrack_targets)))[:limit])
 
 
+def active_visibility_targets(config=None, excluded_pairs=None):
+    """Return bounded destination counters for high-volume devices with low visibility."""
+    c = config or cfg()
+    if not c.get("destination_visibility_probe_enabled", True):
+        return tuple()
+    try:
+        requested_limit = int(c.get("destination_visibility_nft_target_limit", DESTINATION_VISIBILITY_NFT_TARGET_LIMIT))
+    except (TypeError, ValueError):
+        requested_limit = DESTINATION_VISIBILITY_NFT_TARGET_LIMIT
+    if requested_limit <= 0:
+        return tuple()
+    limit = min(max(1, requested_limit), 1000)
+    try:
+        per_device_limit = int(c.get("destination_visibility_per_device_limit", DESTINATION_VISIBILITY_PER_DEVICE_LIMIT))
+    except (TypeError, ValueError):
+        per_device_limit = DESTINATION_VISIBILITY_PER_DEVICE_LIMIT
+    per_device_limit = min(max(1, per_device_limit), 64)
+    try:
+        network = lan_network(c)
+    except ValueError:
+        return tuple()
+    devices = low_visibility_devices(c, limit)
+    if not devices:
+        return tuple()
+    excluded = set(excluded_pairs or ())
+    targets = conntrack_targets_for_devices(
+        c,
+        network,
+        devices,
+        limit,
+        per_device_limit,
+        excluded,
+    )
+    return tuple(sorted(targets)[:limit])
+
+
+def low_visibility_devices(config, target_limit):
+    """Pick the worst current device-level visibility gaps from recent traffic rows."""
+    try:
+        device_limit = int(config.get("destination_visibility_device_limit", DESTINATION_VISIBILITY_DEVICE_LIMIT))
+    except (TypeError, ValueError):
+        device_limit = DESTINATION_VISIBILITY_DEVICE_LIMIT
+    device_limit = min(max(1, device_limit), 100)
+    try:
+        min_total_mb = float(config.get("destination_visibility_min_total_mb", DESTINATION_VISIBILITY_MIN_TOTAL_MB))
+    except (TypeError, ValueError):
+        min_total_mb = DESTINATION_VISIBILITY_MIN_TOTAL_MB
+    try:
+        max_visible_pct = float(config.get("destination_visibility_max_visible_pct", DESTINATION_VISIBILITY_MAX_VISIBLE_PCT))
+    except (TypeError, ValueError):
+        max_visible_pct = DESTINATION_VISIBILITY_MAX_VISIBLE_PCT
+    rows = []
+    con = None
+    try:
+        con = connect_db(timeout=1, busy_timeout_ms=500)
+        traffic_table = traffic_table_name(con, "traffic_intervals")
+        remote_table = traffic_table_name(con, "remote_traffic_intervals")
+        rows = con.execute(
+            f"""
+            WITH totals AS (
+              SELECT ip, SUM(total_mb) AS total_mb
+              FROM {traffic_table}
+              WHERE day=date('now', 'localtime')
+              GROUP BY ip
+            ),
+            visible AS (
+              SELECT ip, SUM(total_mb) AS visible_mb
+              FROM {remote_table}
+              WHERE day=date('now', 'localtime')
+              GROUP BY ip
+            )
+            SELECT totals.ip, totals.total_mb, COALESCE(visible.visible_mb, 0) AS visible_mb
+            FROM totals
+            LEFT JOIN visible ON visible.ip = totals.ip
+            WHERE totals.total_mb >= ?
+              AND 100.0 * COALESCE(visible.visible_mb, 0) / NULLIF(totals.total_mb, 0) <= ?
+            ORDER BY (totals.total_mb - COALESCE(visible.visible_mb, 0)) DESC
+            LIMIT ?
+            """,
+            (min_total_mb, max_visible_pct, min(device_limit, target_limit)),
+        ).fetchall()
+    except Exception as error:
+        print(f"Destination visibility target refresh failed: {error}")
+        return tuple()
+    finally:
+        if con:
+            con.close()
+    return tuple(str(row["ip"] if hasattr(row, "keys") else row[0]).strip() for row in rows)
+
+
+def conntrack_targets_for_devices(config, network, devices, limit, per_device_limit, excluded_pairs=None):
+    device_set = set(devices or ())
+    excluded = set(excluded_pairs or ())
+    if not device_set or limit <= 0:
+        return tuple()
+    try:
+        scan_limit = int(config.get("classification_conntrack_scan_limit", CLASSIFICATION_CONNTRACK_SCAN_LIMIT) or CLASSIFICATION_CONNTRACK_SCAN_LIMIT)
+    except (TypeError, ValueError):
+        scan_limit = CLASSIFICATION_CONNTRACK_SCAN_LIMIT
+    scan_limit = min(max(100, scan_limit), 100000)
+    counts = {}
+    per_device = {}
+    for line in iter_conntrack_lines(scan_limit):
+        pair = conntrack_lan_external_pair(line, network)
+        if not pair or pair in excluded:
+            continue
+        client, destination = pair
+        if client not in device_set:
+            continue
+        device_seen = per_device.setdefault(client, set())
+        if destination not in device_seen and len(device_seen) >= per_device_limit:
+            continue
+        device_seen.add(destination)
+        counts[pair] = counts.get(pair, 0) + conntrack_protocol_weight(line)
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0][0], item[0][1]))
+    return tuple(pair for pair, _score in ranked[:limit])
+
+
 def dns_classification_targets(config, network, limit, lookback_hours):
     rows = []
     con = None
@@ -3169,23 +3294,31 @@ def nft_signature(config=None):
                 banned_ips.append(value)
         except ValueError:
             continue
+    app_targets = active_estimated_app_targets()
+    classification_targets = active_classification_targets(c)
+    covered_pairs = {
+        *((client, destination) for _category, client, destination in app_targets),
+        *classification_targets,
+    }
+    visibility_targets = active_visibility_targets(c, covered_pairs)
     return (
         str(c.get("packet_iface") or "br0"),
         str(lan_network(c)),
         tuple(sorted(ignored_ips(c))),
         tuple(sorted(set(banned_ips))),
-        active_estimated_app_targets(),
-        active_classification_targets(c),
+        app_targets,
+        classification_targets,
+        visibility_targets,
     )
 
 
 def install_nft_counters(config=None):
     """Create bridge traffic counters and any configured IDS endpoint drop rules."""
-    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_previous_classification_counters, nft_active_ips, live_traffic_today, device_inventory_write_cache
+    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_previous_classification_counters, nft_previous_visibility_counters, nft_active_ips, live_traffic_today, device_inventory_write_cache
     started = time.monotonic()
     c = config or cfg()
     signature = nft_signature(c)
-    interface, network_text, ignored, banned_ips, app_targets, classification_targets = signature
+    interface, network_text, ignored, banned_ips, app_targets, classification_targets, visibility_targets = signature
     network = ipaddress.ip_network(network_text)
     ignored_set = set(ignored)
     hosts = [str(ip) for ip in network.hosts() if str(ip) not in ignored_set]
@@ -3251,6 +3384,16 @@ def install_nft_counters(config=None):
         lines.append(
             f'    ip daddr {client} ip saddr {destination} counter comment "netspecter:classify:rx:{client}:{destination}"'
         )
+    covered_pairs = {*app_target_pairs, *classification_targets}
+    for client, destination in visibility_targets:
+        if (client, destination) in covered_pairs:
+            continue
+        lines.append(
+            f'    ip saddr {client} ip daddr {destination} counter comment "netspecter:visible:tx:{client}:{destination}"'
+        )
+        lines.append(
+            f'    ip daddr {client} ip saddr {destination} counter comment "netspecter:visible:rx:{client}:{destination}"'
+        )
     lines.extend(["  }", "}"])
     result = subprocess.run(
         ["nft", "-f", "-"],
@@ -3267,19 +3410,21 @@ def install_nft_counters(config=None):
     nft_previous_counters = {}
     nft_previous_estimated_counters = {}
     nft_previous_classification_counters = {}
+    nft_previous_visibility_counters = {}
     nft_active_ips = set()
     device_inventory_write_cache = {}
     print(
         f"nftables traffic counters installed for {network_text} on bridge traffic ({interface}); "
         f"{len(app_targets)} monitored app attribution target(s); "
-        f"{len(classification_targets)} classification target(s); {len(banned_ips)} IDS banned endpoint(s)"
+        f"{len(classification_targets)} classification target(s); "
+        f"{len(visibility_targets)} visibility target(s); {len(banned_ips)} IDS banned endpoint(s)"
     )
     log_slow_loop("nftables counter install", time.monotonic() - started, threshold=2.0)
 
 
 def remove_nft_counters():
     """Remove NetSpecter's private counter table during an orderly shutdown."""
-    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_previous_classification_counters, nft_active_ips, live_traffic_today
+    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_previous_classification_counters, nft_previous_visibility_counters, nft_active_ips, live_traffic_today
     if nft_config_signature is None:
         return
     subprocess.run(
@@ -3292,6 +3437,7 @@ def remove_nft_counters():
     nft_previous_counters = {}
     nft_previous_estimated_counters = {}
     nft_previous_classification_counters = {}
+    nft_previous_visibility_counters = {}
     nft_active_ips = set()
     print("NetSpecter nftables traffic counters removed")
 
@@ -3318,6 +3464,7 @@ def read_nft_counters():
     counters = {}
     estimated_counters = {}
     classification_counters = {}
+    visibility_counters = {}
     for item in payload.get("nftables", []):
         rule = item.get("rule") if isinstance(item, dict) else None
         if not rule:
@@ -3337,7 +3484,9 @@ def read_nft_counters():
             estimated_counters[(parts[2], parts[3], parts[4], parts[5])] = total_bytes
         elif len(parts) == 5 and parts[1] == "classify" and parts[2] in ("rx", "tx"):
             classification_counters[(parts[2], parts[3], parts[4])] = total_bytes
-    return counters, estimated_counters, classification_counters
+        elif len(parts) == 5 and parts[1] == "visible" and parts[2] in ("rx", "tx"):
+            visibility_counters[(parts[2], parts[3], parts[4])] = total_bytes
+    return counters, estimated_counters, classification_counters, visibility_counters
 
 
 def read_arp_macs():
@@ -3407,6 +3556,14 @@ def is_attribution_ready_classification(classification):
     return str(classification.evidence_source or "") in ATTRIBUTION_EVIDENCE_SOURCES
 
 
+def destination_visibility_min_write_bytes(config=None):
+    try:
+        min_mb = float((config or cfg()).get("destination_visibility_min_write_mb", DESTINATION_VISIBILITY_MIN_WRITE_MB))
+    except (TypeError, ValueError):
+        min_mb = DESTINATION_VISIBILITY_MIN_WRITE_MB
+    return int(max(0.0, min_mb) * 1024 * 1024)
+
+
 def traffic_table_name(con, table_name):
     try:
         attached = {str(row[1]) for row in con.execute("PRAGMA database_list").fetchall()}
@@ -3436,7 +3593,7 @@ def flush_loop():
     - Updates devices
     - Inserts additive traffic_intervals rows
     """
-    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_previous_classification_counters, nft_active_ips, live_traffic_today
+    global nft_config_signature, nft_previous_counters, nft_previous_estimated_counters, nft_previous_classification_counters, nft_previous_visibility_counters, nft_active_ips, live_traffic_today
     init_db()
     last_flush_at = time.monotonic()
     last_signature_check = 0
@@ -3463,7 +3620,7 @@ def flush_loop():
                         last_forced_signature_rebuild = now_monotonic
                 nft_config_refresh_event.clear()
 
-            current_counters, current_estimated_counters, current_classification_counters = read_nft_counters()
+            current_counters, current_estimated_counters, current_classification_counters, current_visibility_counters = read_nft_counters()
             flush_at = time.monotonic()
             elapsed = max(flush_at - last_flush_at, 0.001)
             last_flush_at = flush_at
@@ -3506,6 +3663,25 @@ def flush_loop():
                 if delta:
                     classification_destination_deltas.setdefault((ip, destination), {"rx": 0, "tx": 0})
                     classification_destination_deltas[(ip, destination)][direction] += delta
+            next_previous_visibility_counters = dict(nft_previous_visibility_counters)
+            pending_visibility_deltas = {}
+            for (direction, ip, destination), total_bytes in current_visibility_counters.items():
+                key = (direction, ip, destination)
+                previous = nft_previous_visibility_counters.get(key, 0)
+                delta = max(total_bytes - previous, 0)
+                if delta:
+                    pending_visibility_deltas.setdefault((ip, destination), {"rx": 0, "tx": 0})
+                    pending_visibility_deltas[(ip, destination)][direction] += delta
+            visibility_destination_deltas = {}
+            min_visibility_write_bytes = destination_visibility_min_write_bytes(c)
+            for (ip, destination), cur in pending_visibility_deltas.items():
+                if cur["rx"] + cur["tx"] < min_visibility_write_bytes:
+                    continue
+                visibility_destination_deltas[(ip, destination)] = cur
+                for direction in ("rx", "tx"):
+                    key = (direction, ip, destination)
+                    if key in current_visibility_counters:
+                        next_previous_visibility_counters[key] = current_visibility_counters[key]
             write_heartbeat("OK", "nftables counters running", fast=True)
         except Exception as e:
             print(f"nftables traffic collection failed: {e}")
@@ -3727,6 +3903,11 @@ def flush_loop():
                     write_destination_delta(con, ip, destination, cur, day, now, "Unknown")
                     traffic_step_timings["destination_write"] += time.monotonic() - step_started
                     destination_writes += 1
+                for (ip, destination), cur in visibility_destination_deltas.items():
+                    step_started = time.monotonic()
+                    write_destination_delta(con, ip, destination, cur, day, now, "Unknown")
+                    traffic_step_timings["destination_write"] += time.monotonic() - step_started
+                    destination_writes += 1
             traffic_detail_elapsed = time.monotonic() - traffic_detail_started
             if traffic_detail_elapsed >= 0.2:
                 print(
@@ -3745,6 +3926,7 @@ def flush_loop():
             nft_previous_counters = next_previous_counters
             nft_previous_estimated_counters = next_previous_estimated_counters
             nft_previous_classification_counters = next_previous_classification_counters
+            nft_previous_visibility_counters = next_previous_visibility_counters
             nft_active_ips = next_active_ips
         except sqlite3.OperationalError as e:
             if "database is locked" in str(e).lower():
