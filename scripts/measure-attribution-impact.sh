@@ -3,6 +3,7 @@ set -euo pipefail
 
 SERVICE="${SERVICE:-netspecter-collector.service}"
 DB_PATH="${NETSPECTER_DB_PATH:-/var/lib/netspecter/netspecter.db}"
+TRAFFIC_DB_PATH="${NETSPECTER_TRAFFIC_DB_PATH:-/var/lib/netspecter/netspecter_traffic.db}"
 NFT_FAMILY="${NFT_FAMILY:-bridge}"
 NFT_TABLE="${NFT_TABLE:-netspecter}"
 NFT_CHAIN="${NFT_CHAIN:-forward}"
@@ -33,8 +34,9 @@ avg_from_journal() {
 
 sum_from_sql() {
   local sql="$1"
-  if [ -r "$DB_PATH" ] && command -v sqlite3 >/dev/null 2>&1; then
-    sqlite3 "$DB_PATH" "$sql" 2>/dev/null || printf "n/a"
+  local db_path="$2"
+  if [ -r "$db_path" ] && command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 "$db_path" "$sql" 2>/dev/null || printf "n/a"
   else
     printf "n/a"
   fi
@@ -55,8 +57,13 @@ if [ -n "$main_pid" ] && [ "$main_pid" != "0" ] && [ -r "/proc/$main_pid/status"
   rss_kb="$(awk '/VmRSS:/ {print $2 " kB"}' "/proc/$main_pid/status")"
 fi
 
-estimated_rows="$(sum_from_sql "SELECT COUNT(*) FROM estimated_app_traffic WHERE ts >= datetime('now', 'localtime', '-$WINDOW_MINUTES minutes');")"
-destination_rows="$(sum_from_sql "SELECT COUNT(*) FROM remote_traffic_intervals WHERE ts >= datetime('now', 'localtime', '-$WINDOW_MINUTES minutes');")"
+traffic_db="$DB_PATH"
+if [ -r "$TRAFFIC_DB_PATH" ] && sqlite3 "$TRAFFIC_DB_PATH" "SELECT 1 FROM sqlite_master WHERE type='table' AND name='estimated_app_traffic' LIMIT 1;" 2>/dev/null | grep -q 1; then
+  traffic_db="$TRAFFIC_DB_PATH"
+fi
+
+estimated_rows="$(sum_from_sql "SELECT COUNT(*) FROM estimated_app_traffic WHERE ts >= datetime('now', 'localtime', '-$WINDOW_MINUTES minutes');" "$traffic_db")"
+destination_rows="$(sum_from_sql "SELECT COUNT(*) FROM remote_traffic_intervals WHERE ts >= datetime('now', 'localtime', '-$WINDOW_MINUTES minutes');" "$traffic_db")"
 
 echo "NetSpecter attribution impact sample"
 echo "Window: last ${WINDOW_MINUTES} minute(s)"
@@ -67,6 +74,7 @@ metric "estimated_write_avg" "$(avg_from_journal estimated_write)"
 metric "destination_write_avg" "$(avg_from_journal destination_write)"
 metric "classification_nft_rules" "$(rule_count 'netspecter:classify:')"
 metric "estimated_nft_rules" "$(rule_count 'netspecter:estimated:')"
+metric "traffic_db" "$traffic_db"
 metric "estimated_rows_window" "$estimated_rows"
 metric "destination_rows_window" "$destination_rows"
 metric "estimated_rows_per_sec" "$(awk -v rows="$estimated_rows" -v minutes="$WINDOW_MINUTES" 'BEGIN { if (rows ~ /^[0-9]+$/) printf "%.3f", rows / (minutes * 60); else print "n/a" }')"

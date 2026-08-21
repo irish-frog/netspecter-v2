@@ -29,6 +29,7 @@ import json
 import os
 import re
 import signal
+import shutil
 import smtplib
 import sqlite3
 import ssl
