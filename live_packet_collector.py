@@ -3044,7 +3044,7 @@ def active_visibility_targets(config=None, excluded_pairs=None):
     if not devices:
         return tuple()
     excluded = set(excluded_pairs or ())
-    targets = conntrack_targets_for_devices(
+    recent_targets = recent_visibility_targets_for_devices(
         c,
         network,
         devices,
@@ -3052,6 +3052,16 @@ def active_visibility_targets(config=None, excluded_pairs=None):
         per_device_limit,
         excluded,
     )
+    excluded.update(recent_targets)
+    conntrack_targets = conntrack_targets_for_devices(
+        c,
+        network,
+        devices,
+        max(0, limit - len(recent_targets)),
+        per_device_limit,
+        excluded,
+    )
+    targets = (*recent_targets, *conntrack_targets)
     return tuple(sorted(targets)[:limit])
 
 
@@ -3135,6 +3145,70 @@ def conntrack_targets_for_devices(config, network, devices, limit, per_device_li
         counts[pair] = counts.get(pair, 0) + conntrack_protocol_weight(line)
     ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0][0], item[0][1]))
     return tuple(pair for pair, _score in ranked[:limit])
+
+
+def recent_visibility_targets_for_devices(config, network, devices, limit, per_device_limit, excluded_pairs=None):
+    """Reuse recent visible destinations for under-visible devices as longer-lived probes."""
+    device_set = set(devices or ())
+    excluded = set(excluded_pairs or ())
+    if not device_set or limit <= 0:
+        return tuple()
+    try:
+        lookback_minutes = int(config.get("destination_visibility_recent_lookback_minutes", 60) or 60)
+    except (TypeError, ValueError):
+        lookback_minutes = 60
+    lookback_minutes = min(max(5, lookback_minutes), 360)
+    rows = []
+    con = None
+    try:
+        con = connect_db(timeout=1, busy_timeout_ms=500)
+        remote_table = traffic_table_name(con, "remote_traffic_intervals")
+        placeholders = ",".join("?" for _ip in sorted(device_set))
+        rows = con.execute(
+            f"""
+            SELECT ip, remote_ip, SUM(total_mb) AS total_mb
+            FROM {remote_table}
+            WHERE ts >= datetime('now', 'localtime', ?)
+              AND ip IN ({placeholders})
+              AND remote_ip IS NOT NULL AND remote_ip != ''
+            GROUP BY ip, remote_ip
+            ORDER BY SUM(total_mb) DESC
+            LIMIT ?
+            """,
+            (f"-{lookback_minutes} minutes", *sorted(device_set), limit * 4),
+        ).fetchall()
+    except Exception as error:
+        print(f"Recent visibility target refresh failed: {error}")
+        return tuple()
+    finally:
+        if con:
+            con.close()
+
+    targets = []
+    per_device = {}
+    for row in rows:
+        client = str(row["ip"] if hasattr(row, "keys") else row[0]).strip()
+        destination = str(row["remote_ip"] if hasattr(row, "keys") else row[1]).strip()
+        pair = (client, destination)
+        if pair in excluded:
+            continue
+        try:
+            client_ip = ipaddress.ip_address(client)
+            destination_ip = ipaddress.ip_address(destination)
+        except ValueError:
+            continue
+        if client_ip.version != 4 or destination_ip.version != 4:
+            continue
+        if client_ip not in network or destination_ip in network or destination_ip.is_unspecified:
+            continue
+        device_seen = per_device.setdefault(client, set())
+        if destination not in device_seen and len(device_seen) >= per_device_limit:
+            continue
+        device_seen.add(destination)
+        targets.append(pair)
+        if len(targets) >= limit:
+            break
+    return tuple(targets)
 
 
 def dns_classification_targets(config, network, limit, lookback_hours):

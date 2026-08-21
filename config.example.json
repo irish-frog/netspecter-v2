@@ -23,6 +23,7 @@
   "destination_visibility_min_total_mb": 50,
   "destination_visibility_max_visible_pct": 50,
   "destination_visibility_min_write_mb": 1.0,
+  "destination_visibility_recent_lookback_minutes": 60,
   "internal_dns_enabled": false,
   "internal_dns_server_ip": "",
   "internal_dns_zones": [],

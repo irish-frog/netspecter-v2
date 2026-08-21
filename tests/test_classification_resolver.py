@@ -869,6 +869,33 @@ def test_active_visibility_targets_uses_conntrack_for_under_visible_devices(monk
     assert targets == (("192.168.1.67", "142.251.216.74"),)
 
 
+def test_active_visibility_targets_falls_back_to_recent_destination_rows(monkeypatch):
+    con = memory_db()
+    con.execute(
+        """
+        INSERT INTO remote_traffic_intervals
+            (ip, remote_ip, category, total_mb, day, ts)
+        VALUES
+            ('192.168.1.67', '142.251.216.74', 'Google Cloud', 110, date('now', 'localtime'), datetime('now', 'localtime')),
+            ('192.168.1.67', '102.132.104.23', 'Social Media', 30, date('now', 'localtime'), datetime('now', 'localtime')),
+            ('192.168.1.39', '108.177.15.207', 'Cloud Infrastructure', 100, date('now', 'localtime'), datetime('now', 'localtime'))
+        """
+    )
+    monkeypatch.setattr(live_packet_collector, "connect_db", lambda *args, **_kwargs: con)
+    monkeypatch.setattr(live_packet_collector, "low_visibility_devices", lambda *_args: ("192.168.1.67",))
+    monkeypatch.setattr(live_packet_collector, "iter_conntrack_lines", lambda _limit: iter([]))
+
+    targets = live_packet_collector.active_visibility_targets({
+        "lan_prefix": "192.168.1.",
+        "destination_visibility_probe_enabled": True,
+        "destination_visibility_nft_target_limit": 10,
+        "destination_visibility_per_device_limit": 12,
+        "destination_visibility_recent_lookback_minutes": 60,
+    }, excluded_pairs={("192.168.1.67", "102.132.104.23")})
+
+    assert targets == (("192.168.1.67", "142.251.216.74"),)
+
+
 def test_active_classification_targets_prefers_attached_dnsdb_over_empty_main(monkeypatch):
     con = memory_db()
     con.execute("ATTACH DATABASE ':memory:' AS dnsdb")
