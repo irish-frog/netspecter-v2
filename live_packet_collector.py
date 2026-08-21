@@ -3075,11 +3075,16 @@ def active_visibility_targets(config=None, excluded_pairs=None):
         network = lan_network(c)
     except ValueError:
         return tuple()
+    excluded = set(excluded_pairs or ())
     devices = low_visibility_devices(c, limit)
     if not devices:
-        print(f"Destination visibility target refresh: limit={limit} eligible_devices=0 active=0")
-        return tuple()
-    excluded = set(excluded_pairs or ())
+        sampled_targets = sampled_visibility_target_pairs(c, limit, per_device_limit, excluded)
+        print(
+            "Destination visibility target refresh: "
+            f"limit={limit} eligible_devices=0 excluded={len(excluded_pairs or ())} "
+            f"recent=0 sampled={len(sampled_targets)} conntrack=0 active={len(sampled_targets)}"
+        )
+        return tuple(sorted(sampled_targets)[:limit])
     recent_targets = recent_visibility_targets_for_devices(
         c,
         network,

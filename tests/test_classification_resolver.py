@@ -896,6 +896,24 @@ def test_active_visibility_targets_falls_back_to_recent_destination_rows(monkeyp
     assert targets == (("192.168.1.67", "142.251.216.74"),)
 
 
+def test_active_visibility_targets_uses_sampled_targets_without_eligible_devices(monkeypatch):
+    live_packet_collector.sampled_visibility_targets.clear()
+    live_packet_collector.sampled_visibility_targets[("192.168.1.57", "40.104.14.210")] = {
+        "score": 100 * 1024 * 1024,
+        "expires": 9999999999,
+    }
+    monkeypatch.setattr(live_packet_collector, "low_visibility_devices", lambda *_args: tuple())
+
+    targets = live_packet_collector.active_visibility_targets({
+        "lan_prefix": "192.168.1.",
+        "destination_visibility_probe_enabled": True,
+        "destination_visibility_nft_target_limit": 10,
+        "destination_visibility_per_device_limit": 12,
+    })
+
+    assert targets == (("192.168.1.57", "40.104.14.210"),)
+
+
 def test_tcpdump_sampler_extracts_lan_external_pairs():
     network = live_packet_collector.lan_network({"lan_prefix": "192.168.1."})
     output = "\n".join([
