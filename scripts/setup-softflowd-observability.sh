@@ -62,13 +62,33 @@ print(int(data.get("softflowd_inactive_timeout_seconds") or 15))
 PY
 )"
 
+softflowd_bin="$(command -v softflowd)"
+
+cat >/etc/systemd/system/netspecter-softflowd.service <<EOF
+[Unit]
+Description=NetSpecter softflowd NetFlow exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$softflowd_bin -D -i $iface -n 127.0.0.1:$port -v 9 -t maxlife=$active -t expint=$inactive
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 cat >/etc/default/softflowd <<EOF
 INTERFACE="$iface"
 OPTIONS="-n 127.0.0.1:$port -v 9 -t maxlife=$active -t expint=$inactive"
 EOF
 
-systemctl enable softflowd
-systemctl restart softflowd
+systemctl daemon-reload
+systemctl disable --now softflowd >/dev/null 2>&1 || true
+systemctl enable netspecter-softflowd.service
+systemctl restart netspecter-softflowd.service
 systemctl restart netspecter-collector.service
 
 echo "softflowd exporting NetFlow v9 from $iface to 127.0.0.1:$port"
