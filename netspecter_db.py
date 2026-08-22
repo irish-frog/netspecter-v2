@@ -285,6 +285,10 @@ def init_traffic_db():
             ts TEXT
         )
     """)
+    _ensure_columns(con, [
+        "ALTER TABLE traffic_intervals ADD COLUMN device_id TEXT",
+        "ALTER TABLE traffic_intervals ADD COLUMN identity_key TEXT",
+    ])
     con.execute("CREATE INDEX IF NOT EXISTS idx_intervals_day_ip ON traffic_intervals(day, ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_intervals_ip_ts ON traffic_intervals(ip, ts)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_intervals_ts ON traffic_intervals(ts)")
