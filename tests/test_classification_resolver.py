@@ -129,6 +129,20 @@ def memory_db():
     )
     con.execute(
         """
+        CREATE TABLE destination_identity (
+            remote_ip TEXT NOT NULL,
+            hostname TEXT NOT NULL DEFAULT '',
+            application TEXT,
+            category TEXT,
+            source TEXT,
+            first_seen INTEGER,
+            last_seen INTEGER,
+            PRIMARY KEY(remote_ip, hostname)
+        )
+        """
+    )
+    con.execute(
+        """
         CREATE TABLE ids_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_type TEXT NOT NULL,
@@ -995,6 +1009,64 @@ def test_netflow_promotion_accumulates_across_batches():
     assert first == 0
     assert second == 1
     assert pair in live_packet_collector.sampled_visibility_targets
+
+
+def test_destination_identity_enrichment_classifies_visible_unknown_once(monkeypatch):
+    con = memory_db()
+    con.execute(
+        """
+        INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
+        VALUES (
+            '2026-08-22 10:00:00',
+            '192.168.1.67',
+            'api16-normal-useast5.tiktokv.us',
+            '71.18.179.1',
+            300,
+            '2026-08-22 10:05:00'
+        )
+        """
+    )
+    con.execute(
+        """
+        INSERT INTO remote_traffic_intervals (
+            ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts
+        )
+        VALUES (
+            '192.168.1.67',
+            '71.18.179.1',
+            'Unknown',
+            25.0,
+            2.0,
+            27.0,
+            '2026-08-22',
+            '2026-08-22 10:02:00'
+        )
+        """
+    )
+    monkeypatch.setattr(
+        "services.classification_resolver_service.classify_application",
+        lambda domain="", **_kwargs: {
+            "primary_category": "TikTok",
+            "category": "TikTok",
+            "app": "TikTok",
+            "application": "TikTok",
+        } if "tiktok" in str(domain or "") else {"primary_category": "Unknown", "category": "Unknown"},
+    )
+
+    first = live_packet_collector.enrich_unknown_destination_identities(con, batch_size=10, min_mb=1.0)
+    second = live_packet_collector.enrich_unknown_destination_identities(con, batch_size=10, min_mb=1.0)
+
+    assert first == {"processed": 1, "classified": 1}
+    assert second == {"processed": 0, "classified": 0}
+    assert con.execute("SELECT category FROM remote_traffic_intervals").fetchone()["category"] == "TikTok"
+    assert con.execute("SELECT COUNT(*) FROM estimated_app_traffic").fetchone()[0] == 1
+    assert con.execute("SELECT ROUND(SUM(total_mb), 1) FROM estimated_app_traffic").fetchone()[0] == 27.0
+    identity = con.execute("SELECT application, category, source FROM destination_identity").fetchone()
+    assert dict(identity) == {
+        "application": "api16-normal-useast5.tiktokv.us",
+        "category": "TikTok",
+        "source": "dns_resolution",
+    }
 
 
 def test_active_classification_targets_prefers_attached_dnsdb_over_empty_main(monkeypatch):

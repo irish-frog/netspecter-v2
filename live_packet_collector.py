@@ -192,6 +192,10 @@ DEFAULT_CONFIG = {
     "netflow_promote_per_device_limit": 24,
     "softflowd_active_timeout_seconds": 60,
     "softflowd_inactive_timeout_seconds": 15,
+    "destination_identity_enrichment_enabled": True,
+    "destination_identity_enrichment_interval_seconds": 300,
+    "destination_identity_enrichment_batch_size": 300,
+    "destination_identity_enrichment_min_mb": 0.25,
 
     "adguard_url": "http://127.0.0.1",
     "adguard_user": "admin",
@@ -344,6 +348,7 @@ netflow_templates = {}
 last_suricata_import = 0.0
 last_ids_default_reclassify = 0.0
 last_unknown_reclassify = 0.0
+last_destination_identity_enrichment = 0.0
 last_unifi_import = 0.0
 last_ids_maintenance = 0.0
 last_incident_build = 0.0
@@ -359,6 +364,9 @@ DESTINATION_VISIBILITY_DEVICE_LIMIT = 20
 DESTINATION_VISIBILITY_MIN_TOTAL_MB = 50
 DESTINATION_VISIBILITY_MAX_VISIBLE_PCT = 50
 DESTINATION_VISIBILITY_MIN_WRITE_MB = 1.0
+DESTINATION_IDENTITY_ENRICHMENT_INTERVAL_SECONDS = 300
+DESTINATION_IDENTITY_ENRICHMENT_BATCH_SIZE = 300
+DESTINATION_IDENTITY_ENRICHMENT_MIN_MB = 0.25
 NFT_SIGNATURE_REFRESH_SECONDS = 900
 DNS_CLASSIFICATION_REFRESH_MIN_SECONDS = 30
 DNS_CLASSIFICATION_NFT_REBUILD_MIN_SECONDS = 120
@@ -2572,6 +2580,130 @@ def run_unknown_queue_reclassification(batch_size=200):
         return {"processed": 0, "classified": 0, "error": str(error)}
 
 
+def run_destination_identity_enrichment(config=None):
+    """Classify high-volume visible Unknown destinations from local evidence."""
+    c = config or cfg()
+    if not c.get("destination_identity_enrichment_enabled", True):
+        return {"processed": 0, "classified": 0}
+    if database_contention_remaining() > 0:
+        return {"processed": 0, "classified": 0}
+    try:
+        batch_size = positive_int(
+            c.get("destination_identity_enrichment_batch_size", DESTINATION_IDENTITY_ENRICHMENT_BATCH_SIZE),
+            DESTINATION_IDENTITY_ENRICHMENT_BATCH_SIZE,
+            1,
+        )
+    except Exception:
+        batch_size = DESTINATION_IDENTITY_ENRICHMENT_BATCH_SIZE
+    batch_size = min(max(1, batch_size), 500)
+    try:
+        min_mb = float(c.get("destination_identity_enrichment_min_mb", DESTINATION_IDENTITY_ENRICHMENT_MIN_MB))
+    except (TypeError, ValueError):
+        min_mb = DESTINATION_IDENTITY_ENRICHMENT_MIN_MB
+    min_mb = max(0.0, min_mb)
+    try:
+        with timed_db_write("destination_identity_enrichment") as con:
+            result = enrich_unknown_destination_identities(con, batch_size=batch_size, min_mb=min_mb)
+        return result
+    except Exception as error:
+        if "database is locked" in str(error).lower():
+            note_database_contention("Destination identity enrichment", error)
+            return {"processed": 0, "classified": 0, "error": str(error)}
+        print(f"Destination identity enrichment failed: {error}")
+        return {"processed": 0, "classified": 0, "error": str(error)}
+
+
+def enrich_unknown_destination_identities(con, batch_size=100, min_mb=1.0):
+    remote_table = traffic_table_name(con, "remote_traffic_intervals")
+    estimated_table = traffic_table_name(con, "estimated_app_traffic")
+    rows = con.execute(
+        f"""
+        SELECT r.id, r.ip, r.remote_ip, r.downloaded_mb, r.uploaded_mb, r.total_mb, r.day, r.ts
+        FROM {remote_table} r
+        WHERE r.day=date('now', 'localtime')
+          AND r.category='Unknown'
+          AND r.total_mb >= ?
+          AND NOT EXISTS (
+            SELECT 1
+            FROM classified_flow_facts f
+            WHERE f.flow_id='destination_identity:' || r.id
+              AND f.local_ip=r.ip
+              AND f.remote_ip=r.remote_ip
+          )
+        ORDER BY r.total_mb DESC, r.ts DESC
+        LIMIT ?
+        """,
+        (float(min_mb), int(batch_size)),
+    ).fetchall()
+    processed = 0
+    classified = 0
+    now_epoch = int(time.time())
+    for row in rows:
+        processed += 1
+        if hasattr(row, "keys"):
+            row_id = row["id"]
+            local_ip = row["ip"]
+            remote_ip = row["remote_ip"]
+            downloaded_mb = float(row["downloaded_mb"] or 0)
+            uploaded_mb = float(row["uploaded_mb"] or 0)
+            total_mb = float(row["total_mb"] or 0)
+            day = row["day"]
+            ts = row["ts"]
+        else:
+            row_id, local_ip, remote_ip = row[0], row[1], row[2]
+            downloaded_mb = float(row[3] or 0)
+            uploaded_mb = float(row[4] or 0)
+            total_mb = float(row[5] or 0)
+            day, ts = row[6], row[7]
+        flow = Flow(
+            ts=str(ts or datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            local_ip=str(local_ip or ""),
+            remote_ip=str(remote_ip or ""),
+            bytes=int(max(0.0, total_mb) * 1024 * 1024),
+            protocol="tcp",
+            flow_id=f"destination_identity:{row_id}",
+        )
+        classification = classify_flow(con, flow, emit_timing=False)
+        if not is_attribution_ready_classification(classification):
+            continue
+        category = classification.category
+        application = classification.application or classification.category
+        con.execute(
+            f"UPDATE {remote_table} SET category=? WHERE id=?",
+            (category, row_id),
+        )
+        con.execute(
+            f"""
+            INSERT INTO {estimated_table}
+                (ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (local_ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts),
+        )
+        con.execute(
+            """
+            INSERT INTO destination_identity (
+                remote_ip, hostname, application, category, source, first_seen, last_seen
+            )
+            VALUES (?, '', ?, ?, ?, ?, ?)
+            ON CONFLICT(remote_ip, hostname) DO UPDATE SET
+                application=excluded.application,
+                category=excluded.category,
+                source=excluded.source,
+                last_seen=excluded.last_seen
+            """,
+            (remote_ip, application, category, classification.evidence_source, now_epoch, now_epoch),
+        )
+        write_classified_flow_fact(con, flow, classification)
+        classified += 1
+    if classified:
+        print(
+            "Destination identity enrichment: "
+            f"{classified} classified from {processed} visible unknown destination row(s)"
+        )
+    return {"processed": processed, "classified": classified}
+
+
 def write_heartbeat(status="OK", note="", fast=False):
     c = cfg()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -4716,6 +4848,7 @@ def import_adguard_querylog():
 def adguard_querylog_loop():
     """Background loop for AdGuard DNS querylog importing."""
     global last_suricata_import, last_unifi_import, last_ids_maintenance, last_incident_build, last_netbios_discovery
+    global last_destination_identity_enrichment
     init_db()
 
     while True:
@@ -4754,6 +4887,18 @@ def adguard_querylog_loop():
                     if created:
                         print(f"Security incidents created: {created}")
             run_timed_step("AdGuard/querylog import", import_adguard_querylog)
+            enrichment_interval = positive_int(
+                c.get("destination_identity_enrichment_interval_seconds", DESTINATION_IDENTITY_ENRICHMENT_INTERVAL_SECONDS),
+                DESTINATION_IDENTITY_ENRICHMENT_INTERVAL_SECONDS,
+                60,
+            )
+            if now_mono - last_destination_identity_enrichment >= enrichment_interval:
+                last_destination_identity_enrichment = now_mono
+                result = run_timed_step("Destination identity enrichment", run_destination_identity_enrichment, c)
+                if result and result.get("classified"):
+                    request_dns_classification_target_refresh(
+                        f"destination_identity_enrichment={result.get('classified')}"
+                    )
         except Exception as e:
             print(f"AdGuard querylog loop failed: {e}")
 
