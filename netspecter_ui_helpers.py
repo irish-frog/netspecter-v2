@@ -115,21 +115,13 @@ def device_age_seconds(value):
 
 
 def device_lifecycle_badges(first_seen, last_seen):
-    """Build New/Offline/Online badges for the Devices page."""
+    """Build lifecycle-only badges for the Devices page."""
     badges = []
 
     first_age = device_age_seconds(first_seen)
-    last_age = device_age_seconds(last_seen)
 
     if first_age is not None and first_age <= 86400:
         badges.append('<span class="badge-new">New</span>')
-
-    if last_age is None:
-        badges.append('<span class="badge-unknown">Unknown</span>')
-    elif last_age > 300:
-        badges.append('<span class="badge-offline">Offline</span>')
-    else:
-        badges.append('<span class="badge-online">Online</span>')
 
     return " ".join(badges)
 
