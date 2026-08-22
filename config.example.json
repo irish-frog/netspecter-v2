@@ -45,6 +45,8 @@
   "destination_identity_enrichment_interval_seconds": 300,
   "destination_identity_enrichment_batch_size": 300,
   "destination_identity_enrichment_min_mb": 0.25,
+  "expected_download_mbps": 0,
+  "expected_upload_mbps": 0,
   "internal_dns_enabled": false,
   "internal_dns_server_ip": "",
   "internal_dns_zones": [],

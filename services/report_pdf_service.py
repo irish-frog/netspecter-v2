@@ -2,6 +2,7 @@ import io
 import math
 import re
 
+from netspecter_config import cfg
 from services.report_export_service import safe_filename
 
 
@@ -18,6 +19,8 @@ def reporting_pdf_response(context):
 
 
 def report_filename_prefix(context):
+    if str(context.get("report_type") or "").strip().lower().startswith("internet"):
+        return "netspecter-internet-quality"
     selected = context.get("selected_devices") or []
     if selected:
         label = report_filename_label(selected[0], 200)
@@ -117,74 +120,62 @@ def _draw_internet_report(pdf, context):
     speed_rows = list(context.get("speedtest_rows") or [])
     samples = int(_row_value(rollup, "samples", 0) or 0)
     issues = int(_row_value(rollup, "issue_samples", 0) or 0)
-    issue_rate = (issues / samples * 100) if samples else 0.0
+    quality_rows = sorted(list(context.get("quality_rows") or []), key=lambda row: str(_row_value(row, "ts", "")))
+    speed_rows = sorted(speed_rows, key=lambda row: str(_row_value(row, "ts", "")))
+    expected = _expected_speed_config()
+    health = _internet_health_score(rollup, issue_rows)
+    speed_stats = _speed_stats(speed_rows, expected)
 
-    pdf.rect(0, 758, PAGE_W, 84, fill=(0.03, 0.08, 0.15), stroke=(0.03, 0.08, 0.15))
-    pdf.rect(0, 754, PAGE_W, 4, fill=(0.00, 0.78, 0.92), stroke=(0.00, 0.78, 0.92))
-    pdf.text(MARGIN, 808, "Internet Report", 20, bold=True, color=(1, 1, 1))
-    pdf.text(MARGIN, 787, _report_scope(context), 9, color=(0.73, 0.82, 0.94))
-    pdf.text(MARGIN, 771, f"{context['start_time']} to {context['end_time']}", 8, color=(0.73, 0.82, 0.94))
-    pdf.text(455, 808, "Quality and outages", 9, bold=True, color=(0.73, 0.82, 0.94))
-
-    stats = [
-        ("Total Traffic", _fmt_mb(overview.get("total_mb", 0)), "Selected period"),
-        ("Quality Samples", f"{samples:,}", "Monitor checks"),
-        ("Issue Samples", f"{issues:,}", f"{issue_rate:.1f}% of checks"),
-        ("Worst Latency", _fmt_metric(_row_value(rollup, "worst_latency_ms"), " ms"), "Internet"),
-        ("Worst Loss", _fmt_metric(_row_value(rollup, "worst_loss_pct"), "%"), "Packet loss"),
-        ("Worst DNS", _fmt_metric(_row_value(rollup, "worst_dns_ms"), " ms"), "DNS response"),
+    _quality_header(pdf, context["start_time"], context["end_time"])
+    y = 742
+    pdf.text(MARGIN, y, "EXECUTIVE SUMMARY", 10, bold=True, color=(0.02, 0.35, 0.72))
+    y -= 78
+    availability = (max(0, samples - issues) / samples * 100) if samples else 100.0
+    large_cards = [
+        ("Internet Health", health["label"], f"{health['score']} / 100", health["detail"], health["color"], "ok"),
+        ("Availability", f"{availability:.2f}%", "Uptime", "Total monitored time", "#1473e6", "globe"),
+        ("Outages", f"{issues:,}", "Recorded", "Classified unhealthy samples", "#ef4444", "warn"),
+        ("Total Downtime", _downtime_text(issues, samples, context), "This period", "Estimated from checks", "#1473e6", "clock"),
     ]
-    _kpi_cards(pdf, stats, 704)
-
-    y = 584
-    issue_table_rows = [
-        [
-            _row_value(row, "ts", ""),
-            _row_value(row, "status", "Issue"),
-            _clip(_row_value(row, "diagnosis", "Internet quality issue recorded."), 34),
-            _fmt_metric(_row_value(row, "internet_latency_ms"), " ms"),
-            _fmt_metric(_row_value(row, "internet_loss_pct"), "%"),
-            _fmt_metric(_row_value(row, "jitter_ms"), " ms"),
-            _fmt_metric(_row_value(row, "dns_ms"), " ms"),
-        ]
-        for row in issue_rows[:18]
+    _quality_large_cards(pdf, large_cards, MARGIN, y, PAGE_W - (MARGIN * 2))
+    y -= 74
+    secondary = [
+        ("Total Traffic", _fmt_mb(overview.get("total_mb", 0)), "Selected period", "#1473e6", "cloud"),
+        ("Quality Samples", f"{samples:,}", "Monitor checks", "#2563eb", "pulse"),
+        ("Avg. Latency", _fmt_metric(_row_value(rollup, "avg_latency_ms"), " ms"), "Internet", "#14b8a6", "gauge"),
+        ("Worst Latency", _fmt_metric(_row_value(rollup, "worst_latency_ms"), " ms"), "Recorded peak", "#64748b", "gauge"),
+        ("Avg. Loss", _fmt_metric(_row_value(rollup, "avg_loss_pct"), "%"), "Packet loss", "#10b981", "shield"),
+        ("Worst Loss", _fmt_metric(_row_value(rollup, "worst_loss_pct"), "%"), "Recorded peak", "#f59e0b", "bars"),
+        ("Avg. DNS", _fmt_metric(_row_value(rollup, "avg_dns_ms"), " ms"), "DNS response", "#7c3fd6", "globe"),
     ]
-    y = _table(
-        pdf,
-        "Internet Quality Issues",
-        ["When", "Status", "What happened", "Latency", "Loss", "Jitter", "DNS"],
-        issue_table_rows,
-        MARGIN,
-        y,
-        [92, 56, 150, 52, 42, 45, 45],
-    )
-    if len(issue_rows) > 18:
-        pdf.text(MARGIN + 6, y + 10, f"{len(issue_rows) - 18} more issue sample(s) are available in the Excel export.", 8, color=(0.36, 0.43, 0.54))
-        y -= 16
+    _quality_secondary_cards(pdf, secondary, MARGIN, y, PAGE_W - (MARGIN * 2))
 
-    speed_table_rows = [
-        [
-            _row_value(row, "ts", ""),
-            _row_value(row, "source", ""),
-            _fmt_metric(_row_value(row, "latency_ms"), " ms"),
-            _fmt_metric(_row_value(row, "download_mbps"), " Mbps"),
-            _fmt_metric(_row_value(row, "upload_mbps"), " Mbps"),
-            "OK" if int(_row_value(row, "success", 0) or 0) else "Failed",
-        ]
-        for row in speed_rows[:8]
-    ]
-    _table(
-        pdf,
-        "Speed Tests",
-        ["When", "Source", "Latency", "Download", "Upload", "Status"],
-        speed_table_rows,
-        MARGIN,
-        y - 6,
-        [102, 84, 68, 88, 88, 50],
-    )
+    y -= 244
+    chart_w = 372
+    speed_w = PAGE_W - (MARGIN * 2) - chart_w - 12
+    _quality_chart_card(pdf, quality_rows, issue_rows, MARGIN, y, chart_w, 232)
+    _speed_performance_card(pdf, speed_rows, speed_stats, expected, MARGIN + chart_w + 12, y, speed_w, 232)
 
-    pdf.line(MARGIN, 42, PAGE_W - MARGIN, 42, color=(0.86, 0.91, 0.97))
-    pdf.text(MARGIN, 28, "Internet quality issues are recorded monitor samples where status was not healthy. Speed tests are shown separately because they measure bandwidth on demand or schedule.", 7, color=(0.36, 0.43, 0.54))
+    y -= 120
+    _quality_metric_cards(pdf, rollup, MARGIN, y, PAGE_W - (MARGIN * 2))
+
+    y -= 118
+    issue_w = 366
+    _quality_issues_card(pdf, issue_rows, rollup, MARGIN, y, issue_w, 104)
+    _quality_insights_card(pdf, _quality_insights(rollup, issue_rows, speed_stats, expected), MARGIN + issue_w + 12, y, PAGE_W - (MARGIN * 2) - issue_w - 12, 104)
+
+    y -= 86
+    _management_assessment_card(pdf, _internet_assessment(health, rollup, issue_rows, speed_stats, expected), MARGIN, y, PAGE_W - (MARGIN * 2), 58)
+    _draw_internet_footer(pdf, len(pdf.pages))
+
+    if speed_rows:
+        pdf.new_page()
+        _quality_header(pdf, context["start_time"], context["end_time"], title="Speed Test History")
+        _draw_speed_history(pdf, speed_rows, expected)
+    if issue_rows:
+        pdf.new_page()
+        _quality_header(pdf, context["start_time"], context["end_time"], title="Internet Quality Event Detail")
+        _draw_issue_history(pdf, issue_rows)
 
 
 def _report_scope(context):
@@ -196,6 +187,328 @@ def _report_scope(context):
     if context.get("selected_domain"):
         return f"Destination focus: {context.get('selected_domain')}"
     return str(context.get("report_type") or "Management Overview")
+
+
+def _quality_header(pdf, start_time, end_time, title="Internet Quality Report"):
+    _management_header(pdf, title, "Internet Report", start_time, end_time)
+    pdf.rect(0, 754, PAGE_W, 4, fill=(0.00, 0.78, 0.92), stroke=(0.00, 0.78, 0.92))
+    pdf.round_rect(PAGE_W - MARGIN - 112, 804, 102, 22, fill=(0.10, 0.28, 0.70), stroke=(0.12, 0.36, 0.82))
+    pdf.text(PAGE_W - MARGIN - 100, 811, "Quality & Availability", 8, bold=True, color=(1, 1, 1))
+
+
+def _internet_health_score(rollup, issue_rows):
+    samples = int(_row_value(rollup, "samples", 0) or 0)
+    issues = int(_row_value(rollup, "issue_samples", 0) or 0)
+    avg_latency = _num(_row_value(rollup, "avg_latency_ms"))
+    worst_loss = _num(_row_value(rollup, "worst_loss_pct"))
+    avg_loss = _num(_row_value(rollup, "avg_loss_pct"))
+    avg_dns = _num(_row_value(rollup, "avg_dns_ms"))
+    score = 100
+    if samples:
+        score -= min(45, int((issues / samples) * 100))
+    if avg_latency > 80:
+        score -= 10
+    if avg_latency > 150:
+        score -= 15
+    if avg_loss > 1:
+        score -= 10
+    if worst_loss >= 10:
+        score -= 8
+    if avg_dns > 100:
+        score -= 8
+    score = max(0, min(100, score))
+    if score >= 90:
+        return {"score": score, "label": "Excellent", "detail": "Connection stable", "color": "#10b981"}
+    if score >= 75:
+        return {"score": score, "label": "Good", "detail": "Minor variation observed", "color": "#22c55e"}
+    if score >= 55:
+        return {"score": score, "label": "Fair", "detail": "Some degradation observed", "color": "#f59e0b"}
+    if score >= 35:
+        return {"score": score, "label": "Poor", "detail": "Quality concerns detected", "color": "#ef4444"}
+    return {"score": score, "label": "Critical", "detail": "Connectivity degraded", "color": "#dc2626"}
+
+
+def _quality_large_cards(pdf, cards, x, y, width):
+    gap = 9
+    first_w = width * 0.35
+    rest_w = (width - first_w - gap * 3) / 3
+    positions = [x, x + first_w + gap, x + first_w + gap + rest_w + gap, x + first_w + gap + rest_w * 2 + gap * 2]
+    widths = [first_w, rest_w, rest_w, rest_w]
+    for index, (label, value, subvalue, detail, color_hex, icon) in enumerate(cards):
+        card_x, card_w = positions[index], widths[index]
+        accent = _hex_to_rgb(color_hex)
+        _card(pdf, card_x, y, card_w, 68)
+        pdf.circle(card_x + 31, y + 34, 23 if index == 0 else 16, fill=tuple(1 - ((1 - c) * 0.18) for c in accent), stroke=(0.90, 0.95, 1.0))
+        _quality_icon(pdf, icon, card_x + 31, y + 34, accent, 14)
+        text_x = card_x + (70 if index == 0 else 54)
+        pdf.text(text_x, y + 48, label, 7, bold=True, color=(0.04, 0.14, 0.30))
+        pdf.text(text_x, y + 30, value, 14 if index else 16, bold=True, color=(0.04, 0.10, 0.22))
+        pdf.text(text_x, y + 16, subvalue, 10 if index == 0 else 8, bold=index == 0, color=accent if index == 0 else (0.24, 0.34, 0.50))
+        pdf.text(text_x, y + 5, _clip(detail, 28), 7, color=(0.24, 0.34, 0.50))
+
+
+def _quality_secondary_cards(pdf, cards, x, y, width):
+    gap = 5
+    card_w = (width - gap * (len(cards) - 1)) / len(cards)
+    for index, (label, value, detail, color_hex, icon) in enumerate(cards):
+        card_x = x + index * (card_w + gap)
+        accent = _hex_to_rgb(color_hex)
+        _card(pdf, card_x, y, card_w, 58)
+        pdf.circle(card_x + 18, y + 31, 12, fill=tuple(1 - ((1 - c) * 0.16) for c in accent), stroke=(0.90, 0.95, 1.0))
+        _quality_icon(pdf, icon, card_x + 18, y + 31, accent, 9)
+        pdf.text(card_x + 36, y + 41, label, 5.5, bold=True, color=(0.04, 0.14, 0.30))
+        pdf.text(card_x + 36, y + 22, _clip(value, 13), 11, bold=True, color=(0.04, 0.10, 0.22))
+        pdf.text(card_x + 36, y + 9, _clip(detail, 14), 6, color=(0.24, 0.34, 0.50))
+
+
+def _quality_icon(pdf, name, cx, cy, color, size):
+    if name == "ok":
+        pdf.line(cx - 8, cy, cx - 2, cy - 7, color=color, width=4)
+        pdf.line(cx - 2, cy - 7, cx + 10, cy + 8, color=color, width=4)
+    elif name == "warn":
+        pdf.text(cx - 5, cy - 7, "!", size + 5, bold=True, color=color)
+    elif name == "clock":
+        pdf.circle(cx, cy, 8, fill=(1, 1, 1), stroke=color)
+        pdf.line(cx, cy, cx, cy + 5, color=color, width=1.3)
+        pdf.line(cx, cy, cx + 4, cy - 2, color=color, width=1.3)
+    else:
+        _icon(pdf, name, cx, cy, color=color, size=size)
+
+
+def _quality_chart_card(pdf, quality_rows, issue_rows, x, y, w, h):
+    _card(pdf, x, y, w, h)
+    pdf.text(x + 12, y + h - 18, "Internet Quality Over Time", 10, bold=True, color=(0.04, 0.14, 0.30))
+    pdf.text(x + 12, y + h - 32, "Latency, packet loss and DNS response", 7, color=(0.24, 0.34, 0.50))
+    chart_x, chart_y, chart_w, chart_h = x + 38, y + 68, w - 72, 112
+    rows = _downsample_rows(quality_rows, 60)
+    latency = [_num(_row_value(row, "internet_latency_ms")) for row in rows]
+    jitter = [_num(_row_value(row, "jitter_ms")) for row in rows]
+    loss = [_num(_row_value(row, "internet_loss_pct")) for row in rows]
+    dns = [_num(_row_value(row, "dns_ms")) for row in rows]
+    left_max = max([40.0] + latency + jitter + dns)
+    right_max = max([5.0] + loss)
+    _chart_grid(pdf, chart_x, chart_y, chart_w, chart_h, left_max, right_max)
+    _line_series(pdf, latency, chart_x, chart_y, chart_w, chart_h, left_max, (0.09, 0.48, 0.96))
+    _line_series(pdf, jitter, chart_x, chart_y, chart_w, chart_h, left_max, (0.50, 0.25, 0.85))
+    _line_series(pdf, loss, chart_x, chart_y, chart_w, chart_h, right_max, (0.97, 0.55, 0.10))
+    pdf.circle(x + w - 174, y + h - 32, 3, fill=(0.09, 0.48, 0.96), stroke=(0.09, 0.48, 0.96))
+    pdf.text(x + w - 166, y + h - 35, "Latency", 6, color=(0.04, 0.14, 0.30))
+    pdf.circle(x + w - 114, y + h - 32, 3, fill=(0.50, 0.25, 0.85), stroke=(0.50, 0.25, 0.85))
+    pdf.text(x + w - 106, y + h - 35, "Jitter", 6, color=(0.04, 0.14, 0.30))
+    pdf.circle(x + w - 62, y + h - 32, 3, fill=(0.97, 0.55, 0.10), stroke=(0.97, 0.55, 0.10))
+    pdf.text(x + w - 54, y + h - 35, "Loss", 6, color=(0.04, 0.14, 0.30))
+    _availability_timeline(pdf, quality_rows, x + 12, y + 28, w - 24, 18)
+    pdf.text(x + 12, y + 48, "Service Availability", 7, bold=True, color=(0.04, 0.14, 0.30))
+
+
+def _chart_grid(pdf, x, y, w, h, left_max, right_max=None):
+    pdf.line(x, y, x + w, y, color=(0.80, 0.86, 0.94))
+    pdf.line(x, y, x, y + h, color=(0.80, 0.86, 0.94))
+    for i in range(1, 5):
+        yy = y + h * i / 4
+        pdf.line(x, yy, x + w, yy, color=(0.89, 0.93, 0.98), width=0.35)
+        pdf.text(x - 24, yy - 2, f"{left_max * i / 4:.0f}", 5.5, color=(0.32, 0.42, 0.56))
+    if right_max is not None:
+        pdf.text(x + w + 5, y + h - 2, f"{right_max:.0f}%", 5.5, color=(0.32, 0.42, 0.56))
+
+
+def _line_series(pdf, values, x, y, w, h, max_value, color):
+    if len(values) < 2 or max_value <= 0:
+        return
+    last = None
+    for index, value in enumerate(values):
+        px = x + (w * index / max(1, len(values) - 1))
+        py = y + h * max(0, min(float(value or 0), max_value)) / max_value
+        if last:
+            pdf.line(last[0], last[1], px, py, color=color, width=1.2)
+        last = (px, py)
+
+
+def _availability_timeline(pdf, quality_rows, x, y, w, h):
+    rows = quality_rows or [{"status": "healthy"}]
+    limit = min(len(rows), 80)
+    rows = _downsample_rows(rows, limit)
+    block_w = w / max(1, len(rows))
+    for index, row in enumerate(rows):
+        status = str(_row_value(row, "status", "healthy") or "").lower()
+        color = (0.10, 0.74, 0.45)
+        if status not in {"", "ok", "healthy"}:
+            color = (0.95, 0.55, 0.10) if status in {"warn", "warning", "degraded"} else (0.94, 0.26, 0.29)
+        pdf.rect(x + index * block_w, y, max(1.5, block_w - 0.8), h, fill=color, stroke=color)
+
+
+def _speed_performance_card(pdf, speed_rows, stats, expected, x, y, w, h):
+    _card(pdf, x, y, w, h)
+    pdf.text(x + 12, y + h - 18, "Speed Performance", 10, bold=True, color=(0.04, 0.14, 0.30))
+    pdf.text(x + 12, y + h - 32, "Download / Upload bandwidth from scheduled tests", 7, color=(0.24, 0.34, 0.50))
+    chart_x, chart_y, chart_w, chart_h = x + 42, y + 82, w - 64, 92
+    valid = [row for row in speed_rows if int(_row_value(row, "success", 0) or 0)]
+    if len(valid) <= 10:
+        _speed_bar_chart(pdf, valid, chart_x, chart_y, chart_w, chart_h)
+    else:
+        _speed_line_chart(pdf, valid, chart_x, chart_y, chart_w, chart_h)
+    if expected.get("download_mbps"):
+        max_speed = max([_num(_row_value(row, "download_mbps")) for row in valid] + [expected["download_mbps"], 1])
+        yy = chart_y + chart_h * min(expected["download_mbps"], max_speed) / max_speed
+        pdf.line(chart_x, yy, chart_x + chart_w, yy, color=(0.55, 0.64, 0.76), width=0.7)
+    _speed_summary_strip(pdf, stats, expected, x + 12, y + 12, w - 24, 50)
+
+
+def _speed_bar_chart(pdf, rows, x, y, w, h):
+    if not rows:
+        pdf.text(x + 10, y + h / 2, "No successful speed tests in this period.", 7, color=(0.36, 0.43, 0.54))
+        return
+    max_value = max([_num(_row_value(row, "download_mbps")) for row in rows] + [_num(_row_value(row, "upload_mbps")) for row in rows] + [1])
+    _chart_grid(pdf, x, y, w, h, max_value)
+    group_w = w / max(1, len(rows))
+    for index, row in enumerate(rows):
+        base_x = x + index * group_w + group_w * 0.22
+        down_h = h * _num(_row_value(row, "download_mbps")) / max_value
+        up_h = h * _num(_row_value(row, "upload_mbps")) / max_value
+        pdf.rect(base_x, y, group_w * 0.22, down_h, fill=(0.09, 0.48, 0.96), stroke=(0.09, 0.48, 0.96))
+        pdf.rect(base_x + group_w * 0.28, y, group_w * 0.22, up_h, fill=(0.31, 0.72, 0.45), stroke=(0.31, 0.72, 0.45))
+
+
+def _speed_line_chart(pdf, rows, x, y, w, h):
+    max_value = max([_num(_row_value(row, "download_mbps")) for row in rows] + [_num(_row_value(row, "upload_mbps")) for row in rows] + [1])
+    _chart_grid(pdf, x, y, w, h, max_value)
+    _line_series(pdf, [_num(_row_value(row, "download_mbps")) for row in rows], x, y, w, h, max_value, (0.09, 0.48, 0.96))
+    _line_series(pdf, [_num(_row_value(row, "upload_mbps")) for row in rows], x, y, w, h, max_value, (0.31, 0.72, 0.45))
+
+
+def _speed_summary_strip(pdf, stats, expected, x, y, w, h):
+    _card(pdf, x, y, w, h)
+    columns = [
+        ("Average", _fmt_metric(stats.get("avg_download"), " Mbps"), _fmt_metric(stats.get("avg_upload"), " Mbps")),
+        ("Best", _fmt_metric(stats.get("max_download"), " Mbps"), _fmt_metric(stats.get("max_upload"), " Mbps")),
+        ("Lowest", _fmt_metric(stats.get("min_download"), " Mbps"), _fmt_metric(stats.get("min_upload"), " Mbps")),
+    ]
+    col_w = w / len(columns)
+    for index, (label, down, up) in enumerate(columns):
+        col_x = x + index * col_w
+        if index:
+            pdf.line(col_x, y + 8, col_x, y + h - 8, color=(0.84, 0.89, 0.96))
+        pdf.text(col_x + 10, y + h - 16, label, 7, bold=True, color=(0.04, 0.14, 0.30))
+        pdf.text(col_x + 10, y + h - 31, f"D {down}", 6.5, color=(0.09, 0.48, 0.96))
+        pdf.text(col_x + 10, y + h - 43, f"U {up}", 6.5, color=(0.13, 0.64, 0.42))
+
+
+def _quality_metric_cards(pdf, rollup, x, y, width):
+    cards = [
+        ("Latency", _fmt_metric(_row_value(rollup, "avg_latency_ms"), " ms"), _fmt_metric(_row_value(rollup, "worst_latency_ms"), " ms"), _latency_assessment(_num(_row_value(rollup, "avg_latency_ms"))), "#1473e6"),
+        ("Packet Loss", _fmt_metric(_row_value(rollup, "avg_loss_pct"), "%"), _fmt_metric(_row_value(rollup, "worst_loss_pct"), "%"), _loss_assessment(_num(_row_value(rollup, "avg_loss_pct"))), "#10b981"),
+        ("Jitter", _fmt_metric(_row_value(rollup, "avg_jitter_ms"), " ms"), _fmt_metric(_row_value(rollup, "worst_jitter_ms"), " ms"), _jitter_assessment(_num(_row_value(rollup, "avg_jitter_ms"))), "#7c3fd6"),
+        ("DNS Response", _fmt_metric(_row_value(rollup, "avg_dns_ms"), " ms"), _fmt_metric(_row_value(rollup, "worst_dns_ms"), " ms"), _dns_assessment(_num(_row_value(rollup, "avg_dns_ms"))), "#1473e6"),
+    ]
+    gap = 8
+    card_w = (width - gap * 3) / 4
+    pdf.text(x, y + 78, "Connection Quality Metrics", 10, bold=True, color=(0.04, 0.14, 0.30))
+    for index, (title, avg, worst, assessment, color_hex) in enumerate(cards):
+        card_x = x + index * (card_w + gap)
+        _card(pdf, card_x, y, card_w, 66)
+        accent = _hex_to_rgb(color_hex)
+        pdf.circle(card_x + 22, y + 43, 14, fill=tuple(1 - ((1 - c) * 0.16) for c in accent), stroke=(0.90, 0.95, 1.0))
+        _quality_icon(pdf, "gauge", card_x + 22, y + 43, accent, 8)
+        pdf.text(card_x + 44, y + 51, title, 7, bold=True, color=(0.04, 0.14, 0.30))
+        pdf.text(card_x + 44, y + 33, f"Avg {avg}", 8, bold=True, color=(0.04, 0.10, 0.22))
+        pdf.text(card_x + 44, y + 20, f"Worst {worst}", 8, bold=True, color=(0.04, 0.10, 0.22))
+        pdf.text(card_x + 12, y + 7, _clip(assessment, 24), 7, color=(0.24, 0.34, 0.50))
+
+
+def _quality_issues_card(pdf, issue_rows, rollup, x, y, w, h):
+    _card(pdf, x, y, w, h)
+    pdf.text(x + 12, y + h - 18, "Internet Quality Issues", 10, bold=True, color=(0.04, 0.14, 0.30))
+    if issue_rows:
+        pdf.text(x + 12, y + h - 42, f"{len(issue_rows)} degraded/outage sample(s) recorded.", 10, bold=True, color=(0.86, 0.28, 0.28))
+        pdf.text(x + 12, y + h - 58, "See event detail pages for timing and metrics.", 7, color=(0.36, 0.43, 0.54))
+        return
+    worst_loss = _num(_row_value(rollup, "worst_loss_pct"))
+    pdf.round_rect(x + 12, y + 16, w - 24, 54, fill=(0.90, 0.98, 0.94), stroke=(0.72, 0.91, 0.80))
+    pdf.circle(x + 58, y + 43, 16, fill=(0.10, 0.74, 0.45), stroke=(0.10, 0.74, 0.45))
+    pdf.text(x + 53, y + 37, "ok", 8, bold=True, color=(1, 1, 1))
+    pdf.text(x + 88, y + 48, "No quality issues detected for this reporting period.", 9, bold=True, color=(0.04, 0.14, 0.30))
+    note = "Connection remained healthy for all monitor checks."
+    if worst_loss >= 5:
+        note = f"No samples were classified unhealthy. A brief peak packet loss value of {worst_loss:.1f}% was observed."
+    pdf.text(x + 88, y + 32, _clip(note, 72), 7, color=(0.24, 0.34, 0.50))
+
+
+def _quality_insights_card(pdf, insights, x, y, w, h):
+    _card(pdf, x, y, w, h)
+    pdf.text(x + 12, y + h - 18, "Quality Insights", 10, bold=True, color=(0.04, 0.14, 0.30))
+    row_y = y + h - 36
+    for insight in insights[:5]:
+        pdf.circle(x + 18, row_y + 3, 4, fill=(0.10, 0.74, 0.45), stroke=(0.10, 0.74, 0.45))
+        pdf.text(x + 26, row_y, _clip(insight, 42), 7, color=(0.04, 0.14, 0.30))
+        row_y -= 15
+
+
+def _management_assessment_card(pdf, text, x, y, w, h):
+    pdf.round_rect(x, y, w, h, fill=(0.92, 0.96, 1.0), stroke=(0.72, 0.84, 0.98))
+    pdf.circle(x + 32, y + h / 2, 18, fill=(0.80, 0.90, 1.0), stroke=(0.80, 0.90, 1.0))
+    _quality_icon(pdf, "bars", x + 32, y + h / 2, (0.09, 0.48, 0.96), 10)
+    pdf.text(x + 66, y + h - 20, "Management Assessment", 9, bold=True, color=(0.04, 0.14, 0.30))
+    for index, line in enumerate(_wrap_text(text, 100)[:3]):
+        pdf.text(x + 66, y + h - 36 - index * 10, line, 7, color=(0.04, 0.14, 0.30))
+
+
+def _draw_speed_history(pdf, speed_rows, expected):
+    rows = []
+    show_expected = bool(expected.get("download_mbps") or expected.get("upload_mbps"))
+    for row in speed_rows:
+        success = int(_row_value(row, "success", 0) or 0)
+        down = _num(_row_value(row, "download_mbps")) if success else None
+        up = _num(_row_value(row, "upload_mbps")) if success else None
+        status = _speed_status(row, expected)
+        base = [
+            _row_value(row, "ts", ""),
+            _row_value(row, "source", ""),
+            _fmt_metric(_row_value(row, "latency_ms"), " ms") if success else "-",
+            _fmt_metric(down, " Mbps") if success else "-",
+            _fmt_metric(up, " Mbps") if success else "-",
+        ]
+        if show_expected:
+            base.extend([
+                _expected_pct_text(down, expected.get("download_mbps")) if success else "-",
+                _expected_pct_text(up, expected.get("upload_mbps")) if success else "-",
+            ])
+        base.append(status)
+        rows.append(base)
+    headers = ["Date & Time", "Source", "Latency", "Download", "Upload"]
+    widths = [104, 70, 55, 66, 66]
+    if show_expected:
+        widths = [86, 52, 44, 54, 54]
+        headers.extend(["Exp Down", "Exp Up"])
+        widths.extend([54, 50])
+    headers.append("Status")
+    widths.append(60 if not show_expected else 58)
+    _table_paginated(pdf, "SPEED TEST HISTORY", headers, rows, MARGIN, 724, widths, min_y=64)
+    _draw_internet_footer(pdf, len(pdf.pages))
+
+
+def _draw_issue_history(pdf, issue_rows):
+    rows = [[
+        _row_value(row, "ts", ""),
+        _row_value(row, "ts", ""),
+        "-",
+        _row_value(row, "status", "Issue"),
+        _row_value(row, "diagnosis", "Internet quality issue recorded."),
+        _fmt_metric(_row_value(row, "internet_latency_ms"), " ms"),
+        _fmt_metric(_row_value(row, "internet_loss_pct"), "%"),
+        _fmt_metric(_row_value(row, "jitter_ms"), " ms"),
+        _fmt_metric(_row_value(row, "dns_ms"), " ms"),
+    ] for row in issue_rows]
+    _table_paginated(
+        pdf,
+        "INTERNET QUALITY EVENT DETAIL",
+        ["Start", "End", "Duration", "Severity", "What Happened", "Latency", "Loss", "Jitter", "DNS"],
+        rows,
+        MARGIN,
+        724,
+        [74, 74, 50, 54, 116, 44, 38, 42, 40],
+        min_y=64,
+    )
+    _draw_internet_footer(pdf, len(pdf.pages))
 
 
 def _management_header(pdf, title, scope, start_time, end_time):
@@ -576,6 +889,194 @@ def _category_color(row):
         if needle in category:
             return _hex_to_rgb(color)
     return _hex_to_rgb(_row_value(row, "color", "#94a3b8"))
+
+
+def _num(value, default=0.0):
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _expected_speed_config():
+    try:
+        c = cfg()
+    except Exception:
+        c = {}
+    download = _num(c.get("expected_download_mbps") or c.get("wan_expected_download_mbps") or c.get("contracted_download_mbps"))
+    upload = _num(c.get("expected_upload_mbps") or c.get("wan_expected_upload_mbps") or c.get("contracted_upload_mbps"))
+    return {
+        "download_mbps": download if download > 0 else None,
+        "upload_mbps": upload if upload > 0 else None,
+        "excellent_pct": 90.0,
+        "acceptable_pct": 75.0,
+    }
+
+
+def _downtime_text(issues, samples, context):
+    if not issues or not samples:
+        return "0 min"
+    minutes = issues
+    total_seconds = int(minutes * 60)
+    if total_seconds < 60:
+        return f"{total_seconds}s"
+    if total_seconds < 3600:
+        return f"{total_seconds // 60} min"
+    return f"{total_seconds // 3600}h {(total_seconds % 3600) // 60}m"
+
+
+def _downsample_rows(rows, limit):
+    rows = list(rows or [])
+    if len(rows) <= limit:
+        return rows
+    step = len(rows) / float(limit)
+    return [rows[min(len(rows) - 1, int(index * step))] for index in range(limit)]
+
+
+def _speed_stats(rows, expected):
+    valid = [row for row in rows if int(_row_value(row, "success", 0) or 0)]
+    downloads = [_num(_row_value(row, "download_mbps")) for row in valid if _row_value(row, "download_mbps") is not None]
+    uploads = [_num(_row_value(row, "upload_mbps")) for row in valid if _row_value(row, "upload_mbps") is not None]
+    latencies = [_num(_row_value(row, "latency_ms")) for row in valid if _row_value(row, "latency_ms") is not None]
+    total = len(rows)
+    failed = total - len(valid)
+    stats = {
+        "tests": total,
+        "valid": len(valid),
+        "failed": failed,
+        "success_pct": (len(valid) / total * 100) if total else 0,
+        "avg_download": _avg(downloads),
+        "min_download": min(downloads) if downloads else None,
+        "max_download": max(downloads) if downloads else None,
+        "avg_upload": _avg(uploads),
+        "min_upload": min(uploads) if uploads else None,
+        "max_upload": max(uploads) if uploads else None,
+        "avg_latency": _avg(latencies),
+        "min_latency": min(latencies) if latencies else None,
+        "max_latency": max(latencies) if latencies else None,
+        "expected_download_pct": None,
+        "expected_upload_pct": None,
+        "download_compliance_pct": None,
+    }
+    if downloads and expected.get("download_mbps"):
+        expected_down = expected["download_mbps"]
+        stats["expected_download_pct"] = stats["avg_download"] / expected_down * 100
+        stats["download_compliance_pct"] = sum(1 for value in downloads if value >= expected_down * 0.9) / len(downloads) * 100
+    if uploads and expected.get("upload_mbps"):
+        stats["expected_upload_pct"] = stats["avg_upload"] / expected["upload_mbps"] * 100
+    return stats
+
+
+def _avg(values):
+    return (sum(values) / len(values)) if values else None
+
+
+def _expected_pct_text(value, expected):
+    if value is None or not expected:
+        return "-"
+    return f"{(float(value) / float(expected) * 100):.0f}%"
+
+
+def _speed_status(row, expected):
+    if not int(_row_value(row, "success", 0) or 0):
+        return "Failed"
+    down = _num(_row_value(row, "download_mbps"))
+    if expected.get("download_mbps"):
+        pct = down / expected["download_mbps"] * 100
+        if pct >= 90:
+            return "Excellent"
+        if pct >= 75:
+            return "OK"
+        if pct >= 50:
+            return "Below Expected"
+        return "Poor"
+    return "OK"
+
+
+def _latency_assessment(value):
+    if value <= 30:
+        return "Excellent response time"
+    if value <= 80:
+        return "Good responsiveness"
+    if value <= 150:
+        return "Elevated latency"
+    return "Poor response time"
+
+
+def _loss_assessment(value):
+    if value <= 0.2:
+        return "Very good quality"
+    if value <= 1:
+        return "Acceptable quality"
+    if value <= 3:
+        return "Packet loss observed"
+    return "Poor packet loss"
+
+
+def _jitter_assessment(value):
+    if value <= 10:
+        return "Stable connection"
+    if value <= 30:
+        return "Moderate variation"
+    return "High jitter observed"
+
+
+def _dns_assessment(value):
+    if value <= 30:
+        return "Good DNS performance"
+    if value <= 100:
+        return "Acceptable DNS response"
+    return "Slow DNS response"
+
+
+def _quality_insights(rollup, issue_rows, speed_stats, expected):
+    insights = []
+    issues = int(_row_value(rollup, "issue_samples", 0) or 0)
+    if issues == 0:
+        insights.append("No recorded outages")
+    else:
+        insights.append(f"Connectivity degradation occurred on {issues} sample(s)")
+    if _num(_row_value(rollup, "avg_latency_ms")) <= 50:
+        insights.append("Low latency and good responsiveness")
+    if _num(_row_value(rollup, "avg_loss_pct")) <= 0.5:
+        insights.append("Low average packet loss")
+    if _num(_row_value(rollup, "worst_loss_pct")) >= 5 and issues == 0:
+        insights.append("Packet-loss spike observed without outage classification")
+    if speed_stats.get("valid"):
+        insights.append("Speed-test performance recorded")
+    if speed_stats.get("download_compliance_pct") is not None:
+        insights.append(f"{speed_stats['download_compliance_pct']:.0f}% of speed tests met 90% expected download")
+    if not insights:
+        insights.append("Insufficient monitoring data for strong conclusions")
+    return insights
+
+
+def _internet_assessment(health, rollup, issue_rows, speed_stats, expected):
+    label = health.get("label", "Unknown")
+    issues = int(_row_value(rollup, "issue_samples", 0) or 0)
+    avg_latency = _fmt_metric(_row_value(rollup, "avg_latency_ms"), " ms")
+    if label in {"Excellent", "Good"} and issues == 0:
+        text = f"Internet connectivity was {label.lower()} during the reporting period with no recorded outages. Average latency was {avg_latency}."
+    elif issues:
+        text = f"Internet connectivity was rated {label.lower()} with {issues} degraded or outage sample(s) recorded. Review event detail for timing and impact."
+    else:
+        text = f"Internet connectivity was rated {label.lower()}. No outage samples were recorded, but peak values should be reviewed."
+    if speed_stats.get("download_compliance_pct") is not None:
+        text += f" {speed_stats['download_compliance_pct']:.0f}% of valid speed tests achieved at least 90% of expected download speed."
+    return text
+
+
+def _draw_internet_footer(pdf, page_number):
+    pdf.line(MARGIN, 42, PAGE_W - MARGIN, 42, color=(0.86, 0.91, 0.97))
+    pdf.circle(MARGIN + 7, 24, 6, fill=(1, 1, 1), stroke=(0.55, 0.64, 0.76))
+    pdf.text(MARGIN + 5, 21, "i", 7, bold=True, color=(0.55, 0.64, 0.76))
+    footer = "Internet quality issues are recorded monitor samples where status was not healthy. Speed tests measure bandwidth on demand or schedule."
+    pdf.text(MARGIN + 24, 29, _clip(footer, 104), 6.5, color=(0.36, 0.43, 0.54))
+    pdf.text(PAGE_W - MARGIN - 118, 24, "Report generated by", 7, color=(0.36, 0.43, 0.54))
+    pdf.text(PAGE_W - MARGIN - 30, 24, "NetSpecter", 7, bold=True, color=(0.04, 0.32, 0.70))
+    pdf.text(PAGE_W / 2 - 12, 24, f"Page {page_number}", 7, color=(0.48, 0.56, 0.68))
 
 
 def _draw_footer(pdf, page_number):
