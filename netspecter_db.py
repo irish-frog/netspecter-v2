@@ -106,6 +106,15 @@ def _index_exists(con, table_name, index_name):
     return False
 
 
+def _ensure_columns(con, statements):
+    for stmt in statements:
+        try:
+            con.execute(stmt)
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                raise
+
+
 def connect_db():
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB_PATH, timeout=30)
@@ -129,11 +138,17 @@ def init_dns_db():
             day TEXT,
             ts TEXT,
             client TEXT,
+            device_id TEXT,
+            identity_key TEXT,
             domain TEXT,
             blocked INTEGER DEFAULT 0,
             category TEXT DEFAULT 'Other'
         )
     """)
+    _ensure_columns(con, [
+        "ALTER TABLE dns_querylog ADD COLUMN device_id TEXT",
+        "ALTER TABLE dns_querylog ADD COLUMN identity_key TEXT",
+    ])
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_day ON dns_querylog(day)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_client ON dns_querylog(client)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_day_category ON dns_querylog(day, category)")
@@ -142,6 +157,7 @@ def init_dns_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_day_category_client_domain ON dns_querylog(day, category, client, domain)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_ts_client ON dns_querylog(ts, client)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_client_ts ON dns_querylog(client, ts)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_dns_device_id_ts ON dns_querylog(device_id, ts)")
     con.execute(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_dns_unique
@@ -180,6 +196,8 @@ def init_dns_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT NOT NULL,
             client_ip TEXT NOT NULL,
+            device_id TEXT,
+            identity_key TEXT,
             domain TEXT NOT NULL,
             resolved_ip TEXT NOT NULL,
             ttl INTEGER,
@@ -187,6 +205,10 @@ def init_dns_db():
             source TEXT DEFAULT 'adguard'
         )
     """)
+    _ensure_columns(con, [
+        "ALTER TABLE dns_resolution_events ADD COLUMN device_id TEXT",
+        "ALTER TABLE dns_resolution_events ADD COLUMN identity_key TEXT",
+    ])
     con.execute("""
         CREATE INDEX IF NOT EXISTS idx_dns_resolution_client_ip_resolved_ip_ts
         ON dns_resolution_events(client_ip, resolved_ip, ts)
@@ -195,6 +217,7 @@ def init_dns_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_resolution_domain ON dns_resolution_events(domain)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_resolution_expires ON dns_resolution_events(expires_at)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_dns_resolution_client_ip_remote_ts ON dns_resolution_events(client_ip, resolved_ip, ts)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_dns_resolution_device_id_ts ON dns_resolution_events(device_id, ts)")
     if not _index_exists(con, "dns_resolution_events", "idx_dns_resolution_unique_event"):
         con.execute("""
             DELETE FROM dns_resolution_events
@@ -227,6 +250,8 @@ def init_traffic_db():
         CREATE TABLE IF NOT EXISTS traffic_samples (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip TEXT NOT NULL,
+            device_id TEXT,
+            identity_key TEXT,
             name TEXT,
             mac TEXT,
             downloaded_mb REAL DEFAULT 0,
@@ -237,12 +262,19 @@ def init_traffic_db():
             ts TEXT
         )
     """)
+    _ensure_columns(con, [
+        "ALTER TABLE traffic_samples ADD COLUMN device_id TEXT",
+        "ALTER TABLE traffic_samples ADD COLUMN identity_key TEXT",
+    ])
     con.execute("CREATE INDEX IF NOT EXISTS idx_traffic_day_ip ON traffic_samples(day, ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_traffic_ip_ts ON traffic_samples(ip, ts)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_traffic_samples_device_id_ts ON traffic_samples(device_id, ts)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS traffic_intervals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip TEXT NOT NULL,
+            device_id TEXT,
+            identity_key TEXT,
             name TEXT,
             mac TEXT,
             downloaded_mb REAL DEFAULT 0,
@@ -259,6 +291,8 @@ def init_traffic_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_intervals_day_totals ON traffic_intervals(day, downloaded_mb, uploaded_mb, total_mb)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_intervals_ip_day_totals ON traffic_intervals(ip, day, downloaded_mb, uploaded_mb, total_mb)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_intervals_day_ip_totals ON traffic_intervals(day, ip, total_mb, downloaded_mb, uploaded_mb)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_intervals_device_id_ts ON traffic_intervals(device_id, ts)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_intervals_device_id_day ON traffic_intervals(device_id, day)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS traffic_hourly_rollups (
             hour TEXT NOT NULL,
@@ -279,6 +313,8 @@ def init_traffic_db():
         CREATE TABLE IF NOT EXISTS estimated_app_traffic (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip TEXT NOT NULL,
+            device_id TEXT,
+            identity_key TEXT,
             category TEXT NOT NULL,
             downloaded_mb REAL DEFAULT 0,
             uploaded_mb REAL DEFAULT 0,
@@ -287,8 +323,13 @@ def init_traffic_db():
             ts TEXT
         )
     """)
+    _ensure_columns(con, [
+        "ALTER TABLE estimated_app_traffic ADD COLUMN device_id TEXT",
+        "ALTER TABLE estimated_app_traffic ADD COLUMN identity_key TEXT",
+    ])
     con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_day_ip ON estimated_app_traffic(day, category, ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_day_category ON estimated_app_traffic(day, category, ip, total_mb, downloaded_mb, uploaded_mb)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_device_id_day ON estimated_app_traffic(device_id, day, category)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS estimated_app_hourly_rollups (
             hour TEXT NOT NULL,
@@ -307,6 +348,8 @@ def init_traffic_db():
         CREATE TABLE IF NOT EXISTS remote_traffic_intervals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip TEXT NOT NULL,
+            device_id TEXT,
+            identity_key TEXT,
             remote_ip TEXT NOT NULL,
             category TEXT NOT NULL,
             downloaded_mb REAL DEFAULT 0,
@@ -316,9 +359,14 @@ def init_traffic_db():
             ts TEXT
         )
     """)
+    _ensure_columns(con, [
+        "ALTER TABLE remote_traffic_intervals ADD COLUMN device_id TEXT",
+        "ALTER TABLE remote_traffic_intervals ADD COLUMN identity_key TEXT",
+    ])
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_day_ip ON remote_traffic_intervals(day, remote_ip, category)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_ts_ip ON remote_traffic_intervals(ts, ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_ts_ip_remote ON remote_traffic_intervals(ts, ip, remote_ip)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_device_id_ts ON remote_traffic_intervals(device_id, ts)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS raw_flow_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -684,6 +732,7 @@ def init_db(force=False):
     con.execute("""
         CREATE TABLE IF NOT EXISTS device_identities (
             identity_key TEXT PRIMARY KEY,
+            device_id TEXT,
             mac TEXT,
             hostname TEXT,
             display_name TEXT,
@@ -720,6 +769,7 @@ def init_db(force=False):
     con.execute("CREATE INDEX IF NOT EXISTS idx_device_identities_mac ON device_identities(mac)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_device_identities_current_ip ON device_identities(current_ip)")
     for stmt in [
+        "ALTER TABLE device_identities ADD COLUMN device_id TEXT",
         "ALTER TABLE device_identities ADD COLUMN logged_in_user TEXT",
         "ALTER TABLE device_identities ADD COLUMN logged_in_user_source TEXT",
         "ALTER TABLE device_identities ADD COLUMN logged_in_user_updated_at TEXT",
@@ -732,8 +782,39 @@ def init_db(force=False):
             if "duplicate column name" not in str(e).lower():
                 raise
     con.execute("CREATE INDEX IF NOT EXISTS idx_device_identities_user_refresh ON device_identities(logged_in_user_updated_at)")
+    con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_device_identities_device_id ON device_identities(device_id)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_device_ip_history_ip ON device_ip_history(ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_device_ip_history_seen ON device_ip_history(last_seen)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS device_identifiers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT NOT NULL,
+            identity_key TEXT,
+            identifier_type TEXT NOT NULL,
+            identifier_value TEXT NOT NULL,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            confidence INTEGER DEFAULT 0,
+            source TEXT,
+            UNIQUE(device_id, identifier_type, identifier_value)
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_device_identifiers_value ON device_identifiers(identifier_type, identifier_value)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_device_identifiers_device ON device_identifiers(device_id, last_seen)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS device_identity_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            action TEXT NOT NULL,
+            device_id TEXT,
+            identity_key TEXT,
+            old_value TEXT,
+            new_value TEXT,
+            admin TEXT,
+            source TEXT
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_device_identity_audit_device ON device_identity_audit_log(device_id, ts)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS user_labels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

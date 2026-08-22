@@ -13,6 +13,7 @@ from live_packet_collector import (
 SCHEMA = """
 CREATE TABLE device_identities (
     identity_key TEXT PRIMARY KEY,
+    device_id TEXT,
     mac TEXT,
     hostname TEXT,
     display_name TEXT,
@@ -31,6 +32,18 @@ CREATE TABLE device_identities (
     first_seen TEXT,
     last_seen TEXT,
     updated_at TEXT
+);
+CREATE TABLE device_identifiers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL,
+    identity_key TEXT,
+    identifier_type TEXT NOT NULL,
+    identifier_value TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    confidence INTEGER DEFAULT 0,
+    source TEXT,
+    UNIQUE(device_id, identifier_type, identifier_value)
 );
 CREATE TABLE device_ip_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,6 +107,7 @@ class DeviceIdentityTests(unittest.TestCase):
         row = self.identity(key)
         self.assertEqual("DESKTOP-5S814F2", first)
         self.assertEqual("DESKTOP-5S814F2", second)
+        self.assertTrue(str(row["device_id"]).startswith("nsd_"))
         self.assertEqual("192.168.1.176", row["current_ip"])
         self.assertEqual("192.168.1.105", row["last_ip"])
         self.assertEqual("DESKTOP-5S814F2", row["display_name"])
@@ -105,6 +119,31 @@ class DeviceIdentityTests(unittest.TestCase):
 
         rows = self.con.execute("SELECT identity_key, current_ip FROM device_identities ORDER BY current_ip").fetchall()
         self.assertEqual(["private-mac:02:11:22:33:44:55:192.168.1.10", "private-mac:02:11:22:33:44:55:192.168.1.20"], [r["identity_key"] for r in rows])
+        device_ids = self.con.execute("SELECT device_id FROM device_identities ORDER BY current_ip").fetchall()
+        self.assertNotEqual(device_ids[0]["device_id"], device_ids[1]["device_id"])
+
+    def test_identifier_history_tracks_mac_and_hostname(self):
+        mac = "04:BF:1B:89:83:8A"
+        key = identity_key_for_mac(mac)
+        apply_device_identity(
+            self.con,
+            "192.168.1.105",
+            "DESKTOP-5S814F2",
+            mac,
+            "Dell Inc.",
+            "Computer",
+            "2026-08-04 16:00:00",
+            "netbios",
+            self.config,
+        )
+
+        row = self.identity(key)
+        identifiers = self.con.execute(
+            "SELECT identifier_type, identifier_value FROM device_identifiers WHERE device_id=? ORDER BY identifier_type",
+            (row["device_id"],),
+        ).fetchall()
+        self.assertIn(("hostname", "DESKTOP-5S814F2"), [(r["identifier_type"], r["identifier_value"]) for r in identifiers])
+        self.assertIn(("mac", mac), [(r["identifier_type"], r["identifier_value"]) for r in identifiers])
 
     def test_device_type_classification_excludes_non_windows_from_user_probe(self):
         enabled = dict(self.config, windows_user_discovery_enabled=True)

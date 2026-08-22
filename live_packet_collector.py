@@ -38,6 +38,7 @@ import struct
 import subprocess
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
@@ -1155,6 +1156,62 @@ def identity_key_for_mac(mac):
     return f"mac:{normalized}" if normalized else ""
 
 
+def new_device_id():
+    return f"nsd_{uuid.uuid4().hex[:16]}"
+
+
+def identity_ref_for_ip(con, ip, mac=""):
+    ip = ip_identifier(ip)
+    normalized_mac = normalize_mac(mac)
+    if normalized_mac:
+        if identity_private_mac_excluded(normalized_mac):
+            key = f"private-mac:{normalized_mac}:{ip}"
+        else:
+            key = identity_key_for_mac(normalized_mac)
+        row = con.execute(
+            "SELECT device_id, identity_key FROM device_identities WHERE identity_key=?",
+            (key,),
+        ).fetchone()
+        if row:
+            return str(row["device_id"] or ""), str(row["identity_key"] or "")
+    if ip:
+        row = con.execute(
+            """
+            SELECT device_id, identity_key
+            FROM device_identities
+            WHERE current_ip=?
+            ORDER BY last_seen DESC
+            LIMIT 1
+            """,
+            (ip,),
+        ).fetchone()
+        if row:
+            return str(row["device_id"] or ""), str(row["identity_key"] or "")
+    return "", ""
+
+
+def upsert_device_identifier(con, device_id, identity_key, identifier_type, identifier_value, ts, confidence, source):
+    device_id = str(device_id or "").strip()
+    identifier_type = str(identifier_type or "").strip()
+    identifier_value = str(identifier_value or "").strip()
+    if not device_id or not identifier_type or not identifier_value:
+        return
+    con.execute(
+        """
+        INSERT INTO device_identifiers
+            (device_id, identity_key, identifier_type, identifier_value, first_seen, last_seen, confidence, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(device_id, identifier_type, identifier_value) DO UPDATE SET
+            identity_key=COALESCE(NULLIF(excluded.identity_key, ''), identity_key),
+            first_seen=MIN(first_seen, excluded.first_seen),
+            last_seen=MAX(last_seen, excluded.last_seen),
+            confidence=MAX(confidence, excluded.confidence),
+            source=excluded.source
+        """,
+        (device_id, identity_key or "", identifier_type, identifier_value, ts, ts, int(confidence or 0), source or ""),
+    )
+
+
 def load_oui_vendors():
     """Load shipped overrides plus Debian's IEEE OUI list once per collector process."""
     global oui_vendor_cache
@@ -1327,7 +1384,7 @@ def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unkn
 
     existing = con.execute(
         """
-        SELECT display_name, current_ip, last_ip, source, first_seen, private_mac
+        SELECT device_id, display_name, current_ip, last_ip, source, first_seen, private_mac
         FROM device_identities
         WHERE identity_key=?
         """,
@@ -1335,6 +1392,9 @@ def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unkn
     ).fetchone()
     existing_name = str(existing["display_name"] or "").strip() if existing else ""
     existing_source = str(existing["source"] or "").strip() if existing else ""
+    device_id = str(existing["device_id"] or "").strip() if existing else ""
+    if not device_id:
+        device_id = new_device_id()
     carry_name = existing_name if identity_carry_names_enabled(c) and not is_private else ""
     display_name = observed_name or carry_name or str(name or ip)
     should_update_name = bool(observed_name) and (
@@ -1349,10 +1409,11 @@ def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unkn
     con.execute(
         """
         INSERT INTO device_identities
-            (identity_key, mac, hostname, display_name, current_ip, last_ip, vendor, device_type,
+            (identity_key, device_id, mac, hostname, display_name, current_ip, last_ip, vendor, device_type,
              source, confidence, private_mac, first_seen, last_seen, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(identity_key) DO UPDATE SET
+            device_id=COALESCE(NULLIF(device_id, ''), excluded.device_id),
             hostname=COALESCE(NULLIF(excluded.hostname, ''), hostname),
             display_name=CASE
                 WHEN excluded.display_name IS NOT NULL AND TRIM(excluded.display_name) != ''
@@ -1372,6 +1433,7 @@ def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unkn
         """,
         (
             identity_key,
+            device_id,
             normalized_mac,
             observed_name,
             stored_name,
@@ -1400,6 +1462,11 @@ def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unkn
         """,
         (identity_key, ip, normalized_mac, observed_name, source, ts, ts),
     )
+    upsert_device_identifier(con, device_id, identity_key, "mac", normalized_mac, ts, 40 if is_private else 90, source)
+    if observed_name:
+        upsert_device_identifier(con, device_id, identity_key, "hostname", observed_name, ts, identity_source_rank(source), source)
+    if vendor:
+        upsert_device_identifier(con, device_id, identity_key, "vendor", vendor, ts, 25, source)
     if carry_name and not observed_name and ip_changed:
         print("Device identity carried a saved display name after an IP change")
     return display_name
@@ -4240,7 +4307,7 @@ def read_arp_macs():
     return macs
 
 
-def write_destination_delta(con, ip, destination, cur, day, now, default_category="Unknown"):
+def write_destination_delta(con, ip, destination, cur, day, now, default_category="Unknown", identity_ref=None):
     interval_rx_mb = cur["rx"] / 1024 / 1024
     interval_tx_mb = cur["tx"] / 1024 / 1024
     interval_total_mb = interval_rx_mb + interval_tx_mb
@@ -4255,25 +4322,26 @@ def write_destination_delta(con, ip, destination, cur, day, now, default_categor
     )
     classification = classify_flow(con, flow, emit_timing=True)
     category = classification.category if classification else default_category
+    device_id, identity_key = identity_ref or identity_ref_for_ip(con, ip)
     remote_table = traffic_table_name(con, "remote_traffic_intervals")
     estimated_table = traffic_table_name(con, "estimated_app_traffic")
     con.execute(
         f"""
         INSERT INTO {remote_table}
-            (ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (ip, device_id, identity_key, remote_ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (ip, destination, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
+        (ip, device_id, identity_key, destination, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
     )
     if classification:
         if default_category == "Unknown" and is_attribution_ready_classification(classification):
             con.execute(
                 f"""
                 INSERT INTO {estimated_table}
-                    (ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (ip, device_id, identity_key, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (ip, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
+                (ip, device_id, identity_key, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now),
             )
         write_started = time.monotonic()
         write_classified_flow_fact(con, flow, classification)
@@ -4501,6 +4569,7 @@ def flush_loop():
                 device_rows = []
                 traffic_rows = []
                 estimated_rows = []
+                identity_refs = {}
                 step_started = time.monotonic()
                 for ip, cur in deltas.items():
                     rx_delta = cur["rx"]
@@ -4535,8 +4604,11 @@ def flush_loop():
                     interval_total_mb = interval_rx_mb + interval_tx_mb
 
                     if interval_total_mb > 0:
+                        identity_refs[ip] = identity_ref_for_ip(con, ip, mac)
                         traffic_rows.append((
                             ip,
+                            identity_refs[ip][0],
+                            identity_refs[ip][1],
                             name,
                             mac,
                             interval_rx_mb,
@@ -4574,6 +4646,7 @@ def flush_loop():
                         display_name = apply_device_identity(
                             con, ip, name, normalized_mac, vendor, dtype, last_seen, "traffic", c
                         )
+                        identity_refs[ip] = identity_ref_for_ip(con, ip, normalized_mac)
                         identity_rows.append((ip, display_name, normalized_mac, vendor, dtype, first_seen, last_seen))
                     con.executemany(
                         """
@@ -4599,13 +4672,20 @@ def flush_loop():
                 if traffic_rows:
                     step_started = time.monotonic()
                     mark_presence_many(con, {row[0] for row in traffic_rows}, "traffic")
+                    enriched_traffic_rows = []
+                    for row in traffic_rows:
+                        ip = row[0]
+                        device_id, identity_key = identity_refs.get(ip) or ("", "")
+                        if not device_id and not identity_key:
+                            device_id, identity_key = identity_ref_for_ip(con, ip, row[4])
+                        enriched_traffic_rows.append((ip, device_id, identity_key, *row[3:]))
                     con.executemany(
                         """
                         INSERT INTO traffic_intervals
-                            (ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (ip, device_id, identity_key, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        traffic_rows,
+                        enriched_traffic_rows,
                     )
                     traffic_step_timings["traffic_fact_write"] += time.monotonic() - step_started
 
@@ -4615,7 +4695,8 @@ def flush_loop():
                     interval_tx_mb = cur["tx"] / 1024 / 1024
                     interval_total_mb = interval_rx_mb + interval_tx_mb
                     if interval_total_mb > 0:
-                        estimated_rows.append((ip, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now))
+                        device_id, identity_key = identity_refs.get(ip) or identity_ref_for_ip(con, ip, macs.get(ip, ""))
+                        estimated_rows.append((ip, device_id, identity_key, category, interval_rx_mb, interval_tx_mb, interval_total_mb, day, now))
                         estimated_inserts += 1
                 traffic_step_timings["prepare"] += time.monotonic() - step_started
 
@@ -4624,8 +4705,8 @@ def flush_loop():
                     con.executemany(
                         """
                         INSERT INTO estimated_app_traffic
-                            (ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                            (ip, device_id, identity_key, category, downloaded_mb, uploaded_mb, total_mb, day, ts)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         estimated_rows,
                     )
@@ -4633,17 +4714,17 @@ def flush_loop():
 
                 for (category, ip, destination), cur in remote_destination_deltas.items():
                     step_started = time.monotonic()
-                    write_destination_delta(con, ip, destination, cur, day, now, category)
+                    write_destination_delta(con, ip, destination, cur, day, now, category, identity_refs.get(ip))
                     traffic_step_timings["destination_write"] += time.monotonic() - step_started
                     destination_writes += 1
                 for (ip, destination), cur in classification_destination_deltas.items():
                     step_started = time.monotonic()
-                    write_destination_delta(con, ip, destination, cur, day, now, "Unknown")
+                    write_destination_delta(con, ip, destination, cur, day, now, "Unknown", identity_refs.get(ip))
                     traffic_step_timings["destination_write"] += time.monotonic() - step_started
                     destination_writes += 1
                 for (ip, destination), cur in visibility_destination_deltas.items():
                     step_started = time.monotonic()
-                    write_destination_delta(con, ip, destination, cur, day, now, "Unknown")
+                    write_destination_delta(con, ip, destination, cur, day, now, "Unknown", identity_refs.get(ip))
                     traffic_step_timings["destination_write"] += time.monotonic() - step_started
                     destination_writes += 1
             traffic_detail_elapsed = time.monotonic() - traffic_detail_started
@@ -4762,7 +4843,9 @@ def import_adguard_querylog():
             device_updates[ip] = (name, first_seen, last_seen, mac, vendor, dtype)
         if not is_reverse_dns_lookup_domain(domain):
             remember_estimated_app_targets(c, client, domain, item.get("answer") or [], ts, blocked)
-        dns_resolution_rows.extend(dns_answer_rows(ip or client, domain, item.get("answer") or [], ts))
+        dns_resolution_rows.extend(
+            dns_answer_rows(ip or client, domain, item.get("answer") or [], ts)
+        )
 
         if cutoff and ts <= cutoff:
             continue
@@ -4809,26 +4892,45 @@ def import_adguard_querylog():
                     """,
                     (ip, display_name, normalized_mac, vendor, dtype, first_seen, last_seen),
                 )
+            dns_identity_refs = {}
+            for row in dns_rows:
+                client_ip = ip_identifier(row[2])
+                if client_ip and client_ip not in dns_identity_refs:
+                    dns_identity_refs[client_ip] = identity_ref_for_ip(con, client_ip, arp_macs.get(client_ip, ""))
+            for row in dns_resolution_rows:
+                client_ip = ip_identifier(row[1])
+                if client_ip and client_ip not in dns_identity_refs:
+                    dns_identity_refs[client_ip] = identity_ref_for_ip(con, client_ip, arp_macs.get(client_ip, ""))
             if dns_rows:
+                enriched_dns_rows = []
+                for row in dns_rows:
+                    device_id, identity_key = dns_identity_refs.get(ip_identifier(row[2]), ("", ""))
+                    enriched_dns_rows.append((row[0], row[1], row[2], device_id, identity_key, row[3], row[4], row[5]))
                 con.executemany(
                     """
                     INSERT OR IGNORE INTO dns_querylog
-                        (day, ts, client, domain, blocked, category)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                        (day, ts, client, device_id, identity_key, domain, blocked, category)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    dns_rows,
+                    enriched_dns_rows,
                 )
             if dns_resolution_rows:
+                enriched_resolution_rows = []
+                for row in dns_resolution_rows:
+                    device_id, identity_key = dns_identity_refs.get(ip_identifier(row[1]), ("", ""))
+                    enriched_resolution_rows.append((row[0], row[1], device_id, identity_key, *row[2:]))
                 con.executemany(
                     """
                     INSERT INTO dns_resolution_events
-                        (ts, client_ip, domain, resolved_ip, ttl, expires_at, source)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                        (ts, client_ip, device_id, identity_key, domain, resolved_ip, ttl, expires_at, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(client_ip, domain, resolved_ip, ts, expires_at) DO UPDATE SET
                         ttl=excluded.ttl,
-                        source=excluded.source
+                        source=excluded.source,
+                        device_id=COALESCE(NULLIF(excluded.device_id, ''), device_id),
+                        identity_key=COALESCE(NULLIF(excluded.identity_key, ''), identity_key)
                     """,
-                    dns_resolution_rows,
+                    enriched_resolution_rows,
                 )
         imported_dns_keys.update(pending_dns_keys)
     except Exception as e:
