@@ -9014,11 +9014,11 @@ def reporting_page():
 
     def fmt_metric(value, suffix="", decimals=1):
         if value is None or value == "":
-            return "-"
+            return "N/A"
         try:
             number = float(value)
         except (TypeError, ValueError):
-            return "-"
+            return "N/A"
         return f"{number:.{decimals}f}{suffix}"
 
     def internet_issue_report_rows():
@@ -9854,11 +9854,11 @@ def reporting_xlsx_response(context, sections=None):
 
 def fmt_report_metric(value, suffix="", decimals=1):
     if value is None or value == "":
-        return "-"
+        return "N/A"
     try:
         number = float(value)
     except (TypeError, ValueError):
-        return "-"
+        return "N/A"
     return f"{number:.{decimals}f}{suffix}"
 
 
