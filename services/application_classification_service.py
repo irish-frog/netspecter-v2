@@ -176,9 +176,20 @@ def classify_application(application_name="", domain="", destination_ip="", sni=
     return classification(unknown or {"name": UNKNOWN_CATEGORY, "usage_group": "System and Background", "color": "#94a3b8"}, "Unknown")
 
 
-def category_summary(start_time, end_time, filters=None, limit=8, total_network_mb=None):
+def _profile_add(profile, key, value=1):
+    if profile is not None:
+        profile[key] = profile.get(key, 0) + value
+
+
+def _profile_set(profile, key, value):
+    if profile is not None:
+        profile[key] = value
+
+
+def category_summary(start_time, end_time, filters=None, limit=8, total_network_mb=None, profile=None):
     filters = filters or {}
     started = time.perf_counter()
+    _profile_add(profile, "category_summary_calls")
     where = ["ts BETWEEN ? AND ?"]
     params = [start_time, end_time]
     device_ids = _clean_list(filters.get("device_ids"))
@@ -236,6 +247,7 @@ def category_summary(start_time, end_time, filters=None, limit=8, total_network_
         end_time,
         device_ids=device_ids,
         application_filter=application,
+        profile=profile,
     )
     if not application:
         classified_total += add_device_identity_mappings(
@@ -243,6 +255,7 @@ def category_summary(start_time, end_time, filters=None, limit=8, total_network_
             start_time,
             end_time,
             device_ids=device_ids,
+            profile=profile,
         )
 
     output = []
@@ -313,6 +326,7 @@ def category_summary(start_time, end_time, filters=None, limit=8, total_network_
             "share_pct": round((unclassified_mb / network_total * 100), 1) if network_total else 0,
         })
     elapsed_ms = (time.perf_counter() - started) * 1000
+    _profile_set(profile, "category_summary_ms", round(elapsed_ms, 1))
     if elapsed_ms > 500:
         print(f"Category summary query slow: {elapsed_ms:.1f} ms")
     return {
@@ -403,40 +417,64 @@ def unknown_traffic_summary(limit=25):
     return unknown_review_rows(limit)
 
 
-def add_site_device_mappings(buckets, start_time, end_time, device_ids=None, application_filter=""):
+def add_site_device_mappings(buckets, start_time, end_time, device_ids=None, application_filter="", profile=None):
+    started = time.perf_counter()
+    _profile_add(profile, "add_site_device_mappings_calls")
     device_ids = set(device_ids or [])
-    added_total = 0.0
+    mappings = []
     for mapping in site_application_mappings():
-        ip = mapping["ip"]
-        app_name = mapping["application"]
+        ip = str(mapping["ip"] or "").strip()
+        app_name = str(mapping["application"] or "").strip()
         if device_ids and ip not in device_ids:
             continue
         if application_filter and application_filter.lower() != app_name.lower():
             continue
-        traffic = _first_row(query(
-            """
-            SELECT SUM(downloaded_mb) AS downloaded_mb,
-                   SUM(uploaded_mb) AS uploaded_mb,
-                   SUM(total_mb) AS total_mb,
-                   COUNT(DISTINCT ip) AS devices
-            FROM ({traffic_history_source_sql()})
-            WHERE ts BETWEEN ? AND ? AND ip=?
-            """,
-            (start_time, end_time, ip),
-        ))
+        mappings.append({**mapping, "ip": ip, "application": app_name})
+    _profile_set(profile, "site_mapping_ips", len({mapping["ip"] for mapping in mappings}))
+    if not mappings:
+        _profile_set(profile, "add_site_device_mappings_ms", round((time.perf_counter() - started) * 1000, 1))
+        return 0.0
+
+    ips = sorted({mapping["ip"] for mapping in mappings})
+    placeholders = ",".join(["?"] * len(ips))
+    traffic_rows = query(
+        f"""
+        SELECT ip,
+               SUM(downloaded_mb) AS downloaded_mb,
+               SUM(uploaded_mb) AS uploaded_mb,
+               SUM(total_mb) AS total_mb,
+               COUNT(DISTINCT ip) AS devices
+        FROM ({traffic_history_source_sql()})
+        WHERE ts BETWEEN ? AND ? AND ip IN ({placeholders})
+        GROUP BY ip
+        """,
+        tuple([start_time, end_time, *ips]),
+    )
+    _profile_add(profile, "add_site_device_mappings_queries")
+    existing_rows = query(
+        f"""
+        SELECT ip,
+               SUM(downloaded_mb) AS downloaded_mb,
+               SUM(uploaded_mb) AS uploaded_mb,
+               SUM(total_mb) AS total_mb
+        FROM estimated_app_traffic
+        WHERE ts BETWEEN ? AND ? AND ip IN ({placeholders})
+        GROUP BY ip
+        """,
+        tuple([start_time, end_time, *ips]),
+    )
+    _profile_add(profile, "add_site_device_mappings_queries")
+    traffic_by_ip = {str(row["ip"] or ""): row for row in traffic_rows}
+    existing_by_ip = {str(row["ip"] or ""): row for row in existing_rows}
+    added_total = 0.0
+    for mapping in mappings:
+        ip = mapping["ip"]
+        app_name = mapping["application"]
+        traffic = traffic_by_ip.get(ip)
         total_mb = float(_row_value(traffic, "total_mb", 0) or 0)
         if total_mb <= 0:
             continue
-        existing = _first_row(query(
-            """
-            SELECT SUM(downloaded_mb) AS downloaded_mb,
-                   SUM(uploaded_mb) AS uploaded_mb,
-                   SUM(total_mb) AS total_mb
-            FROM estimated_app_traffic
-            WHERE ts BETWEEN ? AND ? AND ip=?
-            """,
-            (start_time, end_time, ip),
-        ))
+        existing = existing_by_ip.get(ip)
         downloaded_mb = max(0.0, float(_row_value(traffic, "downloaded_mb", 0) or 0) - float(_row_value(existing, "downloaded_mb", 0) or 0))
         uploaded_mb = max(0.0, float(_row_value(traffic, "uploaded_mb", 0) or 0) - float(_row_value(existing, "uploaded_mb", 0) or 0))
         mapped_total = max(0.0, total_mb - float(_row_value(existing, "total_mb", 0) or 0))
@@ -462,10 +500,13 @@ def add_site_device_mappings(buckets, start_time, end_time, device_ids=None, app
         bucket["devices"] += int(_row_value(traffic, "devices", 1) or 1)
         bucket["applications"][app_name] = bucket["applications"].get(app_name, 0.0) + mapped_total
         added_total += mapped_total
+    _profile_set(profile, "add_site_device_mappings_ms", round((time.perf_counter() - started) * 1000, 1))
     return added_total
 
 
-def add_device_identity_mappings(buckets, start_time, end_time, device_ids=None):
+def add_device_identity_mappings(buckets, start_time, end_time, device_ids=None, profile=None):
+    started = time.perf_counter()
+    _profile_add(profile, "add_device_identity_mappings_calls")
     device_ids = set(device_ids or [])
     where = ["t.ts BETWEEN ? AND ?"]
     params = [start_time, end_time]
@@ -490,6 +531,26 @@ def add_device_identity_mappings(buckets, start_time, end_time, device_ids=None)
         """,
         tuple(params),
     )
+    _profile_add(profile, "add_device_identity_mappings_queries")
+    ips = sorted({str(row["ip"] or "").strip() for row in rows if str(row["ip"] or "").strip()})
+    _profile_set(profile, "identity_mapping_ips", len(ips))
+    existing_by_ip = {}
+    if ips:
+        placeholders = ",".join(["?"] * len(ips))
+        existing_rows = query(
+            f"""
+            SELECT ip,
+                   SUM(downloaded_mb) AS downloaded_mb,
+                   SUM(uploaded_mb) AS uploaded_mb,
+                   SUM(total_mb) AS total_mb
+            FROM estimated_app_traffic
+            WHERE ts BETWEEN ? AND ? AND ip IN ({placeholders})
+            GROUP BY ip
+            """,
+            tuple([start_time, end_time, *ips]),
+        )
+        _profile_add(profile, "add_device_identity_mappings_queries")
+        existing_by_ip = {str(row["ip"] or ""): row for row in existing_rows}
     added_total = 0.0
     mapped_site_ips = {row["ip"] for row in site_application_mappings()}
     for row in rows:
@@ -499,16 +560,7 @@ def add_device_identity_mappings(buckets, start_time, end_time, device_ids=None)
         total_mb = float(row["total_mb"] or 0)
         if total_mb <= 0:
             continue
-        existing = _first_row(query(
-            """
-            SELECT SUM(downloaded_mb) AS downloaded_mb,
-                   SUM(uploaded_mb) AS uploaded_mb,
-                   SUM(total_mb) AS total_mb
-            FROM estimated_app_traffic
-            WHERE ts BETWEEN ? AND ? AND ip=?
-            """,
-            (start_time, end_time, ip),
-        ))
+        existing = existing_by_ip.get(ip)
         existing_total = float(_row_value(existing, "total_mb", 0) or 0)
         unattributed_total = max(0.0, total_mb - existing_total)
         if unattributed_total <= 0.01:
@@ -540,6 +592,7 @@ def add_device_identity_mappings(buckets, start_time, end_time, device_ids=None)
         bucket["devices"] += 1
         bucket["applications"][app_name] = bucket["applications"].get(app_name, 0.0) + unattributed_total
         added_total += unattributed_total
+    _profile_set(profile, "add_device_identity_mappings_ms", round((time.perf_counter() - started) * 1000, 1))
     return added_total
 
 

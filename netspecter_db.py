@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import time
+import contextvars
 from pathlib import Path
 
 from netspecter_paths import CACHE_PATH, DATA_ROOT, DB_PATH, DNS_DB_PATH, TRAFFIC_DB_PATH
@@ -9,6 +10,35 @@ from netspecter_incidents import incident_schema_sql
 
 
 DB_INIT_DONE = False
+_DB_QUERY_PROFILE = contextvars.ContextVar("netspecter_db_query_profile", default=None)
+
+
+def begin_db_query_profile(label=""):
+    profile = {
+        "label": str(label or ""),
+        "queries": 0,
+        "query_seconds": 0.0,
+        "writes": 0,
+        "write_seconds": 0.0,
+    }
+    token = _DB_QUERY_PROFILE.set(profile)
+    return token, profile
+
+
+def end_db_query_profile(token):
+    _DB_QUERY_PROFILE.reset(token)
+
+
+def _record_db_query(kind, elapsed):
+    profile = _DB_QUERY_PROFILE.get()
+    if not profile:
+        return
+    if kind == "write":
+        profile["writes"] += 1
+        profile["write_seconds"] += float(elapsed or 0)
+    else:
+        profile["queries"] += 1
+        profile["query_seconds"] += float(elapsed or 0)
 
 
 def query(sql, params=()):
@@ -18,7 +48,9 @@ def query(sql, params=()):
             init_db()
             con = connect_db()
             con.row_factory = sqlite3.Row
+            started = time.perf_counter()
             rows = con.execute(sql, params).fetchall()
+            _record_db_query("query", time.perf_counter() - started)
             con.close()
             return rows
         except sqlite3.OperationalError as e:
@@ -42,8 +74,10 @@ def run_sql(sql, params=()):
         try:
             init_db()
             con = connect_db()
+            started = time.perf_counter()
             cur = con.execute(sql, params)
             con.commit()
+            _record_db_query("write", time.perf_counter() - started)
             con.close()
             return cur.rowcount
         except sqlite3.OperationalError as e:

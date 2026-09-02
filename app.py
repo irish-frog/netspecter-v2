@@ -9209,6 +9209,19 @@ def reporting_page():
 </section>
 """
 
+    application_category_panel = ""
+    if report_type_key != "internet":
+        application_category_panel = f"""
+      <section class="ns-polish-panel ns-report-panel">
+        <h2>Application Categories</h2>
+        <div class="ns-report-category-layout">
+          <div class="ns-report-donut"><div><b>{h(fmt_mb(overview.get("total_mb") or 0))}</b><span>Total Traffic</span></div></div>
+          <div>{category_legend}</div>
+        </div>
+        <div class="ns-report-coverage">Primary application attribution coverage: {coverage_pct:.1f}%. Traffic without application attribution: {max(0.0, 100.0 - coverage_pct):.1f}%.{h(overlap_note)}</div>
+      </section>
+"""
+
     body = f"""
 {topbar("Reporting")}
 <style>
@@ -9316,14 +9329,7 @@ def reporting_page():
       </div>
     </div>
     <aside class="ns-report-side">
-      <section class="ns-polish-panel ns-report-panel">
-        <h2>Application Categories</h2>
-        <div class="ns-report-category-layout">
-          <div class="ns-report-donut"><div><b>{h(fmt_mb(overview.get("total_mb") or 0))}</b><span>Total Traffic</span></div></div>
-          <div>{category_legend}</div>
-        </div>
-        <div class="ns-report-coverage">Primary application attribution coverage: {coverage_pct:.1f}%. Traffic without application attribution: {max(0.0, 100.0 - coverage_pct):.1f}%.{h(overlap_note)}</div>
-      </section>
+      {application_category_panel}
       <section class="ns-polish-panel ns-report-panel">
         <h2>Report Contents</h2>
         <div class="ns-report-checks">

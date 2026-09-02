@@ -1,8 +1,9 @@
 import re
+import time
 from datetime import datetime, timedelta
 
 from netspecter_config import cfg, security_features_enabled
-from netspecter_db import query
+from netspecter_db import begin_db_query_profile, end_db_query_profile, query
 from services.ai_attribution_service import ai_attribution_summary
 from services.application_classification_service import category_summary, unclassified_device_summary
 from services.reporting_service import (
@@ -144,7 +145,9 @@ def _dedupe_device_rows(rows):
 
 
 def build_reporting_context_from_request(args):
+    context_started = time.perf_counter()
     requested_report_type = str(args.get("report_type") or "management").strip().lower()
+    sql_token, sql_profile = begin_db_query_profile(f"report:{requested_report_type}")
     report_type = "Internet Report" if requested_report_type == "internet" else "Management Overview"
     start_value = _expand_report_start(args.get("start"))
     end_value = _expand_report_end(args.get("end"))
@@ -165,12 +168,18 @@ def build_reporting_context_from_request(args):
         "application": selected_application,
         "domain": selected_domain,
     }
+    report_perf = {"report_type": requested_report_type}
+    is_internet_report = requested_report_type == "internet"
     filtered_traffic = get_traffic_summary(filters, start_time, end_time)
     overview = reporting_overview(filters, start_time, end_time, filtered_traffic)
     category_total_mb = None if selected_application else filtered_traffic["total_mb"]
-    category_report = category_summary(start_time, end_time, filters, 7, category_total_mb)
-    classified_flow_report = classified_flow_summary(filters, start_time, end_time)
-    return {
+    if is_internet_report:
+        category_report = _empty_category_report(category_total_mb)
+        classified_flow_report = _empty_classified_flow_report()
+    else:
+        category_report = category_summary(start_time, end_time, filters, 7, category_total_mb, profile=report_perf)
+        classified_flow_report = classified_flow_summary(filters, start_time, end_time)
+    context = {
         "start_time": start_time,
         "end_time": end_time,
         "selected_devices": selected_devices,
@@ -183,29 +192,89 @@ def build_reporting_context_from_request(args):
         "matched_device": matched_device,
         "filters": filters,
         "overview": overview,
-        "dns_rows": get_dns_summary(filters, start_time, end_time, 8),
-        "app_rows": get_application_summary(filters, start_time, end_time, 8),
-        "destination_rows": get_destination_summary(filters, start_time, end_time, 8),
+        "dns_rows": [] if is_internet_report else get_dns_summary(filters, start_time, end_time, 8),
+        "app_rows": [] if is_internet_report else get_application_summary(filters, start_time, end_time, 8),
+        "destination_rows": [] if is_internet_report else get_destination_summary(filters, start_time, end_time, 8),
         "quality_rows": get_internet_quality_summary(start_time, end_time, 160),
         "internet_issue_rows": get_internet_issue_summary(start_time, end_time, 200),
         "internet_quality_rollup": get_internet_quality_rollup(start_time, end_time),
         "speedtest_rows": get_speedtest_summary(start_time, end_time, 240),
-        "timeline": get_activity_timeline(filters, start_time, end_time, 50),
-        "top_users": get_top_users(filters, start_time, end_time, 5),
-        "top_devices": get_top_devices(filters, start_time, end_time, 8),
-        "app_options": list_applications(start_time, end_time, 100),
-        "domain_options": list_domains(start_time, end_time, 100),
+        "timeline": [] if is_internet_report else get_activity_timeline(filters, start_time, end_time, 50),
+        "top_users": [] if is_internet_report else get_top_users(filters, start_time, end_time, 5),
+        "top_devices": [] if is_internet_report else get_top_devices(filters, start_time, end_time, 8),
+        "app_options": [] if is_internet_report else list_applications(start_time, end_time, 100),
+        "domain_options": [] if is_internet_report else list_domains(start_time, end_time, 100),
         "category_report": category_report,
         "category_rows": category_report["rows"],
         "classified_flow_report": classified_flow_report,
-        "unknown_destination_rows": top_unknown_destinations(filters, start_time, end_time, 8),
-        "unknown_traffic_trend": unknown_traffic_trend(filters, start_time, end_time),
-        "unclassified_devices": unclassified_device_summary(start_time, end_time, filters, 8),
-        "ai_summary": ai_attribution_summary(filters, start_time, end_time),
+        "unknown_destination_rows": [] if is_internet_report else top_unknown_destinations(filters, start_time, end_time, 8),
+        "unknown_traffic_trend": [] if is_internet_report else unknown_traffic_trend(filters, start_time, end_time),
+        "unclassified_devices": [] if is_internet_report else unclassified_device_summary(start_time, end_time, filters, 8),
+        "ai_summary": _empty_ai_summary() if is_internet_report else ai_attribution_summary(filters, start_time, end_time),
         "findings": build_rule_based_findings(overview) if security_features_enabled(cfg()) else [],
         "selected_users": [],
         "report_type": report_type,
         "period": period if period in {"7d", "30d", "custom"} else "30d",
+    }
+    context_elapsed_ms = round((time.perf_counter() - context_started) * 1000, 1)
+    context["performance"] = {
+        **report_perf,
+        "report_context_ms": context_elapsed_ms,
+        "sql_queries": int(sql_profile.get("queries") or 0),
+        "sql_query_ms": round(float(sql_profile.get("query_seconds") or 0) * 1000, 1),
+        "sql_writes": int(sql_profile.get("writes") or 0),
+        "sql_write_ms": round(float(sql_profile.get("write_seconds") or 0) * 1000, 1),
+    }
+    if context_elapsed_ms > 5000 or bool(cfg().get("report_performance_logging_enabled", False)):
+        perf = context["performance"]
+        print(
+            "Report profile: "
+            f"type={requested_report_type} "
+            f"sql_queries={perf['sql_queries']} "
+            f"sql_ms={perf['sql_query_ms']} "
+            f"category_summary_ms={perf.get('category_summary_ms', 0)} "
+            f"identity_mapping_calls={perf.get('add_device_identity_mappings_calls', 0)} "
+            f"identity_mapping_queries={perf.get('add_device_identity_mappings_queries', 0)} "
+            f"identity_ips={perf.get('identity_mapping_ips', 0)} "
+            f"context_ms={perf['report_context_ms']}"
+        )
+    end_db_query_profile(sql_token)
+    return context
+
+
+def _empty_category_report(total_network_mb=0):
+    network_total = float(total_network_mb or 0)
+    return {
+        "rows": [],
+        "total_network_mb": network_total,
+        "classified_application_mb": 0.0,
+        "matched_application_mb": 0.0,
+        "unclassified_application_mb": network_total,
+        "classification_coverage_pct": 0.0,
+        "classification_match_rate_pct": 0.0,
+        "classification_is_overlapping": False,
+    }
+
+
+def _empty_classified_flow_report():
+    return {
+        "total_bytes": 0,
+        "known_bytes": 0,
+        "unknown_bytes": 0,
+        "known_pct": 0.0,
+        "unknown_pct": 0.0,
+        "category_rows": [],
+        "application_rows": [],
+    }
+
+
+def _empty_ai_summary():
+    return {
+        "attributed_mb": 0.0,
+        "services_detected": 0,
+        "services": [],
+        "devices": [],
+        "attribution_coverage": "None",
     }
 
 

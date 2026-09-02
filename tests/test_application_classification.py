@@ -190,8 +190,8 @@ def test_site_device_mapping_adds_nextcloud_to_category_summary(monkeypatch):
             return []
         if "FROM traffic_intervals" in sql:
             return [{"downloaded_mb": 80.0, "uploaded_mb": 20.0, "total_mb": 100.0, "devices": 1}]
-        if "FROM estimated_app_traffic" in sql and "ip=?" in sql:
-            return [{"downloaded_mb": 10.0, "uploaded_mb": 5.0, "total_mb": 15.0}]
+        if "FROM estimated_app_traffic" in sql and "GROUP BY ip" in sql:
+            return [{"ip": "192.168.99.4", "downloaded_mb": 10.0, "uploaded_mb": 5.0, "total_mb": 15.0}]
         return []
 
     monkeypatch.setattr(application_classification_service, "query", fake_query)
@@ -237,8 +237,8 @@ def test_device_identity_hint_classifies_media_device_unattributed_traffic(monke
     def fake_query(sql, params=()):
         if "FROM estimated_app_traffic" in sql and "GROUP BY category" in sql:
             return []
-        if "FROM estimated_app_traffic" in sql and "ip=?" in sql:
-            return [{"downloaded_mb": 0.0, "uploaded_mb": 0.0, "total_mb": 0.0}]
+        if "FROM estimated_app_traffic" in sql and "GROUP BY ip" in sql:
+            return [{"ip": "192.168.99.50", "downloaded_mb": 0.0, "uploaded_mb": 0.0, "total_mb": 0.0}]
         if "traffic_history_source_sql" not in sql and "FROM (" in sql and "traffic_intervals" in sql:
             return [{
                 "name": "Xiaomi-TV-Box",
@@ -268,6 +268,44 @@ def test_device_identity_hint_classifies_media_device_unattributed_traffic(monke
     assert video["application_names"] == ["Media Device"]
     assert summary["classification_coverage_pct"] == 100.0
     assert summary["unclassified_application_mb"] == 0.0
+
+
+def test_device_identity_mapping_bulk_loads_existing_traffic(monkeypatch):
+    queries = []
+    traffic_rows = [
+        {
+            "name": f"Media Device {idx}",
+            "device_type": "Media Device",
+            "ip": f"192.168.99.{idx}",
+            "downloaded_mb": 100.0,
+            "uploaded_mb": 0.0,
+            "total_mb": 100.0,
+        }
+        for idx in range(10, 15)
+    ]
+
+    def fake_query(sql, params=()):
+        queries.append(sql)
+        if "FROM (" in sql and "traffic_intervals" in sql:
+            return traffic_rows
+        if "FROM estimated_app_traffic" in sql and "GROUP BY ip" in sql:
+            return []
+        return []
+
+    monkeypatch.setattr(application_classification_service, "query", fake_query)
+    monkeypatch.setattr(application_classification_service, "site_application_mappings", lambda: [])
+    buckets = {}
+    profile = {}
+    application_classification_service.add_device_identity_mappings(
+        buckets,
+        "2026-07-20",
+        "2026-07-25",
+        profile=profile,
+    )
+
+    assert profile["add_device_identity_mappings_queries"] == 2
+    assert profile["identity_mapping_ips"] == 5
+    assert sum(1 for sql in queries if "FROM estimated_app_traffic" in sql) == 1
 
 
 def test_unclassified_device_summary_respects_device_identity_hint(monkeypatch):
