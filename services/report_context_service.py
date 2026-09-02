@@ -152,6 +152,9 @@ def build_reporting_context_from_request(args):
     start_value = _expand_report_start(args.get("start"))
     end_value = _expand_report_end(args.get("end"))
     period = str(args.get("period") or "30d").strip().lower()
+    selected_sections = {str(value or "").strip() for value in args.getlist("section") if str(value or "").strip()}
+    if not selected_sections:
+        selected_sections = {"traffic", "devices", "applications"}
     if period in {"7d", "7"} and not start_value and not end_value:
         end_dt = datetime.now()
         start_time, end_time = _dt_text(end_dt - timedelta(days=7)), _dt_text(end_dt)
@@ -170,10 +173,16 @@ def build_reporting_context_from_request(args):
     }
     report_perf = {"report_type": requested_report_type}
     is_internet_report = requested_report_type == "internet"
+    needs_applications = (not is_internet_report) and "applications" in selected_sections
+    needs_devices = (not is_internet_report) and "devices" in selected_sections
+    needs_dns_rows = (not is_internet_report) and "blocked_dns" in selected_sections
+    needs_destination_rows = (not is_internet_report) and "destinations" in selected_sections
+    needs_user_rows = (not is_internet_report) and "users" in selected_sections
+    needs_timeline = (not is_internet_report) and "timeline" in selected_sections
     filtered_traffic = get_traffic_summary(filters, start_time, end_time)
     overview = reporting_overview(filters, start_time, end_time, filtered_traffic)
     category_total_mb = None if selected_application else filtered_traffic["total_mb"]
-    if is_internet_report:
+    if is_internet_report or not needs_applications:
         category_report = _empty_category_report(category_total_mb)
         classified_flow_report = _empty_classified_flow_report()
     else:
@@ -192,25 +201,25 @@ def build_reporting_context_from_request(args):
         "matched_device": matched_device,
         "filters": filters,
         "overview": overview,
-        "dns_rows": [] if is_internet_report else get_dns_summary(filters, start_time, end_time, 8),
-        "app_rows": [] if is_internet_report else get_application_summary(filters, start_time, end_time, 8),
-        "destination_rows": [] if is_internet_report else get_destination_summary(filters, start_time, end_time, 8),
-        "quality_rows": get_internet_quality_summary(start_time, end_time, 160),
-        "internet_issue_rows": get_internet_issue_summary(start_time, end_time, 200),
-        "internet_quality_rollup": get_internet_quality_rollup(start_time, end_time),
-        "speedtest_rows": get_speedtest_summary(start_time, end_time, 240),
-        "timeline": [] if is_internet_report else get_activity_timeline(filters, start_time, end_time, 50),
-        "top_users": [] if is_internet_report else get_top_users(filters, start_time, end_time, 5),
-        "top_devices": [] if is_internet_report else get_top_devices(filters, start_time, end_time, 8),
-        "app_options": [] if is_internet_report else list_applications(start_time, end_time, 100),
-        "domain_options": [] if is_internet_report else list_domains(start_time, end_time, 100),
+        "dns_rows": get_dns_summary(filters, start_time, end_time, 8) if needs_dns_rows else [],
+        "app_rows": get_application_summary(filters, start_time, end_time, 8) if needs_applications else [],
+        "destination_rows": get_destination_summary(filters, start_time, end_time, 8) if needs_destination_rows else [],
+        "quality_rows": get_internet_quality_summary(start_time, end_time, 160) if is_internet_report else [],
+        "internet_issue_rows": get_internet_issue_summary(start_time, end_time, 200) if is_internet_report else [],
+        "internet_quality_rollup": get_internet_quality_rollup(start_time, end_time) if is_internet_report else {},
+        "speedtest_rows": get_speedtest_summary(start_time, end_time, 240) if is_internet_report else [],
+        "timeline": get_activity_timeline(filters, start_time, end_time, 50) if needs_timeline else [],
+        "top_users": get_top_users(filters, start_time, end_time, 5) if needs_user_rows else [],
+        "top_devices": get_top_devices(filters, start_time, end_time, 8) if needs_devices else [],
+        "app_options": list_applications(start_time, end_time, 100) if needs_applications else [],
+        "domain_options": list_domains(start_time, end_time, 100) if needs_dns_rows else [],
         "category_report": category_report,
         "category_rows": category_report["rows"],
         "classified_flow_report": classified_flow_report,
-        "unknown_destination_rows": [] if is_internet_report else top_unknown_destinations(filters, start_time, end_time, 8),
-        "unknown_traffic_trend": [] if is_internet_report else unknown_traffic_trend(filters, start_time, end_time),
-        "unclassified_devices": [] if is_internet_report else unclassified_device_summary(start_time, end_time, filters, 8),
-        "ai_summary": _empty_ai_summary() if is_internet_report else ai_attribution_summary(filters, start_time, end_time),
+        "unknown_destination_rows": top_unknown_destinations(filters, start_time, end_time, 8) if needs_destination_rows else [],
+        "unknown_traffic_trend": unknown_traffic_trend(filters, start_time, end_time) if needs_destination_rows else [],
+        "unclassified_devices": unclassified_device_summary(start_time, end_time, filters, 8) if needs_applications else [],
+        "ai_summary": ai_attribution_summary(filters, start_time, end_time) if needs_applications else _empty_ai_summary(),
         "findings": build_rule_based_findings(overview) if security_features_enabled(cfg()) else [],
         "selected_users": [],
         "report_type": report_type,

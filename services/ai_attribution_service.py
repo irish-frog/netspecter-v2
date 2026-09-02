@@ -47,6 +47,9 @@ def ai_attribution_summary(filters, start_time, end_time, include_dns_correlatio
         placeholders = ",".join(["?"] * len(device_ids))
         dns_where.append(f"client IN ({placeholders})")
         dns_params.extend(device_ids)
+    domain_match_sql, domain_match_params = _ai_domain_filter_sql()
+    dns_where.append(f"({domain_match_sql})")
+    dns_params.extend(domain_match_params)
 
     dns_rows = query(
         f"""
@@ -167,6 +170,21 @@ def _empty_service(service):
         "last_seen": "",
         "policy_status": "Monitor",
     }
+
+
+def _ai_domain_filter_sql():
+    clauses = []
+    params = []
+    for suffixes in AI_SERVICE_DOMAINS.values():
+        for suffix in suffixes:
+            suffix = str(suffix or "").lower().strip(".")
+            if not suffix:
+                continue
+            clauses.append("LOWER(domain)=?")
+            params.append(suffix)
+            clauses.append("LOWER(domain) LIKE ?")
+            params.append(f"%.{suffix}")
+    return " OR ".join(clauses or ["0"]), params
 
 
 def _attribution_status(item):
