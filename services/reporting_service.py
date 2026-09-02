@@ -155,26 +155,33 @@ def get_top_users(filters, start_time, end_time, limit=5):
             f"""
             SELECT
                 u.display_name AS user_label,
-                COUNT(DISTINCT t.ip) AS devices,
-                SUM(t.downloaded_mb) AS downloaded_mb,
-                SUM(t.uploaded_mb) AS uploaded_mb,
-                SUM(t.total_mb) AS total_mb,
-                MAX(t.ts) AS last_seen
+                COUNT(DISTINCT app_usage.ip) AS devices,
+                SUM(app_usage.downloaded_mb) AS downloaded_mb,
+                SUM(app_usage.uploaded_mb) AS uploaded_mb,
+                SUM(app_usage.total_mb) AS total_mb,
+                MAX(app_usage.last_seen) AS last_seen
             FROM user_device_assignments a
             JOIN user_labels u ON u.id=a.user_id
-            JOIN estimated_app_traffic t ON t.ip=a.device_ip
+            JOIN (
+                SELECT ip,
+                       SUM(downloaded_mb) AS downloaded_mb,
+                       SUM(uploaded_mb) AS uploaded_mb,
+                       SUM(total_mb) AS total_mb,
+                       MAX(ts) AS last_seen
+                FROM estimated_app_traffic
+                WHERE ts BETWEEN ? AND ? AND category=?
+                GROUP BY ip
+            ) app_usage ON app_usage.ip=a.device_ip
             WHERE u.active=1
               AND u.display_name IS NOT NULL
               AND TRIM(u.display_name) != ''
               {assignment_clause}
-              AND t.ts BETWEEN ? AND ?
-              AND t.category=?
               {device_clause}
             GROUP BY u.id, u.display_name
             ORDER BY total_mb DESC
             LIMIT ?
             """,
-            (*assignment_params, start_time, end_time, app, *device_params, _limit(limit)),
+            (start_time, end_time, app, *assignment_params, *device_params, _limit(limit)),
             "top_users_application",
         )
 
@@ -189,28 +196,34 @@ def get_top_users(filters, start_time, end_time, limit=5):
             f"""
             SELECT
                 u.display_name AS user_label,
-                COUNT(DISTINCT q.client) AS devices,
+                COUNT(DISTINCT dns_usage.client) AS devices,
                 0 AS downloaded_mb,
                 0 AS uploaded_mb,
                 0 AS total_mb,
-                COUNT(*) AS requests,
-                MAX(q.ts) AS last_seen
+                SUM(dns_usage.requests) AS requests,
+                MAX(dns_usage.last_seen) AS last_seen
             FROM user_device_assignments a
             JOIN user_labels u ON u.id=a.user_id
-            JOIN dns_querylog q ON q.client=a.device_ip
+            JOIN (
+                SELECT client,
+                       COUNT(*) AS requests,
+                       MAX(ts) AS last_seen
+                FROM dns_querylog
+                WHERE ts BETWEEN ? AND ?
+                  AND domain LIKE ?
+                  AND {reverse_dns_exclusion_sql('domain')}
+                GROUP BY client
+            ) dns_usage ON dns_usage.client=a.device_ip
             WHERE u.active=1
               AND u.display_name IS NOT NULL
               AND TRIM(u.display_name) != ''
               {assignment_clause}
-              AND q.ts BETWEEN ? AND ?
-              AND q.domain LIKE ?
-              AND {reverse_dns_exclusion_sql('q.domain')}
               {dns_device_clause}
             GROUP BY u.id, u.display_name
             ORDER BY requests DESC
             LIMIT ?
             """,
-            (*assignment_params, start_time, end_time, f"%{domain}%", *dns_params, _limit(limit)),
+            (start_time, end_time, f"%{domain}%", *assignment_params, *dns_params, _limit(limit)),
             "top_users_domain",
         )
 
@@ -218,25 +231,33 @@ def get_top_users(filters, start_time, end_time, limit=5):
         f"""
         SELECT
             u.display_name AS user_label,
-            COUNT(DISTINCT t.ip) AS devices,
-            SUM(t.downloaded_mb) AS downloaded_mb,
-            SUM(t.uploaded_mb) AS uploaded_mb,
-            SUM(t.total_mb) AS total_mb,
-            MAX(t.ts) AS last_seen
+            COUNT(DISTINCT traffic_usage.ip) AS devices,
+            SUM(traffic_usage.downloaded_mb) AS downloaded_mb,
+            SUM(traffic_usage.uploaded_mb) AS uploaded_mb,
+            SUM(traffic_usage.total_mb) AS total_mb,
+            MAX(traffic_usage.last_seen) AS last_seen
         FROM user_device_assignments a
         JOIN user_labels u ON u.id=a.user_id
-        JOIN ({traffic_history_source_sql()}) t ON t.ip=a.device_ip
+        JOIN (
+            SELECT ip,
+                   SUM(downloaded_mb) AS downloaded_mb,
+                   SUM(uploaded_mb) AS uploaded_mb,
+                   SUM(total_mb) AS total_mb,
+                   MAX(ts) AS last_seen
+            FROM ({traffic_history_source_sql()})
+            WHERE ts BETWEEN ? AND ?
+            GROUP BY ip
+        ) traffic_usage ON traffic_usage.ip=a.device_ip
         WHERE u.active=1
           AND u.display_name IS NOT NULL
           AND TRIM(u.display_name) != ''
           {assignment_clause}
-          AND t.ts BETWEEN ? AND ?
           {device_clause}
         GROUP BY u.id, u.display_name
         ORDER BY total_mb DESC
         LIMIT ?
         """,
-        (*assignment_params, start_time, end_time, *device_params, _limit(limit)),
+        (start_time, end_time, *assignment_params, *device_params, _limit(limit)),
         "top_users",
     )
 
