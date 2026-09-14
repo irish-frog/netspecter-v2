@@ -367,6 +367,9 @@ def init_traffic_db():
     ])
     con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_day_ip ON estimated_app_traffic(day, category, ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_day_category ON estimated_app_traffic(day, category, ip, total_mb, downloaded_mb, uploaded_mb)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_ts ON estimated_app_traffic(ts)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_ts_category_ip ON estimated_app_traffic(ts, category, ip)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_ip_ts ON estimated_app_traffic(ip, ts)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_device_id_day ON estimated_app_traffic(device_id, day, category)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS estimated_app_hourly_rollups (

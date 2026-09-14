@@ -179,6 +179,8 @@ def build_reporting_context_from_request(args):
     needs_destination_rows = (not is_internet_report) and "destinations" in selected_sections
     needs_user_rows = (not is_internet_report) and "users" in selected_sections
     needs_timeline = (not is_internet_report) and "timeline" in selected_sections
+    needs_ai_summary = (not is_internet_report) and "ai" in selected_sections
+    needs_classified_flow = (not is_internet_report) and "classification_pipeline" in selected_sections
     filtered_traffic = get_traffic_summary(filters, start_time, end_time)
     overview = reporting_overview(filters, start_time, end_time, filtered_traffic)
     category_total_mb = None if selected_application else filtered_traffic["total_mb"]
@@ -187,7 +189,7 @@ def build_reporting_context_from_request(args):
         classified_flow_report = _empty_classified_flow_report()
     else:
         category_report = category_summary(start_time, end_time, filters, 7, category_total_mb, profile=report_perf)
-        classified_flow_report = classified_flow_summary(filters, start_time, end_time)
+        classified_flow_report = classified_flow_summary(filters, start_time, end_time) if needs_classified_flow else _empty_classified_flow_report()
     context = {
         "start_time": start_time,
         "end_time": end_time,
@@ -219,7 +221,7 @@ def build_reporting_context_from_request(args):
         "unknown_destination_rows": top_unknown_destinations(filters, start_time, end_time, 8) if needs_destination_rows else [],
         "unknown_traffic_trend": unknown_traffic_trend(filters, start_time, end_time) if needs_destination_rows else [],
         "unclassified_devices": unclassified_device_summary(start_time, end_time, filters, 8) if needs_applications else [],
-        "ai_summary": ai_attribution_summary(filters, start_time, end_time) if needs_applications else _empty_ai_summary(),
+        "ai_summary": ai_attribution_summary(filters, start_time, end_time) if needs_ai_summary else _empty_ai_summary(),
         "findings": build_rule_based_findings(overview) if security_features_enabled(cfg()) else [],
         "selected_users": [],
         "report_type": report_type,
