@@ -45,12 +45,24 @@ def range_counts(start_time, end_time):
             "SELECT COUNT(*) FROM traffic_intervals WHERE ts BETWEEN ? AND ?",
             (start_time, end_time),
         ),
+        "traffic_hourly_rows": _scalar(
+            "SELECT COUNT(*) FROM traffic_hourly_rollups WHERE hour BETWEEN ? AND ?",
+            (start_time, end_time),
+        ),
         "estimated_rows": _scalar(
             "SELECT COUNT(*) FROM estimated_app_traffic WHERE ts BETWEEN ? AND ?",
             (start_time, end_time),
         ),
+        "estimated_hourly_rows": _scalar(
+            "SELECT COUNT(*) FROM estimated_app_hourly_rollups WHERE hour BETWEEN ? AND ?",
+            (start_time, end_time),
+        ),
         "destination_rows": _scalar(
             "SELECT COUNT(*) FROM remote_traffic_intervals WHERE ts BETWEEN ? AND ?",
+            (start_time, end_time),
+        ),
+        "destination_hourly_rows": _scalar(
+            "SELECT COUNT(*) FROM remote_traffic_hourly_rollups WHERE hour BETWEEN ? AND ?",
             (start_time, end_time),
         ),
         "dns_rows": _scalar(
@@ -106,7 +118,8 @@ def main():
     print(f"NetSpecter report generation profile ({args.report_type})")
     print(
         "days elapsed_s sql_queries sql_ms category_ms identity_calls identity_queries "
-        "identity_ips traffic_rows estimated_rows destination_rows dns_rows quality_rows unique_ips"
+        "identity_ips traffic_rows traffic_hourly_rows estimated_rows estimated_hourly_rows "
+        "destination_rows destination_hourly_rows dns_rows quality_rows unique_ips"
     )
     for days in args.days:
         row = profile_range(days, args.report_type)
@@ -120,8 +133,11 @@ def main():
             f"{row['identity_queries']} "
             f"{row['identity_ips']} "
             f"{row['traffic_rows']} "
+            f"{row['traffic_hourly_rows']} "
             f"{row['estimated_rows']} "
+            f"{row['estimated_hourly_rows']} "
             f"{row['destination_rows']} "
+            f"{row['destination_hourly_rows']} "
             f"{row['dns_rows']} "
             f"{row['quality_rows']} "
             f"{row['unique_ips']}"

@@ -21,6 +21,8 @@ from services.reporting_service import (
     list_applications,
     list_domains,
     parse_period,
+    estimated_app_source_sql,
+    remote_traffic_source_sql,
     traffic_history_source_sql,
 )
 from services.report_summary_service import build_rule_based_findings
@@ -351,7 +353,7 @@ def reporting_overview(filters, start_time, end_time, traffic):
         destination_params.append(application)
 
     active_devices_sql = (
-        f"SELECT COUNT(DISTINCT ip) FROM estimated_app_traffic WHERE {' AND '.join(app_where)}"
+        f"SELECT COUNT(DISTINCT ip) FROM ({estimated_app_source_sql()}) WHERE {' AND '.join(app_where)}"
         if application else
         f"SELECT COUNT(DISTINCT ip) FROM ({traffic_history_source_sql()}) WHERE {' AND '.join(traffic_where)}"
     )
@@ -372,7 +374,7 @@ def reporting_overview(filters, start_time, end_time, traffic):
         "applications": _scalar(
             f"""
             SELECT COUNT(DISTINCT category)
-            FROM estimated_app_traffic
+            FROM ({estimated_app_source_sql()})
             WHERE {' AND '.join(app_where)} AND category IS NOT NULL AND category != ''
             """,
             tuple(app_params),
@@ -380,7 +382,7 @@ def reporting_overview(filters, start_time, end_time, traffic):
         "unique_destinations": _scalar(
             f"""
             SELECT COUNT(DISTINCT remote_ip)
-            FROM remote_traffic_intervals
+            FROM ({remote_traffic_source_sql()})
             WHERE {' AND '.join(destination_where)}
             """,
             tuple(destination_params),

@@ -37,32 +37,47 @@ DEVICE_IDENTITY_HINTS = [
 
 def traffic_history_source_sql():
     return """
-        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts,
-               substr(ts, 1, 13) || ':00' AS hour
-        FROM traffic_intervals
-        UNION ALL
         SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, avg_live_bps AS live_bps,
                day, hour AS ts, hour
         FROM traffic_hourly_rollups
-        WHERE hour NOT IN (
-            SELECT DISTINCT substr(ts, 1, 13) || ':00'
-            FROM traffic_intervals
+        UNION ALL
+        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts,
+               substr(ts, 1, 13) || ':00' AS hour
+        FROM traffic_intervals
+        WHERE substr(ts, 1, 13) || ':00' NOT IN (
+            SELECT hour
+            FROM traffic_hourly_rollups
         )
     """
 
 
 def remote_traffic_source_sql():
     return """
-        SELECT ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts,
-               substr(ts, 1, 13) || ':00' AS hour
-        FROM remote_traffic_intervals
-        UNION ALL
         SELECT ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb,
                day, hour AS ts, hour
         FROM remote_traffic_hourly_rollups
-        WHERE hour NOT IN (
-            SELECT DISTINCT substr(ts, 1, 13) || ':00'
-            FROM remote_traffic_intervals
+        UNION ALL
+        SELECT ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts,
+               substr(ts, 1, 13) || ':00' AS hour
+        FROM remote_traffic_intervals
+        WHERE substr(ts, 1, 13) || ':00' NOT IN (
+            SELECT hour
+            FROM remote_traffic_hourly_rollups
+        )
+    """
+
+
+def estimated_app_source_sql():
+    return """
+        SELECT ip, category, downloaded_mb, uploaded_mb, total_mb, day, hour AS ts, hour
+        FROM estimated_app_hourly_rollups
+        UNION ALL
+        SELECT ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts,
+               substr(ts, 1, 13) || ':00' AS hour
+        FROM estimated_app_traffic
+        WHERE substr(ts, 1, 13) || ':00' NOT IN (
+            SELECT hour
+            FROM estimated_app_hourly_rollups
         )
     """
 
@@ -224,7 +239,7 @@ def category_summary(start_time, end_time, filters=None, limit=8, total_network_
                SUM(uploaded_mb) AS uploaded_mb,
                SUM(total_mb) AS total_mb,
                COUNT(DISTINCT ip) AS devices
-        FROM estimated_app_traffic
+        FROM ({estimated_app_source_sql()})
         WHERE {' AND '.join(where)}
         GROUP BY category
         ORDER BY total_mb DESC
@@ -404,7 +419,7 @@ def unclassified_device_summary(start_time, end_time, filters=None, limit=8):
         ) o ON o.ip=t.ip
         LEFT JOIN (
             SELECT ip, SUM(total_mb) AS classified_mb
-            FROM estimated_app_traffic
+            FROM ({estimated_app_source_sql()})
             WHERE ts BETWEEN ? AND ?
             GROUP BY ip
         ) a ON a.ip=t.ip
@@ -491,7 +506,7 @@ def add_destination_classified_mappings(buckets, start_time, end_time, device_id
     existing_ip_rows = query(
         f"""
         SELECT ip, SUM(total_mb) AS total_mb
-        FROM estimated_app_traffic
+        FROM ({estimated_app_source_sql()})
         WHERE ts BETWEEN ? AND ? AND ip IN ({ip_placeholders})
         GROUP BY ip
         """,
@@ -592,7 +607,7 @@ def add_site_device_mappings(buckets, start_time, end_time, device_ids=None, app
                SUM(downloaded_mb) AS downloaded_mb,
                SUM(uploaded_mb) AS uploaded_mb,
                SUM(total_mb) AS total_mb
-        FROM estimated_app_traffic
+        FROM ({estimated_app_source_sql()})
         WHERE ts BETWEEN ? AND ? AND ip IN ({placeholders})
         GROUP BY ip
         """,
@@ -680,7 +695,7 @@ def add_device_identity_mappings(buckets, start_time, end_time, device_ids=None,
                    SUM(downloaded_mb) AS downloaded_mb,
                    SUM(uploaded_mb) AS uploaded_mb,
                    SUM(total_mb) AS total_mb
-            FROM estimated_app_traffic
+            FROM ({estimated_app_source_sql()})
             WHERE ts BETWEEN ? AND ? AND ip IN ({placeholders})
             GROUP BY ip
             """,

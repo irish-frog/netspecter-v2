@@ -13,16 +13,47 @@ MAX_LIMIT = 500
 
 def traffic_history_source_sql(alias="t"):
     return f"""
-        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts,
-               substr(ts, 1, 13) || ':00' AS hour
-        FROM traffic_intervals
-        UNION ALL
         SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, avg_live_bps AS live_bps,
                day, hour AS ts, hour
         FROM traffic_hourly_rollups
-        WHERE hour NOT IN (
-            SELECT DISTINCT substr(ts, 1, 13) || ':00'
-            FROM traffic_intervals
+        UNION ALL
+        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts,
+               substr(ts, 1, 13) || ':00' AS hour
+        FROM traffic_intervals
+        WHERE substr(ts, 1, 13) || ':00' NOT IN (
+            SELECT hour
+            FROM traffic_hourly_rollups
+        )
+    """
+
+
+def estimated_app_source_sql(alias="t"):
+    return f"""
+        SELECT ip, category, downloaded_mb, uploaded_mb, total_mb, day, hour AS ts, hour
+        FROM estimated_app_hourly_rollups
+        UNION ALL
+        SELECT ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts,
+               substr(ts, 1, 13) || ':00' AS hour
+        FROM estimated_app_traffic
+        WHERE substr(ts, 1, 13) || ':00' NOT IN (
+            SELECT hour
+            FROM estimated_app_hourly_rollups
+        )
+    """
+
+
+def remote_traffic_source_sql(alias="r"):
+    return f"""
+        SELECT ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb,
+               day, hour AS ts, hour
+        FROM remote_traffic_hourly_rollups
+        UNION ALL
+        SELECT ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts,
+               substr(ts, 1, 13) || ':00' AS hour
+        FROM remote_traffic_intervals
+        WHERE substr(ts, 1, 13) || ':00' NOT IN (
+            SELECT hour
+            FROM remote_traffic_hourly_rollups
         )
     """
 
@@ -56,17 +87,17 @@ def get_site_overview(start_time, end_time):
             (start_time, end_time),
         ),
         "applications": _scalar(
-            """
+            f"""
             SELECT COUNT(DISTINCT category)
-            FROM estimated_app_traffic
+            FROM ({estimated_app_source_sql()})
             WHERE ts BETWEEN ? AND ? AND category IS NOT NULL AND category != ''
             """,
             (start_time, end_time),
         ),
         "unique_destinations": _scalar(
-            """
+            f"""
             SELECT COUNT(DISTINCT remote_ip)
-            FROM remote_traffic_intervals
+            FROM ({remote_traffic_source_sql()})
             WHERE ts BETWEEN ? AND ?
             """,
             (start_time, end_time),
@@ -168,7 +199,7 @@ def get_top_users(filters, start_time, end_time, limit=5):
                        SUM(uploaded_mb) AS uploaded_mb,
                        SUM(total_mb) AS total_mb,
                        MAX(ts) AS last_seen
-                FROM estimated_app_traffic
+                FROM ({estimated_app_source_sql()})
                 WHERE ts BETWEEN ? AND ? AND category=?
                 GROUP BY ip
             ) app_usage ON app_usage.ip=a.device_ip
@@ -278,7 +309,7 @@ def get_top_devices(filters, start_time, end_time, limit=10):
                 SUM(t.uploaded_mb) AS uploaded_mb,
                 SUM(t.total_mb) AS total_mb,
                 MAX(t.ts) AS last_seen
-            FROM estimated_app_traffic t
+            FROM ({estimated_app_source_sql()}) t
             LEFT JOIN (
                 SELECT ip, MAX(name) AS name, MAX(mac) AS mac
                 FROM devices
@@ -388,7 +419,7 @@ def get_application_summary(filters, start_time, end_time, limit=DEFAULT_LIMIT):
         f"""
         SELECT category, SUM(downloaded_mb) AS downloaded_mb, SUM(uploaded_mb) AS uploaded_mb,
                SUM(total_mb) AS total_mb, COUNT(DISTINCT ip) AS devices
-        FROM estimated_app_traffic
+        FROM ({estimated_app_source_sql()})
         WHERE ts BETWEEN ? AND ? {where}
         GROUP BY category
         ORDER BY total_mb DESC
@@ -409,7 +440,7 @@ def get_destination_summary(filters, start_time, end_time, limit=DEFAULT_LIMIT):
             SELECT r.remote_ip, COALESCE(l.country, '') AS country, r.category,
                    SUM(r.downloaded_mb) AS downloaded_mb, SUM(r.uploaded_mb) AS uploaded_mb,
                    SUM(r.total_mb) AS total_mb, COUNT(DISTINCT r.ip) AS devices
-            FROM remote_traffic_intervals r
+            FROM ({remote_traffic_source_sql()}) r
             JOIN dns_resolved_ips dr ON dr.remote_ip=r.remote_ip
             LEFT JOIN remote_ip_locations l ON l.remote_ip=r.remote_ip
             WHERE r.ts BETWEEN ? AND ? AND dr.domain LIKE ? {where}
@@ -427,7 +458,7 @@ def get_destination_summary(filters, start_time, end_time, limit=DEFAULT_LIMIT):
         SELECT r.remote_ip, COALESCE(l.country, '') AS country, r.category,
                SUM(r.downloaded_mb) AS downloaded_mb, SUM(r.uploaded_mb) AS uploaded_mb,
                SUM(r.total_mb) AS total_mb, COUNT(DISTINCT r.ip) AS devices
-        FROM remote_traffic_intervals r
+        FROM ({remote_traffic_source_sql()}) r
         LEFT JOIN remote_ip_locations l ON l.remote_ip=r.remote_ip
         WHERE r.ts BETWEEN ? AND ? {where}
         GROUP BY r.remote_ip, l.country, r.category
@@ -448,7 +479,7 @@ def get_traffic_summary(filters, start_time, end_time):
             f"""
             SELECT SUM(downloaded_mb) AS downloaded_mb, SUM(uploaded_mb) AS uploaded_mb,
                    SUM(total_mb) AS total_mb
-            FROM estimated_app_traffic
+            FROM ({estimated_app_source_sql()})
             WHERE ts BETWEEN ? AND ? {where}
             """,
             (start_time, end_time, *params),
@@ -482,9 +513,9 @@ def get_traffic_summary(filters, start_time, end_time):
 
 def list_applications(start_time, end_time, limit=100):
     return _timed_query(
-        """
+        f"""
         SELECT category, SUM(total_mb) AS total_mb
-        FROM estimated_app_traffic
+        FROM ({estimated_app_source_sql()})
         WHERE ts BETWEEN ? AND ? AND category IS NOT NULL AND category != ''
         GROUP BY category
         ORDER BY total_mb DESC

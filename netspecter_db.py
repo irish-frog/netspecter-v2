@@ -347,6 +347,7 @@ def init_traffic_db():
         )
     """)
     con.execute("CREATE INDEX IF NOT EXISTS idx_traffic_hourly_day_ip ON traffic_hourly_rollups(day, ip)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_traffic_hourly_hour_ip ON traffic_hourly_rollups(hour, ip)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS estimated_app_traffic (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -385,6 +386,7 @@ def init_traffic_db():
         )
     """)
     con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_hourly_day_ip ON estimated_app_hourly_rollups(day, category, ip)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_estimated_app_hourly_hour_category_ip ON estimated_app_hourly_rollups(hour, category, ip)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS remote_traffic_intervals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
