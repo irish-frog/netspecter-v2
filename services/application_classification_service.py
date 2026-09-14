@@ -482,34 +482,12 @@ def add_destination_classified_mappings(buckets, start_time, end_time, device_id
         return 0.0
 
     ips = sorted({str(row["ip"] or "").strip() for row in dest_rows if str(row["ip"] or "").strip()})
-    categories_seen = sorted({str(row["category"] or "").strip() for row in dest_rows if str(row["category"] or "").strip()})
     _profile_set(profile, "destination_classified_pairs", len(dest_rows))
     _profile_set(profile, "destination_classified_ips", len(ips))
-    if not ips or not categories_seen:
+    if not ips:
         return 0.0
 
     ip_placeholders = ",".join(["?"] * len(ips))
-    category_placeholders = ",".join(["?"] * len(categories_seen))
-    existing_rows = query(
-        f"""
-        SELECT ip,
-               category,
-               SUM(downloaded_mb) AS downloaded_mb,
-               SUM(uploaded_mb) AS uploaded_mb,
-               SUM(total_mb) AS total_mb
-        FROM estimated_app_traffic
-        WHERE ts BETWEEN ? AND ?
-          AND ip IN ({ip_placeholders})
-          AND category IN ({category_placeholders})
-        GROUP BY ip, category
-        """,
-        tuple([start_time, end_time, *ips, *categories_seen]),
-    )
-    _profile_add(profile, "add_destination_classified_mappings_queries")
-    existing_by_ip_category = {
-        (str(row["ip"] or ""), str(row["category"] or "")): row
-        for row in existing_rows
-    }
     existing_ip_rows = query(
         f"""
         SELECT ip, SUM(total_mb) AS total_mb
@@ -540,17 +518,16 @@ def add_destination_classified_mappings(buckets, start_time, end_time, device_id
         classified = classify_category_name(category_name)
         if not ip or not classified:
             continue
-        existing = existing_by_ip_category.get((ip, category_name))
-        category_remaining = max(0.0, float(row["total_mb"] or 0) - float(_row_value(existing, "total_mb", 0) or 0))
-        if category_remaining <= 0.01:
+        destination_total = float(row["total_mb"] or 0)
+        if destination_total <= 0.01:
             continue
         device_remaining = max(0.0, traffic_by_ip.get(ip, 0.0) - existing_by_ip.get(ip, 0.0) - claimed_by_ip.get(ip, 0.0))
-        mapped_total = min(category_remaining, device_remaining)
+        mapped_total = min(destination_total, device_remaining)
         if mapped_total <= 0.01:
             continue
-        scale = mapped_total / category_remaining if category_remaining else 0.0
-        downloaded_mb = max(0.0, float(row["downloaded_mb"] or 0) - float(_row_value(existing, "downloaded_mb", 0) or 0)) * scale
-        uploaded_mb = max(0.0, float(row["uploaded_mb"] or 0) - float(_row_value(existing, "uploaded_mb", 0) or 0)) * scale
+        scale = mapped_total / destination_total if destination_total else 0.0
+        downloaded_mb = max(0.0, float(row["downloaded_mb"] or 0)) * scale
+        uploaded_mb = max(0.0, float(row["uploaded_mb"] or 0)) * scale
         bucket = buckets.setdefault(category_name, {
             "category": category_name,
             "usage_group": classified["usage_group"],
