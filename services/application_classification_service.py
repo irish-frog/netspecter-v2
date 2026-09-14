@@ -51,6 +51,22 @@ def traffic_history_source_sql():
     """
 
 
+def remote_traffic_source_sql():
+    return """
+        SELECT ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts,
+               substr(ts, 1, 13) || ':00' AS hour
+        FROM remote_traffic_intervals
+        UNION ALL
+        SELECT ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb,
+               day, hour AS ts, hour
+        FROM remote_traffic_hourly_rollups
+        WHERE hour NOT IN (
+            SELECT DISTINCT substr(ts, 1, 13) || ':00'
+            FROM remote_traffic_intervals
+        )
+    """
+
+
 def load_category_config():
     try:
         mtime = CATEGORY_CONFIG_PATH.stat().st_mtime
@@ -216,6 +232,7 @@ def category_summary(start_time, end_time, filters=None, limit=8, total_network_
         tuple(params),
     )
     buckets = {}
+    claimed_by_ip = {}
     classified_total = 0.0
     for row in rows:
         classified = classify_application(row["application_name"])
@@ -241,12 +258,22 @@ def category_summary(start_time, end_time, filters=None, limit=8, total_network_
             app_name = display_application_name(row["application_name"])
             bucket["applications"][app_name] = bucket["applications"].get(app_name, 0.0) + total_mb
 
+    classified_total += add_destination_classified_mappings(
+        buckets,
+        start_time,
+        end_time,
+        device_ids=device_ids,
+        application_filter=application,
+        claimed_by_ip=claimed_by_ip,
+        profile=profile,
+    )
     classified_total += add_site_device_mappings(
         buckets,
         start_time,
         end_time,
         device_ids=device_ids,
         application_filter=application,
+        claimed_by_ip=claimed_by_ip,
         profile=profile,
     )
     if not application:
@@ -255,6 +282,7 @@ def category_summary(start_time, end_time, filters=None, limit=8, total_network_
             start_time,
             end_time,
             device_ids=device_ids,
+            claimed_by_ip=claimed_by_ip,
             profile=profile,
         )
 
@@ -417,9 +445,139 @@ def unknown_traffic_summary(limit=25):
     return unknown_review_rows(limit)
 
 
-def add_site_device_mappings(buckets, start_time, end_time, device_ids=None, application_filter="", profile=None):
+def add_destination_classified_mappings(buckets, start_time, end_time, device_ids=None, application_filter="", claimed_by_ip=None, profile=None):
+    started = time.perf_counter()
+    _profile_add(profile, "add_destination_classified_mappings_calls")
+    claimed_by_ip = claimed_by_ip if claimed_by_ip is not None else {}
+    where = ["ts BETWEEN ? AND ?", "category IS NOT NULL", "category != ''", "category != ?", "total_mb > 0"]
+    params = [start_time, end_time, UNKNOWN_CATEGORY]
+    device_ids = _clean_list(device_ids)
+    if device_ids:
+        placeholders = ",".join(["?"] * len(device_ids))
+        where.append(f"ip IN ({placeholders})")
+        params.extend(device_ids)
+    if application_filter:
+        where.append("category=?")
+        params.append(application_filter)
+    dest_rows = query(
+        f"""
+        SELECT ip,
+               category,
+               SUM(downloaded_mb) AS downloaded_mb,
+               SUM(uploaded_mb) AS uploaded_mb,
+               SUM(total_mb) AS total_mb,
+               COUNT(DISTINCT remote_ip) AS applications
+        FROM ({remote_traffic_source_sql()})
+        WHERE {' AND '.join(where)}
+        GROUP BY ip, category
+        HAVING total_mb > 0
+        ORDER BY total_mb DESC
+        """,
+        tuple(params),
+    )
+    _profile_add(profile, "add_destination_classified_mappings_queries")
+    if not dest_rows:
+        _profile_set(profile, "destination_classified_pairs", 0)
+        _profile_set(profile, "add_destination_classified_mappings_ms", round((time.perf_counter() - started) * 1000, 1))
+        return 0.0
+
+    ips = sorted({str(row["ip"] or "").strip() for row in dest_rows if str(row["ip"] or "").strip()})
+    categories_seen = sorted({str(row["category"] or "").strip() for row in dest_rows if str(row["category"] or "").strip()})
+    _profile_set(profile, "destination_classified_pairs", len(dest_rows))
+    _profile_set(profile, "destination_classified_ips", len(ips))
+    if not ips or not categories_seen:
+        return 0.0
+
+    ip_placeholders = ",".join(["?"] * len(ips))
+    category_placeholders = ",".join(["?"] * len(categories_seen))
+    existing_rows = query(
+        f"""
+        SELECT ip,
+               category,
+               SUM(downloaded_mb) AS downloaded_mb,
+               SUM(uploaded_mb) AS uploaded_mb,
+               SUM(total_mb) AS total_mb
+        FROM estimated_app_traffic
+        WHERE ts BETWEEN ? AND ?
+          AND ip IN ({ip_placeholders})
+          AND category IN ({category_placeholders})
+        GROUP BY ip, category
+        """,
+        tuple([start_time, end_time, *ips, *categories_seen]),
+    )
+    _profile_add(profile, "add_destination_classified_mappings_queries")
+    existing_by_ip_category = {
+        (str(row["ip"] or ""), str(row["category"] or "")): row
+        for row in existing_rows
+    }
+    existing_ip_rows = query(
+        f"""
+        SELECT ip, SUM(total_mb) AS total_mb
+        FROM estimated_app_traffic
+        WHERE ts BETWEEN ? AND ? AND ip IN ({ip_placeholders})
+        GROUP BY ip
+        """,
+        tuple([start_time, end_time, *ips]),
+    )
+    _profile_add(profile, "add_destination_classified_mappings_queries")
+    existing_by_ip = {str(row["ip"] or ""): float(row["total_mb"] or 0) for row in existing_ip_rows}
+    traffic_rows = query(
+        f"""
+        SELECT ip, SUM(total_mb) AS total_mb
+        FROM ({traffic_history_source_sql()})
+        WHERE ts BETWEEN ? AND ? AND ip IN ({ip_placeholders})
+        GROUP BY ip
+        """,
+        tuple([start_time, end_time, *ips]),
+    )
+    _profile_add(profile, "add_destination_classified_mappings_queries")
+    traffic_by_ip = {str(row["ip"] or ""): float(row["total_mb"] or 0) for row in traffic_rows}
+
+    added_total = 0.0
+    for row in dest_rows:
+        ip = str(row["ip"] or "").strip()
+        category_name = str(row["category"] or "").strip()
+        classified = classify_category_name(category_name)
+        if not ip or not classified:
+            continue
+        existing = existing_by_ip_category.get((ip, category_name))
+        category_remaining = max(0.0, float(row["total_mb"] or 0) - float(_row_value(existing, "total_mb", 0) or 0))
+        if category_remaining <= 0.01:
+            continue
+        device_remaining = max(0.0, traffic_by_ip.get(ip, 0.0) - existing_by_ip.get(ip, 0.0) - claimed_by_ip.get(ip, 0.0))
+        mapped_total = min(category_remaining, device_remaining)
+        if mapped_total <= 0.01:
+            continue
+        scale = mapped_total / category_remaining if category_remaining else 0.0
+        downloaded_mb = max(0.0, float(row["downloaded_mb"] or 0) - float(_row_value(existing, "downloaded_mb", 0) or 0)) * scale
+        uploaded_mb = max(0.0, float(row["uploaded_mb"] or 0) - float(_row_value(existing, "uploaded_mb", 0) or 0)) * scale
+        bucket = buckets.setdefault(category_name, {
+            "category": category_name,
+            "usage_group": classified["usage_group"],
+            "classification_source": "Destination classified traffic",
+            "color": classified["color"],
+            "downloaded_mb": 0.0,
+            "uploaded_mb": 0.0,
+            "total_mb": 0.0,
+            "devices": 0,
+            "applications": {},
+        })
+        bucket["downloaded_mb"] += downloaded_mb
+        bucket["uploaded_mb"] += uploaded_mb
+        bucket["total_mb"] += mapped_total
+        bucket["devices"] += 1
+        bucket["applications"][category_name] = bucket["applications"].get(category_name, 0.0) + mapped_total
+        claimed_by_ip[ip] = claimed_by_ip.get(ip, 0.0) + mapped_total
+        added_total += mapped_total
+    _profile_set(profile, "destination_classified_added_mb", round(added_total, 3))
+    _profile_set(profile, "add_destination_classified_mappings_ms", round((time.perf_counter() - started) * 1000, 1))
+    return added_total
+
+
+def add_site_device_mappings(buckets, start_time, end_time, device_ids=None, application_filter="", claimed_by_ip=None, profile=None):
     started = time.perf_counter()
     _profile_add(profile, "add_site_device_mappings_calls")
+    claimed_by_ip = claimed_by_ip if claimed_by_ip is not None else {}
     device_ids = set(device_ids or [])
     mappings = []
     for mapping in site_application_mappings():
@@ -477,7 +635,7 @@ def add_site_device_mappings(buckets, start_time, end_time, device_ids=None, app
         existing = existing_by_ip.get(ip)
         downloaded_mb = max(0.0, float(_row_value(traffic, "downloaded_mb", 0) or 0) - float(_row_value(existing, "downloaded_mb", 0) or 0))
         uploaded_mb = max(0.0, float(_row_value(traffic, "uploaded_mb", 0) or 0) - float(_row_value(existing, "uploaded_mb", 0) or 0))
-        mapped_total = max(0.0, total_mb - float(_row_value(existing, "total_mb", 0) or 0))
+        mapped_total = max(0.0, total_mb - float(_row_value(existing, "total_mb", 0) or 0) - claimed_by_ip.get(ip, 0.0))
         if mapped_total <= 0:
             continue
         classified = classify_category_name(mapping.get("category")) or classify_application(app_name, destination_ip=ip)
@@ -499,14 +657,16 @@ def add_site_device_mappings(buckets, start_time, end_time, device_ids=None, app
         bucket["total_mb"] += mapped_total
         bucket["devices"] += int(_row_value(traffic, "devices", 1) or 1)
         bucket["applications"][app_name] = bucket["applications"].get(app_name, 0.0) + mapped_total
+        claimed_by_ip[ip] = claimed_by_ip.get(ip, 0.0) + mapped_total
         added_total += mapped_total
     _profile_set(profile, "add_site_device_mappings_ms", round((time.perf_counter() - started) * 1000, 1))
     return added_total
 
 
-def add_device_identity_mappings(buckets, start_time, end_time, device_ids=None, profile=None):
+def add_device_identity_mappings(buckets, start_time, end_time, device_ids=None, claimed_by_ip=None, profile=None):
     started = time.perf_counter()
     _profile_add(profile, "add_device_identity_mappings_calls")
+    claimed_by_ip = claimed_by_ip if claimed_by_ip is not None else {}
     device_ids = set(device_ids or [])
     where = ["t.ts BETWEEN ? AND ?"]
     params = [start_time, end_time]
@@ -562,7 +722,7 @@ def add_device_identity_mappings(buckets, start_time, end_time, device_ids=None,
             continue
         existing = existing_by_ip.get(ip)
         existing_total = float(_row_value(existing, "total_mb", 0) or 0)
-        unattributed_total = max(0.0, total_mb - existing_total)
+        unattributed_total = max(0.0, total_mb - existing_total - claimed_by_ip.get(ip, 0.0))
         if unattributed_total <= 0.01:
             continue
         hint = device_identity_hint(row["name"], row["device_type"])
@@ -591,6 +751,7 @@ def add_device_identity_mappings(buckets, start_time, end_time, device_ids=None,
         bucket["total_mb"] += unattributed_total
         bucket["devices"] += 1
         bucket["applications"][app_name] = bucket["applications"].get(app_name, 0.0) + unattributed_total
+        claimed_by_ip[ip] = claimed_by_ip.get(ip, 0.0) + unattributed_total
         added_total += unattributed_total
     _profile_set(profile, "add_device_identity_mappings_ms", round((time.perf_counter() - started) * 1000, 1))
     return added_total

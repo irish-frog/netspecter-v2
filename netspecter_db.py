@@ -407,6 +407,7 @@ def init_traffic_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_day_ip ON remote_traffic_intervals(day, remote_ip, category)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_ts_ip ON remote_traffic_intervals(ts, ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_ts_ip_remote ON remote_traffic_intervals(ts, ip, remote_ip)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_ts_category_ip ON remote_traffic_intervals(ts, category, ip)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_device_id_ts ON remote_traffic_intervals(device_id, ts)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS raw_flow_events (
@@ -641,6 +642,7 @@ def init_traffic_db():
         )
     """)
     con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_hourly_day_ip ON remote_traffic_hourly_rollups(day, ip, remote_ip, category)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_remote_traffic_hourly_hour_category_ip ON remote_traffic_hourly_rollups(hour, category, ip)")
     con.execute("""
         CREATE TABLE IF NOT EXISTS remote_ip_locations (
             remote_ip TEXT PRIMARY KEY,
