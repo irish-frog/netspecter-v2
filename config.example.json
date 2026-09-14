@@ -208,6 +208,7 @@
   "adguard_querylog_interval_seconds": 15,
   "web_host": "127.0.0.1",
   "web_port": 5050,
+  "web_request_timeout_seconds": 300,
   "allow_lan_http_5050": false,
   "auth_enabled": true,
   "admin_user": "admin",
