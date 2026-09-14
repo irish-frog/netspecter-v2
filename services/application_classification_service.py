@@ -44,10 +44,7 @@ def traffic_history_source_sql():
         SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts,
                substr(ts, 1, 13) || ':00' AS hour
         FROM traffic_intervals
-        WHERE substr(ts, 1, 13) || ':00' NOT IN (
-            SELECT hour
-            FROM traffic_hourly_rollups
-        )
+        WHERE ts > (SELECT COALESCE(MAX(hour), '0000-00-00 00:00') FROM traffic_hourly_rollups)
     """
 
 
@@ -60,10 +57,7 @@ def remote_traffic_source_sql():
         SELECT ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts,
                substr(ts, 1, 13) || ':00' AS hour
         FROM remote_traffic_intervals
-        WHERE substr(ts, 1, 13) || ':00' NOT IN (
-            SELECT hour
-            FROM remote_traffic_hourly_rollups
-        )
+        WHERE ts > (SELECT COALESCE(MAX(hour), '0000-00-00 00:00') FROM remote_traffic_hourly_rollups)
     """
 
 
@@ -75,10 +69,7 @@ def estimated_app_source_sql():
         SELECT ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts,
                substr(ts, 1, 13) || ':00' AS hour
         FROM estimated_app_traffic
-        WHERE substr(ts, 1, 13) || ':00' NOT IN (
-            SELECT hour
-            FROM estimated_app_hourly_rollups
-        )
+        WHERE ts > (SELECT COALESCE(MAX(hour), '0000-00-00 00:00') FROM estimated_app_hourly_rollups)
     """
 
 
