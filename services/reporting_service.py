@@ -1,7 +1,7 @@
 import time
 from datetime import datetime, timedelta
 
-from netspecter_config import cfg, security_features_enabled
+from netspecter_config import cfg, ignored_ips, security_features_enabled
 from netspecter_db import query
 from services.application_classification_service import reverse_dns_exclusion_sql
 
@@ -12,41 +12,61 @@ MAX_LIMIT = 500
 
 
 def traffic_history_source_sql(alias="t"):
-    return f"""
+    ignore_ip_filter = _ignored_ip_filter("ip")
+    return """
         SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, avg_live_bps AS live_bps,
                day, hour AS ts, hour
         FROM traffic_hourly_rollups
+        WHERE {ignore_ip_filter}
         UNION ALL
         SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts,
                substr(ts, 1, 13) || ':00' AS hour
         FROM traffic_intervals
-        WHERE ts > (SELECT COALESCE(MAX(hour), '0000-00-00 00:00') FROM traffic_hourly_rollups)
-    """
+        WHERE {ignore_ip_filter}
+          AND ts > (SELECT COALESCE(MAX(hour), '0000-00-00 00:00') FROM traffic_hourly_rollups)
+    """.format(ignore_ip_filter=ignore_ip_filter)
 
 
 def estimated_app_source_sql(alias="t"):
-    return f"""
+    ignore_ip_filter = _ignored_ip_filter("ip")
+    return """
         SELECT ip, category, downloaded_mb, uploaded_mb, total_mb, day, hour AS ts, hour
         FROM estimated_app_hourly_rollups
+        WHERE {ignore_ip_filter}
         UNION ALL
         SELECT ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts,
                substr(ts, 1, 13) || ':00' AS hour
         FROM estimated_app_traffic
-        WHERE ts > (SELECT COALESCE(MAX(hour), '0000-00-00 00:00') FROM estimated_app_hourly_rollups)
-    """
+        WHERE {ignore_ip_filter}
+          AND ts > (SELECT COALESCE(MAX(hour), '0000-00-00 00:00') FROM estimated_app_hourly_rollups)
+    """.format(ignore_ip_filter=ignore_ip_filter)
 
 
 def remote_traffic_source_sql(alias="r"):
-    return f"""
+    ignore_ip_filter = _ignored_ip_filter("ip")
+    ignore_remote_filter = _ignored_ip_filter("remote_ip")
+    return """
         SELECT ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb,
                day, hour AS ts, hour
         FROM remote_traffic_hourly_rollups
+        WHERE {ignore_ip_filter}
+          AND {ignore_remote_filter}
         UNION ALL
         SELECT ip, remote_ip, category, downloaded_mb, uploaded_mb, total_mb, day, ts,
                substr(ts, 1, 13) || ':00' AS hour
         FROM remote_traffic_intervals
-        WHERE ts > (SELECT COALESCE(MAX(hour), '0000-00-00 00:00') FROM remote_traffic_hourly_rollups)
-    """
+        WHERE {ignore_ip_filter}
+          AND {ignore_remote_filter}
+          AND ts > (SELECT COALESCE(MAX(hour), '0000-00-00 00:00') FROM remote_traffic_hourly_rollups)
+    """.format(ignore_ip_filter=ignore_ip_filter, ignore_remote_filter=ignore_remote_filter)
+
+
+def _ignored_ip_filter(column):
+    values = [str(value or "").strip() for value in ignored_ips() if str(value or "").strip()]
+    if not values:
+        return "1=1"
+    escaped = ",".join(f"'{value.replace(chr(39), chr(39) + chr(39))}'" for value in values)
+    return f"{column} NOT IN ({escaped})"
 
 
 def parse_period(start_value=None, end_value=None):
