@@ -17,7 +17,7 @@ EXPORTER_PATCH="capture-timeout-100ms-v1"
 
 def fingerprint(root=ROOT):
     digest=hashlib.sha256()
-    paths=[root/'Cargo.toml',root/'Cargo.lock',root/'rust-toolchain.toml',*sorted((root/'src').rglob('*.rs'))]
+    paths=[root/'Cargo.toml',root/'Cargo.lock',root/'rust-toolchain.toml',root/'exporter/build.py',*sorted((root/'src').rglob('*.rs'))]
     for path in paths:
         digest.update(path.relative_to(root).as_posix().encode()+b'\0'+hashlib.sha256(path.read_bytes().replace(b"\r\n",b"\n")).digest())
     return digest.hexdigest()

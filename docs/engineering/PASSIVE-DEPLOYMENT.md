@@ -2,7 +2,7 @@
 
 ## Supported appliances
 
-Linux x86_64, glibc 2.39 or later; tested with the Debian 13 appliances. The configured capture interface must already be a Linux bridge. The bundled sensor, its source fingerprint and checksum are checked before installation. No Rust compiler, interception certificate, packet archive or new public listening port is installed.
+Linux x86_64, glibc 2.39 or later; tested with the Debian 13 appliances. The configured capture interface must already be a Linux bridge. The bundled sensor and flow exporter, their pinned build identity, source fingerprint and checksums are checked before installation. The exporter has a tested 100 ms capture timeout so quiet traffic does not remain in an infinite packet-buffer wait. No Rust compiler, interception certificate, packet archive or new public listening port is installed.
 
 The sensor and softflowd run under separate locked service identities with only CAP_NET_RAW. Metadata uses a root-owned group-restricted UNIX socket passed to the unprivileged collector. Flow export is local UDP on 127.0.0.1 only. Bridge capture uses temporary promiscuous packet membership so forwarded frames are visible; it does not change routing, DNS, bridge membership or firewall policy. Legacy IDS automatic blocking is disabled; only counting rules remain in NetSpecter's private table. System and kernel logs are not cleared.
 
@@ -55,7 +55,7 @@ bash deploy-from-bundle.sh ACTUAL_HOSTNAME --preflight
 bash deploy-from-bundle.sh ACTUAL_HOSTNAME --apply --reset-history --purge-retired-ids
 ```
 
-The bundle verifies its checksum and Git revision, refuses real local source edits, and fast-forwards the existing checkout. It needs no GitHub connection; apt access is still needed if softflowd/libpcap are not already installed. No compiler is required. The preflight bootstrap updates the checkout but does not enable services, change configuration or clear history. Settings live outside the source bundle and remain on the appliance.
+The bundle verifies its checksum and Git revision, refuses real local source edits, and fast-forwards the existing checkout. It needs no GitHub connection; apt access is still needed for any missing normal appliance dependencies/libpcap. Both the Rust sensor and patched flow exporter are included in the bundle. No compiler is required. The preflight bootstrap updates the checkout but does not enable services, change configuration or clear history. Settings live outside the source bundle and remain on the appliance.
 
 ## Verification and limits
 
