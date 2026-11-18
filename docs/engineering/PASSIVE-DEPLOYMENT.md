@@ -18,7 +18,11 @@ bash scripts/deploy-attribution.sh --preflight --expected-hostname ACTUAL_HOSTNA
 
 Check the hostname with `hostname`; replace ACTUAL_HOSTNAME literally. Preflight checks the binary/source checksum, architecture, glibc, current configuration and existing bridge without changing settings/services/history. A failed preflight must be resolved before applying. A pending interrupted history reset must be recovered first.
 
-## Deploy the two known appliances
+## Deployment hold
+
+The client appliance is currently on hold: prepare its commands only. Do not deploy, clean up, restart or change it without a later operator instruction. The owner appliance is the live validation target; the third appliance is inaccessible and stays untouched.
+
+## Deploy the known appliances when authorized
 
 On the personal appliance:
 
@@ -33,6 +37,8 @@ bash /opt/netspecter/scripts/deploy-attribution.sh --apply --expected-hostname W
 ```
 
 Replace CLIENT_VPN_CIDR with the actual client pool (for example 10.20.30.0/24). Do not add that site's VPN configuration to other appliances. Existing internal-network exclusions are retained. Transfers between LANs/VPN clients/internal servers are excluded. The server's internet traffic still counts. Only VPN traffic visible after decryption on the monitored bridge can be attributed to an individual client; encrypted outer tunnels do not reveal their inner applications.
+
+The explicit deployment wrapper skips optional AdGuard/Gatus/Beszel installation. It checks active AdGuard UDP/TCP resolution and hashes existing AdGuard configuration before installation, before history cleanup and afterward; failure stops further cleanup. It does not restart AdGuard.
 
 `--apply` installs/enables the tested pipeline and verifies dedicated identities, checksums, private socket permissions and loopback export. `--reset-history` separately requests the tested fresh-database cleanup. Settings, logins, licences, edited names, custom classifications and existing backups remain. A temporary rollback copy is removed after successful restart/verification. No normal update resets history.
 

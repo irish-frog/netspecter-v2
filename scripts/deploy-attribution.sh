@@ -21,7 +21,10 @@ cd "$(dirname "$0")/.."
 bash scripts/install-tls-inspector.sh --verify-only
 python3 scripts/configure-passive-attribution.py "${networks[@]}" >/dev/null
 if (( ! apply )); then echo "Preflight passed; no services/configuration/history changed."; exit 0; fi
-bash install.sh
+dns_state="/run/netspecter-dns-check-$$.json"
+trap 'rm -f -- "$dns_state"' EXIT
+python3 scripts/check-dns-continuity.py snapshot "$dns_state"
+INSTALL_ADGUARD=0 INSTALL_GATUS=0 INSTALL_BESZEL=0 bash install.sh
 if ((${#networks[@]})); then python3 scripts/configure-passive-attribution.py --activate "${networks[@]}" >/dev/null; fi
 systemctl restart netspecter-collector
 systemctl restart netspecter-softflowd netspecter-tls-inspector
@@ -40,8 +43,10 @@ if ((purge_ids)); then
     apt-get purge -y --no-auto-remove "${installed[@]}"
   fi
 fi
+python3 scripts/check-dns-continuity.py verify "$dns_state"
 if ((reset_history)); then
   python3 scripts/reset-collected-history.py --apply --expected-hostname "$expected"
 fi
 python3 scripts/verify-passive-attribution.py
+python3 scripts/check-dns-continuity.py verify "$dns_state"
 echo "Deployment complete. Settings, credentials and licences retained."

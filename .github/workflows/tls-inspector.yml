@@ -42,7 +42,7 @@ jobs:
         working-directory: inspector
         run: python3 build_manifest.py create target/bundle --binary target/release/netspecter-tls-inspector --source-commit "$GITHUB_SHA"
       - name: Shell syntax checks
-        run: bash -n install.sh scripts/*.sh
+        run: for script in install.sh scripts/*.sh; do bash -n "$script"; done
       - name: Python regression and local socket tests
         run: .ci-venv/bin/python -m pytest -q -p no:cacheprovider
       - name: Real bridge, systemd, TLS and measured-flow integration
