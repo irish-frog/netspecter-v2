@@ -17,13 +17,13 @@ Finish the passive Rust TLS metadata / client DNS / measured-flow attribution pi
 
 ## Published versus pending
 
-The complete Linux validation passed on feature commit ac60ce6f65f33325c256f2bf7076253cebeb790b: workflow run 44413300905, job 135186866896. It passed 382 Python tests and 23 Rust tests, formatting/lint, Linux capture/IPC smoke, offline bootstrap protections and the full bridge/systemd/reset pipeline. The passing sensor/exporter binaries and provenance are now included in `inspector/prebuilt/linux-x86_64`; the final packaging revision must pass against those shipped binaries before moving main.
+The complete Linux validation passed on feature commit ac60ce6f65f33325c256f2bf7076253cebeb790b: workflow run 44413300905, job 135186866896. It passed 382 Python tests and 23 Rust tests, formatting/lint, Linux capture/IPC smoke, offline bootstrap protections and the full bridge/systemd/reset pipeline. The passing sensor/exporter binaries and provenance are now included in `inspector/prebuilt/linux-x86_64`; the packaging revision 2bcba9d7f64907928342f09bbf05a491343c14ce also passed the full pipeline using those shipped binaries (run 44414118372, job 135189753598). This tested release is ready for explicit deployment; it is not installed on production appliances.
 
 The bridge test proved distinct applications on one remote IP, actual measured flow bytes, unchanged TCP payload, no internal flow/SNI/internet-counter attribution, no legacy byte guesses, and dedicated identities/private socket/loopback receiver. The real root reset preserved edited names and raw settings, cleared history, discarded the temporary rollback copy and collected fresh attributed traffic afterward.
 
 The test exposed and fixed: upstream infinite quiet-traffic capture buffering (pinned 100 ms exporter patch), a pre-read sensor timestamp causing stale first-connection times, and SQLite WAL snapshot companions preventing temporary-copy disposal. Exact correlation stayed strict. Thirteen focused cleanup tests cover WAL snapshots, recovery, schema refusal, retained state and unexpected files.
 
-No production deployment/reset has been performed by this work. Owner DNS was checked successfully over UDP and TCP; AdGuard and the three core NetSpecter services were active on the previously installed revision. A separate SSH session remains unprivileged even if the operator's terminal is already in `su -`. The client remains on hold and the third untouched.
+No production deployment/reset has been performed by this work. Both checked binaries also loaded successfully on the owner Debian appliance in a temporary unprivileged compatibility check; temporary files were removed. Owner DNS was checked successfully over UDP and TCP; AdGuard and the three core NetSpecter services were active on the previously installed revision. A separate SSH session remains unprivileged even if the operator's terminal is already in `su -`. The client remains on hold and the third untouched.
 
 ## DNS and deployment boundaries
 
@@ -42,6 +42,6 @@ Root via `su -` is required to install services/reset history. An existing opera
 
 ## Known limits / next work
 
-Finish validation of the bundled artifacts, publish the coherent revision to main, build/check the portable deployment archive and prepare the site-specific operator handover outside the public repo. IPv4 is the primary headline accounting scope; encrypted QUIC/ECH and unseen VPN inner traffic can remain unknown. Never inflate coverage to hide this.
+Runtime implementation and Linux validation are complete. The published release includes checked binaries and explicit deployment/history-cleanup tooling. The portable deployment archive and site-specific operator handover are generated outside the public repo. Remaining live work requires an operator root shell: install/verify/reset the owner appliance, leave the held client unchanged, and deploy the third only when access returns. IPv4 is the primary headline accounting scope; encrypted QUIC/ECH and unseen VPN inner traffic can remain unknown. Never inflate coverage to hide this.
 
 Keep the client on hold and the third appliance untouched. Record installed revision, test evidence and remaining root actions explicitly when finishing. Settings are outside Git at `/etc/netspecter/config.json`; split SQLite data is under `/var/lib/netspecter`. Never use broad `rm` globs against those databases to clear history.

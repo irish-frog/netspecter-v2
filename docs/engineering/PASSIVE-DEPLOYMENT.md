@@ -55,7 +55,7 @@ bash deploy-from-bundle.sh ACTUAL_HOSTNAME --preflight
 bash deploy-from-bundle.sh ACTUAL_HOSTNAME --apply --reset-history --purge-retired-ids
 ```
 
-The bundle verifies its checksum and Git revision, refuses real local source edits, and fast-forwards the existing checkout. It needs no GitHub connection; apt access is still needed for any missing normal appliance dependencies/libpcap. Both the Rust sensor and patched flow exporter are included in the bundle. No compiler is required. The preflight bootstrap updates the checkout but does not enable services, change configuration or clear history. Settings live outside the source bundle and remain on the appliance.
+The bundle verifies its checksum and Git revision, refuses real local source edits, and fast-forwards the existing checkout. It needs no GitHub connection; apt and pip network access are still needed for any missing normal appliance dependencies/libpcap/Python packages. This is an offline Git/source bundle, not a fully air-gapped dependency installer. Both the Rust sensor and patched flow exporter are included in the bundle. No compiler is required. The preflight bootstrap updates the checkout but does not enable services, change configuration or clear history. Settings live outside the source bundle and remain on the appliance.
 
 ## Verification and limits
 

@@ -86,3 +86,5 @@ Updated 2026-11-19. All specifications and integration plans were approved. Task
   - Dependencies: 10,12,15. Files: operational verification report only; no appliance-only source patches.
 
 Linux gate passed on ac60ce6 (run 44413300905): 382 Python and 23 Rust tests, offline bootstrap, real bridge attribution/internal exclusion and root reset/fresh restart. Final package verification uses the shipped binaries, not a substitute build.
+
+Shipped-binary final gate also passed: runtime release 2bcba9d7f64907928342f09bbf05a491343c14ce, run 44414118372. Owner ELF/runtime compatibility and UDP/TCP DNS checks passed without installing or restarting services. Live root deployment remains pending; client is held.
