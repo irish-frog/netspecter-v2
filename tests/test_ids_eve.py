@@ -152,8 +152,11 @@ class EveJsonTests(unittest.TestCase):
     def test_rotation_or_replacement_reads_new_file_from_start(self):
         self.write_events(alert_event(flow_id=1))
         ingest_eve_incremental(self.connect_db, self.eve_path)
-        self.eve_path.unlink()
-        self.write_events(alert_event(flow_id=2, signature="Rotated alert"))
+        # Create the replacement before retiring the original inode. Unlink/create
+        # can reuse an inode immediately on Linux and does not model atomic rotation.
+        replacement = self.eve_path.with_name("replacement.json")
+        replacement.write_text(json.dumps(alert_event(flow_id=2, signature="Rotated alert")) + "\n", encoding="utf-8")
+        replacement.replace(self.eve_path)
         result = ingest_eve_incremental(self.connect_db, self.eve_path)
         self.assertEqual(1, result["inserted"])
         self.assertEqual(2, self.count_events())
