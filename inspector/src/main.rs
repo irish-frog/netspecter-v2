@@ -69,8 +69,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut malformed = 0u64;
     let mut fragmented = 0u64;
     loop {
+        // A quiet capture can block: timestamp only after the read returns.
+        let packet = capture.next_packet();
         let now = origin.elapsed().as_millis() as u64;
-        match capture.next_packet() {
+        match packet {
             Ok(packet) => match parse_ethernet(packet.data) {
                 Ok((key, segment)) => {
                     let started = if segment.syn {

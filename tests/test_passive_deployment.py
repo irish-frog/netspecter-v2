@@ -32,5 +32,8 @@ def test_bundle_source_and_binary_integrity(tmp_path):
     manifest['exporter']={'upstream_commit':module.EXPORTER_COMMIT,'patch':module.EXPORTER_PATCH,'sha256':hashlib.sha256(binary).hexdigest()}
     (tmp_path/'build.json').write_text(json.dumps(manifest))
     assert module.verify(tmp_path)['sha256']==manifest['sha256']
+    (tmp_path/'softflowd').write_bytes(b'tampered exporter')
+    with pytest.raises(ValueError,match='Exporter binary checksum'):module.verify(tmp_path)
+    (tmp_path/'softflowd').write_bytes(binary)
     (tmp_path/'netspecter-tls-inspector').write_bytes(b'tampered')
     with pytest.raises(ValueError,match='checksum'):module.verify(tmp_path)
