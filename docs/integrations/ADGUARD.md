@@ -6,6 +6,10 @@ AdGuard Home is the DNS engine. NetSpecter imports query logs, client names, blo
 
 AdGuard Home is separate third-party software licensed under GNU GPLv3. NetSpecter does not own, modify, relicense, endorse or partner with AdGuard Home. Current installer behaviour downloads/runs the official upstream installer and does not bundle AdGuard binaries in GitHub.
 
+Project and source: https://github.com/AdguardTeam/AdGuardHome
+
+NetSpecter notices: [Third-Party Notices](../../THIRD_PARTY_NOTICES.md)
+
 ## First AdGuard Wizard
 
 On a new install, AdGuard opens its setup wizard on:

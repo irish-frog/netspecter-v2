@@ -66,3 +66,32 @@ speed tests. Three samples may take about a minute if probes time out.
 Compare results with a client on the same LAN and, where operationally
 appropriate, a separately planned bridge-bypass test. Healthy short samples
 cannot rule out intermittent appliance, AdGuard, LAN or ISP faults.
+
+## Retired Suricata runtime and alert cleanup
+
+Normal installation and updates no longer install Suricata, download its rules,
+validate its configuration or prepare capture-interface offloads. Existing
+Suricata and IDS offload services are kept disabled. AdGuard DNS filtering and
+the traffic/device collectors continue to operate independently of Suricata.
+Already installed packages are not automatically purged.
+
+To preview old security-alert records and Suricata log files:
+
+```bash
+python3 /opt/netspecter/scripts/clear-alert-history.py
+```
+
+To permanently delete that history after reviewing the preview:
+
+```bash
+python3 /opt/netspecter/scripts/clear-alert-history.py --apply
+```
+
+Run cleanup as root on the intended appliance. Apply mode refuses to run
+unless security collection is disabled in configuration and Suricata is
+confirmed stopped. It clears IDS alert rows, alert notifications, incident
+records and attached incident notes/audit, anomaly alert events, threat-match
+history, and named Suricata log files. It preserves DNS and traffic records,
+device identities, application signatures, non-alert TLS metadata, threat
+feeds and configuration. Cleanup is explicit and is never run automatically
+by an update. Existing backups are not edited.

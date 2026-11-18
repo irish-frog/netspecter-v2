@@ -49,6 +49,7 @@ class LcdApiTests(unittest.TestCase):
             "lcd_displays": [self.display],
         })
         self.originals = {
+            "device_presence_counts": netspecter.device_presence_counts,
             "cfg": netspecter.cfg,
             "cached_query": netspecter.cached_query,
             "latest_quality": netspecter.latest_quality,
@@ -65,6 +66,7 @@ class LcdApiTests(unittest.TestCase):
         netspecter.LCD_LAST_SEEN.clear()
         netspecter.LCD_TRAFFIC_HISTORY["download_mbps"] = []
         netspecter.LCD_TRAFFIC_HISTORY["upload_mbps"] = []
+        netspecter.device_presence_counts = lambda **kwargs: {"known": None, "online": None, "unknown": None}
         netspecter.cfg = lambda: dict(self.config)
         netspecter.cached_query = self.cached_query
         netspecter.latest_quality = lambda _connect_db: {
@@ -215,7 +217,7 @@ class LcdApiTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         payload = response.get_json()
         self.assertEqual(0, payload["active_alerts"])
-        self.assertEqual("healthy", payload["services"]["ids"])
+        self.assertNotIn("ids", payload["services"])
 
     def test_lcd_speed_test_falls_back_to_saved_history(self):
         netspecter.live_snapshot.clear()
@@ -277,7 +279,7 @@ class LcdApiTests(unittest.TestCase):
         netspecter.live_network_speed = self.originals["live_network_speed"]
         netspecter.live_snapshot.clear()
         netspecter.live_snapshot.update_quality({
-            "ts": "2026-07-16 12:00:00",
+            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "status": "ok",
             "wan_up": 1,
             "internet_latency_ms": 14,
@@ -290,13 +292,13 @@ class LcdApiTests(unittest.TestCase):
             "total_traffic_today_gb": 101.8,
             "active_alerts": 0,
             "last_speed_test": {
-                "completed_at": "2026-07-16 12:00:00",
+                "completed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "download_mbps": 256.17,
                 "upload_mbps": 266.37,
                 "ping_ms": 4,
                 "status": "completed",
             },
-        }, "2026-07-16 12:00:00")
+        }, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         netspecter.live_snapshot.update_live_speeds([
             {
                 "ip": "192.168.99.51",
@@ -304,7 +306,7 @@ class LcdApiTests(unittest.TestCase):
                 "rx_bps": 10_000_000,
                 "tx_bps": 2_000_000,
                 "total_bps": 12_000_000,
-                "updated_at": "2026-07-16 12:00:00",
+                "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             },
             {
                 "ip": "192.168.99.52",
@@ -312,7 +314,7 @@ class LcdApiTests(unittest.TestCase):
                 "rx_bps": 0,
                 "tx_bps": 0,
                 "total_bps": 0,
-                "updated_at": "2026-07-16 12:00:00",
+                "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             },
         ])
 

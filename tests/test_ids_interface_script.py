@@ -14,6 +14,8 @@ SCRIPT = SOURCE_DIR / "scripts" / "configure-ids-interfaces.sh"
 
 class IdsInterfaceScriptTests(unittest.TestCase):
     def setUp(self):
+        if os.name != "posix":
+            self.skipTest("Linux bridge interface integration test requires a POSIX environment")
         if not shutil.which("bash"):
             self.skipTest("bash is not available")
         self.tmp = tempfile.TemporaryDirectory()

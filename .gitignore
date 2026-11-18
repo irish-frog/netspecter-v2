@@ -38,3 +38,4 @@ docs/images/* render.png
 Thumbs.db
 .vscode/
 .idea/
+.test-runtime/

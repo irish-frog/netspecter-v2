@@ -1,4 +1,5 @@
 import importlib.util
+from html import unescape
 import json
 import os
 import re
@@ -93,16 +94,16 @@ class WebSecurityTests(unittest.TestCase):
         example = json.loads((SOURCE_DIR / "config.example.json").read_text())
         self.assertEqual(60, self.module.DEFAULT_CONFIG["traffic_retention_days"])
         self.assertEqual(60, example["traffic_retention_days"])
-        self.assertEqual(6, self.module.DEFAULT_CONFIG["raw_traffic_retention_hours"])
-        self.assertEqual(6, example["raw_traffic_retention_hours"])
-        self.assertEqual(24, self.module.DEFAULT_CONFIG["suricata_log_retention_hours"])
-        self.assertEqual(24, example["suricata_log_retention_hours"])
-        self.assertEqual(256, self.module.DEFAULT_CONFIG["suricata_active_log_max_mb"])
-        self.assertEqual(256, example["suricata_active_log_max_mb"])
+        self.assertEqual(2, self.module.DEFAULT_CONFIG["raw_traffic_retention_hours"])
+        self.assertEqual(2, example["raw_traffic_retention_hours"])
+        self.assertEqual(1, self.module.DEFAULT_CONFIG["suricata_log_retention_hours"])
+        self.assertEqual(1, example["suricata_log_retention_hours"])
+        self.assertEqual(16, self.module.DEFAULT_CONFIG["suricata_active_log_max_mb"])
+        self.assertEqual(16, example["suricata_active_log_max_mb"])
         self.assertEqual(60, self.module.DEFAULT_CONFIG["dns_retention_days"])
         self.assertEqual(60, example["dns_retention_days"])
-        self.assertEqual(24, self.module.DEFAULT_CONFIG["raw_dns_retention_hours"])
-        self.assertEqual(24, example["raw_dns_retention_hours"])
+        self.assertEqual(2, self.module.DEFAULT_CONFIG["raw_dns_retention_hours"])
+        self.assertEqual(2, example["raw_dns_retention_hours"])
         self.assertTrue(self.module.DEFAULT_CONFIG["fast_page_mode"])
         self.assertTrue(example["fast_page_mode"])
         self.assertFalse(self.module.DEFAULT_CONFIG["snmp_enabled"])
@@ -128,21 +129,9 @@ class WebSecurityTests(unittest.TestCase):
         self.assertNotIn("bookworm-backports", installer)
         self.assertNotIn("-t bookworm-backports", installer)
         self.assertNotIn("BACKPORTS_LIST", installer)
-        self.assertIn("apt install -y suricata suricata-update", installer)
-        self.assertIn("ethtool", installer)
-        self.assertIn("suricata -T -c /etc/suricata/suricata.yaml", installer)
-        self.assertIn("install_suricata_safety_override", installer)
-        self.assertIn("install_nic_offload_service", installer)
-        self.assertTrue((SOURCE_DIR / "scripts" / "configure-ids-interfaces.sh").exists())
-        self.assertTrue((SOURCE_DIR / "systemd" / "netspecter-nic-offload.service").exists())
-        self.assertIn("guard_suricata_restart_loop", installer)
-        self.assertIn("configure_suricata_interface", installer)
-        self.assertIn("NetSpecter placeholder. suricata-update will replace this", installer)
-        self.assertIn("NETSPECTER_SURICATA_IFACE", installer)
-        self.assertIn("Suricata interface '$iface' does not exist", installer)
-        self.assertIn("StartLimitBurst=3", installer)
-        self.assertIn("CPUQuota=50%", installer)
-        self.assertIn("Suricata restart loop detected", installer)
+        self.assertNotIn("apt install -y suricata", installer)
+        self.assertNotIn("suricata -T", installer)
+        self.assertIn("disable_suricata_safely", installer)
         self.assertIn("gunicorn_config.py wsgi:application", service)
         self.assertIn('cp gunicorn_config.py "$INSTALL_DIR/gunicorn_config.py"', installer)
         self.assertIn('cp wsgi.py "$INSTALL_DIR/wsgi.py"', installer)
@@ -169,7 +158,7 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn('chmod 750 "$CONFIG_DIR" "$CONFIG_DIR/adguard" "$DATA_DIR" "$LOG_DIR"', installer)
         self.assertIn('chmod 660 "$CONFIG_DIR/config.json"', installer)
         self.assertIn('chmod 660 "$DATA_DIR/netspecter.db"', installer)
-        self.assertIn('find "$INSTALL_DIR/venv/bin" -maxdepth 1 -type f -exec chmod 755 {} \\;', installer)
+        self.assertIn('find "$INSTALL_DIR/venv/bin" -maxdepth 1 -type f -exec chmod 755 {} +', installer)
         self.assertIn('cp systemd/netspecter-db-maintenance.service "$SERVICE_DIR/netspecter-db-maintenance.service"', installer)
         self.assertIn('cp systemd/netspecter-db-maintenance.timer "$SERVICE_DIR/netspecter-db-maintenance.timer"', installer)
         self.assertIn('cp systemd/netspecter-update.service "$SERVICE_DIR/netspecter-update.service"', installer)
@@ -181,13 +170,13 @@ class WebSecurityTests(unittest.TestCase):
         self.assertTrue((SOURCE_DIR / "systemd" / "netspecter-update.service").exists())
         self.assertTrue((SOURCE_DIR / "systemd" / "netspecter-update.path").exists())
         maintenance = (SOURCE_DIR / "scripts" / "daily-db-maintenance.sh").read_text()
-        self.assertIn("prune_suricata_raw_logs", maintenance)
+        self.assertNotIn("prune_suricata_raw_logs", maintenance)
         self.assertIn("prune_dns_history", maintenance)
         self.assertIn("VACUUM", maintenance)
         self.assertTrue((SOURCE_DIR / "systemd" / "netspecter-db-maintenance.service").exists())
         maintenance_service = (SOURCE_DIR / "systemd" / "netspecter-db-maintenance.service").read_text()
         self.assertIn("ExecStartPre=-/bin/systemctl stop netspecter-collector.service", maintenance_service)
-        self.assertIn("ExecStartPost=-/bin/systemctl start netspecter-collector.service", maintenance_service)
+        self.assertIn("ExecStopPost=-/bin/systemctl start netspecter-collector.service", maintenance_service)
         self.assertTrue((SOURCE_DIR / "systemd" / "netspecter-db-maintenance.timer").exists())
         self.assertIn("installer_anomaly_permission_test", installer)
         self.assertIn("Anomaly permissions:   VALID", installer)
@@ -253,12 +242,12 @@ class WebSecurityTests(unittest.TestCase):
 
     def test_adguard_install_notice_is_shown_before_upstream_install(self):
         installer = (SOURCE_DIR / "install.sh").read_text()
-        docs = (SOURCE_DIR / "docs" / "ADGUARD.md").read_text()
+        docs = (SOURCE_DIR / "docs" / "integrations" / "ADGUARD.md").read_text()
 
         self.assertIn("## Third-Party Licence Notice", docs)
-        self.assertIn("AdGuard Home is separate third-party software licensed under the GNU General", docs)
+        self.assertIn("AdGuard Home is separate third-party software licensed under GNU GPLv3", docs)
         self.assertIn("Project and source: https://github.com/AdguardTeam/AdGuardHome", docs)
-        self.assertIn("NetSpecter notices: [Third-Party Notices](../THIRD_PARTY_NOTICES.md)", docs)
+        self.assertIn("NetSpecter notices: [Third-Party Notices](../../THIRD_PARTY_NOTICES.md)", docs)
 
         notice_index = installer.index("AdGuard Home is separate third-party software licensed under GPL-3.0.")
         install_index = installer.index("wget -O - https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/master/scripts/install.sh")
@@ -307,7 +296,6 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn("if (hasLiveSpeedWidgets())", source)
         self.assertIn("font-size:24px", source)
         self.assertIn("font-size:12px", source)
-        self.assertIn('if title == "Dashboard" else \'<a href="/system#performance"><span>Logs</span></a>\'', source)
         self.assertIn('id="dashboardUpdateButton"', source)
         self.assertIn('action="/system"', source)
         self.assertIn('Update Available</button>', source)
@@ -328,7 +316,7 @@ class WebSecurityTests(unittest.TestCase):
             self.assertEqual("60d", self.module.range_key())
 
     def test_settings_exposes_snmp_and_mqtt_setup(self):
-        with self.module.app.test_request_context("/settings"):
+        with self.module.app.test_request_context("/settings?section=telemetry"):
             html = self.module.settings()
         self.assertIn("SNMP Enabled", html)
         self.assertIn("SNMP Targets", html)
@@ -342,7 +330,7 @@ class WebSecurityTests(unittest.TestCase):
         with self.module.app.test_request_context("/traffic?_partial=1"):
             response = self.module.shell("Total Traffic", "<table></table>", "Traffic")
             response = self.module.set_security_headers(response)
-        html = response.get_data(as_text=True)
+        html = unescape(response.get_data(as_text=True))
         self.assertEqual(200, response.status_code)
         self.assertEqual("Total Traffic", response.headers["X-NetSpecter-Title"])
         self.assertEqual("Traffic", response.headers["X-NetSpecter-Active"])
@@ -402,7 +390,7 @@ class WebSecurityTests(unittest.TestCase):
         for path, expected_links in pages.items():
             response = self.client.get(path)
             self.assertEqual(200, response.status_code, path)
-            html = response.get_data(as_text=True)
+            html = unescape(response.get_data(as_text=True))
             for link in expected_links:
                 self.assertIn(link, html, path)
 
@@ -435,7 +423,7 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn('"speedtest-cli", "/usr/bin/speedtest-cli", "/usr/local/bin/speedtest-cli", "speedtest", "/usr/bin/speedtest"', source)
         self.assertIn('"--accept-license", "--accept-gdpr", "--format=json"', source)
         self.assertIn('"--json"', source)
-        self.assertIn('float(download.get("bandwidth")) * 8 / 1000000.0', source)
+        self.assertEqual((6.2, 80.0, 40.0), self.module.parse_speedtest_metrics('{"ping":{"latency":6.2},"download":{"bandwidth":10000000},"upload":{"bandwidth":5000000}}'))
         self.assertIn('if "librespeed" in candidate.lower():', source)
         self.assertIn('speedtest_env.setdefault("HOME", "/root")', source)
         self.assertIn('speedtest_env.setdefault("LC_ALL", "C.UTF-8")', source)
@@ -449,7 +437,7 @@ class WebSecurityTests(unittest.TestCase):
         self.assertNotIn("apt install -y python3 python3-pip python3-venv sqlite3 bridge-utils nftables tcpdump curl nano git bmon vnstat ieee-data snmp speedtest", installer)
 
     def test_optional_unifi_discovery_and_scheduled_speed_history_ship_disabled(self):
-        source = (SOURCE_DIR / "app.py").read_text()
+        source = (SOURCE_DIR / "app.py").read_text() + (SOURCE_DIR / "netspecter_db.py").read_text()
         collector = (SOURCE_DIR / "live_packet_collector.py").read_text()
         installer = (SOURCE_DIR / "install.sh").read_text()
         schedule = (SOURCE_DIR / "scheduled_speedtest.py").read_text()
@@ -473,8 +461,8 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn("/beszel", rules)
         self.assertIn("/speed-tests", rules)
         self.assertIn("POST", rules["/speed-tests"])
-        self.assertIn("Enable automatic speed tests", source)
-        self.assertIn("Once per day", source)
+        self.assertIn("Enable automatic tests", source)
+        self.assertIn('value="daily"', source)
         self.assertIn("/api/update-status", rules)
         self.assertIn("/system", rules)
         self.assertIn("POST", rules["/system"])
@@ -484,14 +472,14 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn("def record_request_timing(response):", source)
         self.assertIn("X-NetSpecter-Render-Ms", source)
         self.assertIn("Slow Request Timing", source)
-        self.assertIn("fetch_remote=force_update_check", source)
+        self.assertIn("update_status(force=force_update_check, fetch_remote=True)", source)
         self.assertIn("def find_unifi_site(config):", source)
         self.assertIn("def unifi_verify_tls(config):", source)
         self.assertIn("def unifi_connector_bases(config):", source)
         self.assertIn("def unifi_json_response(result):", source)
         self.assertIn("UniFi OS firmware 5.0.3 or newer", source)
         self.assertIn("Connector URL corrected automatically.", source)
-        self.assertIn("local UniFi gateway URL", source)
+        self.assertIn("UniFi Network API URL", source)
         self.assertIn("Find Site Automatically", source)
         self.assertIn("Allow self-signed certificate for local UniFi gateway", source)
         self.assertIn("refresh_unifi_clients", collector)
@@ -500,9 +488,9 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn("UniFi connected clients imported: {imported} ({named_imported} named)", collector)
 
         self.assertIn("WHERE ip=? AND (name IS NULL OR TRIM(name)='' OR name=ip)", collector)
-        self.assertIn('"X-API-Key": api_key', collector)
-        self.assertIn("UNIFI_CLIENT_REFRESH_SECONDS = 300", collector)
-        self.assertIn("process_ids_email_alerts(c)", collector)
+        self.assertIn("unifi_username", collector)
+        self.assertIn("UNIFI_CLIENT_REFRESH_SECONDS = 1800", collector)
+        self.assertIn('run_timed_step("IDS/email notify", process_ids_email_alerts, c)', collector)
         self.assertIn("def send_ids_email(config, alert):", collector)
         self.assertIn("IDS_EMAIL_STATE_PATH", collector)
         self.assertIn("smtp_password", collector)
@@ -510,7 +498,7 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS telemetry_readings", source)
         self.assertIn("/telemetry", source)
         self.assertIn("SNMP and MQTT Pulled Data", source)
-        self.assertIn("CREATE TABLE IF NOT EXISTS telemetry_readings", collector)
+        self.assertIn("CREATE TABLE IF NOT EXISTS telemetry_readings", (SOURCE_DIR / "netspecter_db.py").read_text())
         self.assertIn("def poll_snmp_targets(config):", collector)
         self.assertIn("def mqtt_subscription_loop():", collector)
         self.assertIn("mqtt_subscribe_topics", collector)
@@ -538,7 +526,7 @@ class WebSecurityTests(unittest.TestCase):
     def test_traffic_and_speed_history_graphs_use_bar_charts(self):
         source = (SOURCE_DIR / "app.py").read_text()
         self.assertGreaterEqual(source.count('type: "bar"'), 2)
-        self.assertIn("type: 'bar'", source)
+        self.assertIn('type: "bar"', source)
 
     def test_suricata_ids_alerts_page_has_filtered_notification_actions(self):
         source = (SOURCE_DIR / "app.py").read_text()
@@ -605,7 +593,7 @@ class WebSecurityTests(unittest.TestCase):
         collector = (SOURCE_DIR / "live_packet_collector.py").read_text()
         installer = (SOURCE_DIR / "install.sh").read_text()
         self.assertIn("private_mac_address", source)
-        self.assertIn("Private Wi-Fi Address / Randomized MAC", source)
+        self.assertIn("Randomized by device privacy setting", source)
         self.assertIn('"private / random mac"', source)
         self.assertIn('SYSTEM_OUI_PATH = Path("/usr/share/ieee-data/oui.txt")', collector)
         self.assertIn('return "Private / Random MAC"', collector)
@@ -617,7 +605,7 @@ class WebSecurityTests(unittest.TestCase):
         self.assertIn("ADGUARD_CLIENT_REFRESH_SECONDS = 300", collector)
         self.assertIn("def parse_adguard_client_names(payload):", collector)
         self.assertIn("remember_adguard_client_activity(client, ts)", collector)
-        self.assertIn("CREATE TABLE IF NOT EXISTS device_overrides", collector)
+        self.assertIn("CREATE TABLE IF NOT EXISTS device_overrides", (SOURCE_DIR / "netspecter_db.py").read_text())
         self.assertIn("WHERE ip=? AND (name IS NULL OR TRIM(name)='' OR name=ip)", collector)
 
     def test_removed_legacy_live_probe_is_not_shipped(self):
@@ -642,26 +630,13 @@ class WebSecurityTests(unittest.TestCase):
         self.assertNotIn("old_unused_password", loaded)
         self.assertNotIn("old_unused_password", persisted)
 
-    def test_network_map_uses_cached_traffic_and_dns_destination_locations(self):
+    def test_retired_network_map_does_not_expose_external_tile_requests(self):
         source = (SOURCE_DIR / "app.py").read_text()
-        collector = (SOURCE_DIR / "live_packet_collector.py").read_text()
-        css = (SOURCE_DIR / "static" / "theme.css").read_text()
-        self.assertIn("Internet Destinations", source)
-        self.assertIn("Top Mapped DNS Destinations", source)
-        self.assertIn("dns_destination_map_rows", source)
-        self.assertIn('id="destinationMap"', source)
-        self.assertIn("https://unpkg.com/leaflet@1.9.4", source)
-        self.assertIn("https://tile.openstreetmap.org", source)
-        self.assertNotIn("<h2>Active Devices</h2>", source)
-        self.assertNotIn("<h2>Recently Seen / Stale</h2>", source)
-        map_source = source[source.index("def network_map():"):source.index("def csv_response", source.index("def network_map():"))]
-        self.assertNotIn("{time_picker()}", map_source)
-        self.assertIn("compact-topology", map_source)
-        self.assertIn("update_one_remote_location", collector)
-        self.assertIn("GEOLOCATION_REFRESH_SECONDS = 3600", collector)
-        self.assertIn("remote_traffic_intervals", collector)
-        self.assertIn("#destinationMap", css)
-        self.assertIn(".compact-topology", css)
+        rules = {rule.rule for rule in self.module.app.url_map.iter_rules()}
+        self.assertNotIn("/network-map", rules)
+        self.assertNotIn("https://tile.openstreetmap.org", source)
+        self.assertNotIn('id="destinationMap"', source)
+
 
 
 if __name__ == "__main__":

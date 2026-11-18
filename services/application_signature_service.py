@@ -26,6 +26,21 @@ BUILTIN_PROVIDER_SIGNATURES = [
 _SIGNATURE_CACHE = {"expires_at": 0.0, "category_key": "", "signatures": []}
 _SIGNATURE_CACHE_TTL_SECONDS = 60
 
+# Category domain lists describe several applications. Sharing the whole list
+# with every app falsely labels a YouTube destination as Amazon Prime Video.
+APPLICATION_DOMAINS = {
+    "YouTube": ["*.youtube.com", "*.googlevideo.com", "youtu.be", "*.ytimg.com"],
+    "Netflix": ["*.netflix.com", "*.nflxvideo.net", "*.nflximg.net"],
+    "Spotify": ["*.spotify.com", "*.scdn.co", "*.spotifycdn.com"],
+    "WhatsApp": ["*.whatsapp.com", "*.whatsapp.net"],
+    "Discord": ["*.discord.com", "*.discordapp.com", "*.discordcdn.com"],
+    "Slack": ["*.slack.com"],
+    "Windows Update": ["*.windowsupdate.com", "*.update.microsoft.com", "*.delivery.mp.microsoft.com"],
+    "ChatGPT": ["chatgpt.com", "*.chatgpt.com", "chat.openai.com"],
+    "OneDrive": ["*.onedrive.com", "*.onedrive.live.com", "*.1drv.com"],
+    "Dropbox": ["*.dropbox.com", "*.dropboxapi.com"],
+}
+
 
 def load_signatures(category_rows):
     signatures = _signatures_from_categories(category_rows)
@@ -73,7 +88,9 @@ def classify_metadata(signatures, app_name="", domain="", sni="", destination_ip
         candidates.append((score + int(signature["priority"]), signature))
     if not candidates:
         return None
-    _score, signature = sorted(candidates, key=lambda item: (-item[0], -int(item[1]["confidence"]), item[1]["app"].lower()))[0]
+    _score, signature = sorted(candidates, key=lambda item: (
+        item[1].get("id") is None, -item[0], -int(item[1]["confidence"]), item[1]["app"].lower(),
+    ))[0]
     return {
         "app": signature["app"],
         "category": signature["category"],
@@ -214,14 +231,18 @@ def _signatures_from_categories(category_rows):
             "protocols": [],
             "tags": category.get("tags", []),
             "confidence": 75,
-            "priority": max(1, 1000 - int(category.get("display_order") or 999)),
+            "priority": 40,
         }
+        signatures.append({
+            **base, "app": category_name, "domains": category.get("domains", []),
+            "destination_ips": category.get("destination_ips", []), "priority": 1,
+        })
         for app in category.get("applications", []):
             signatures.append({
                 **base,
                 "app": app,
-                "domains": category.get("domains", []),
-                "destination_ips": category.get("destination_ips", []),
+                "domains": APPLICATION_DOMAINS.get(app, []),
+                "destination_ips": [],
             })
     return signatures
 
@@ -258,8 +279,9 @@ def _match_score(signature, app_name, domain, sni, destination_ip, asn, provider
 
     for host in (domain, sni):
         host = _normalise_host(host)
-        if host and any(_domain_matches(pattern, host) for pattern in signature["domains"]):
-            score += 90
+        matches = [pattern for pattern in signature["domains"] if host and _domain_matches(pattern, host)]
+        if matches:
+            score += 90 + min(30, max(len(pattern.replace("*", "")) for pattern in matches))
             break
 
     if destination_ip and any(_ip_matches(pattern, destination_ip) for pattern in signature["destination_ips"]):

@@ -167,6 +167,11 @@ def classify_application(application_name="", domain="", destination_ip="", sni=
             "optional_tags": ["System Services"],
         }
 
+    if domain_text:
+        site_match = classify_site_domain(domain_text)
+        if site_match:
+            return site_match
+
     signature_match = classify_metadata_cached(
         load_signatures_cached(categories()),
         app_name=application_name,

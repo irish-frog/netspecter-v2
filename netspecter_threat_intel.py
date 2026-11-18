@@ -119,10 +119,12 @@ def ensure_schema(con):
     con.execute("CREATE INDEX IF NOT EXISTS idx_threat_corr_reputation ON threat_correlations(reputation)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_threat_corr_indicator ON threat_correlations(indicator)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_threat_indicators_indicator_active ON threat_indicators(indicator, active)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_id_ts ON ids_events(id, ts)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_dest_src ON ids_events(dest_ip, src_ip)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_hostname ON ids_events(hostname)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_tls_sni ON ids_events(tls_sni)")
+    # This module can be initialized without the optional IDS history schema.
+    if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ids_events'").fetchone():
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_id_ts ON ids_events(id, ts)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_dest_src ON ids_events(dest_ip, src_ip)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_hostname ON ids_events(hostname)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_ids_events_tls_sni ON ids_events(tls_sni)")
     con.execute(
         """
         CREATE TABLE IF NOT EXISTS processing_checkpoints (

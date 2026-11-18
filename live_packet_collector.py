@@ -3075,7 +3075,9 @@ def retention_cleanup_loop():
         try:
             with db_write_lock:
                 rollup_and_prune_raw_traffic(cfg())
-                prune_suricata_raw_logs(cfg())
+                config = cfg()
+                if security_features_enabled(config) and config.get("suricata_enabled", False):
+                    prune_suricata_raw_logs(config)
                 prune_history(cfg())
         except Exception as e:
             print(f"Retention cleanup loop failed: {e}")

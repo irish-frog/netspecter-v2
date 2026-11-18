@@ -8,7 +8,7 @@
   An inline network visibility and security appliance.
 </p>
 
-NetSpecter v2 is an inline Debian-based appliance that provides network visibility, DNS analytics, service monitoring, internet-quality history, IDS detection, incident tracking, licence registration, and appliance health monitoring through one web interface.
+NetSpecter v2 is an inline Debian-based appliance that provides network visibility, DNS analytics, service monitoring, internet-quality history, licence registration, and appliance health monitoring through one web interface. The Suricata IDS runtime is retired from the normal installation and update path; see [traffic scope and quality](docs/network/TRAFFIC-SCOPE-AND-QUALITY.md) for details and explicit alert-history cleanup.
 
 It is designed for networks that need clearer visibility without replacing the router or firewall.
 
@@ -42,8 +42,8 @@ For older architecture, simpler home deployments, or very small networks that do
 |---|---|
 | Network visibility | Live devices, traffic, destinations, protocols, and per-device history |
 | DNS analytics | AdGuard Home queries, blocked domains, services, and application activity |
-| IDS | Suricata alert parsing, structured event details, priorities, and incident grouping |
-| Incident response | Open incidents, acknowledgement, investigation history, block and ban actions |
+| Legacy IDS | Suricata runtime retired; normal updates do not install, start, or validate it |
+| Alert history cleanup | Explicit removal of retired security-alert history while preserving usage data |
 | Monitoring | Gatus-backed HTTP, TCP, DNS, ping, TLS, SSH, and service checks |
 | Internet quality | Latency, packet loss, jitter, DNS response time, and speed-test history |
 | Appliance health | CPU, memory, disk, database, service, and collector status |

@@ -186,12 +186,12 @@ def test_top_users_does_not_fallback_to_device_names():
 
 def test_site_device_mapping_adds_nextcloud_to_category_summary(monkeypatch):
     def fake_query(sql, params=()):
-        if "FROM estimated_app_traffic" in sql and "GROUP BY category" in sql:
+        if "GROUP BY ip, category" in sql or "category AS application_name" in sql:
             return []
-        if "FROM traffic_intervals" in sql:
-            return [{"downloaded_mb": 80.0, "uploaded_mb": 20.0, "total_mb": 100.0, "devices": 1}]
-        if "FROM estimated_app_traffic" in sql and "GROUP BY ip" in sql:
+        if "estimated_app_traffic" in sql:
             return [{"ip": "192.168.99.4", "downloaded_mb": 10.0, "uploaded_mb": 5.0, "total_mb": 15.0}]
+        if "traffic_intervals" in sql:
+            return [{"ip": "192.168.99.4", "name": "Nextcloud", "device_type": "Server", "downloaded_mb": 80.0, "uploaded_mb": 20.0, "total_mb": 100.0, "devices": 1}]
         return []
 
     monkeypatch.setattr(application_classification_service, "query", fake_query)
@@ -235,28 +235,12 @@ def test_category_summary_caps_primary_coverage_when_matches_overlap(monkeypatch
 
 def test_device_identity_hint_classifies_media_device_unattributed_traffic(monkeypatch):
     def fake_query(sql, params=()):
-        if "FROM estimated_app_traffic" in sql and "GROUP BY category" in sql:
+        if "GROUP BY ip, category" in sql or "category AS application_name" in sql:
             return []
-        if "FROM estimated_app_traffic" in sql and "GROUP BY ip" in sql:
+        if "COALESCE(o.name, d.name" in sql:
+            return [{"name": "Xiaomi-TV-Box", "device_type": "Media Device", "ip": "192.168.99.50", "downloaded_mb": 18000.0, "uploaded_mb": 500.0, "total_mb": 18500.0}]
+        if "estimated_app_traffic" in sql:
             return [{"ip": "192.168.99.50", "downloaded_mb": 0.0, "uploaded_mb": 0.0, "total_mb": 0.0}]
-        if "traffic_history_source_sql" not in sql and "FROM (" in sql and "traffic_intervals" in sql:
-            return [{
-                "name": "Xiaomi-TV-Box",
-                "device_type": "Media Device",
-                "ip": "192.168.99.50",
-                "downloaded_mb": 18000.0,
-                "uploaded_mb": 500.0,
-                "total_mb": 18500.0,
-            }]
-        if "FROM (" in sql and "traffic_intervals" in sql:
-            return [{
-                "name": "Xiaomi-TV-Box",
-                "device_type": "Media Device",
-                "ip": "192.168.99.50",
-                "downloaded_mb": 18000.0,
-                "uploaded_mb": 500.0,
-                "total_mb": 18500.0,
-            }]
         return []
 
     monkeypatch.setattr(application_classification_service, "query", fake_query)
@@ -310,21 +294,7 @@ def test_device_identity_mapping_bulk_loads_existing_traffic(monkeypatch):
 
 def test_unclassified_device_summary_respects_device_identity_hint(monkeypatch):
     def fake_query(sql, params=()):
-        if "FROM estimated_app_traffic" in sql:
-            return [{"classified_mb": 0.0}]
-        if "FROM (" in sql and "traffic_intervals" in sql:
-            return [{
-                "name": "Xiaomi-TV-Box",
-                "device_type": "Unknown",
-                "ip": "192.168.99.50",
-                "mac": "",
-                "downloaded_mb": 18000.0,
-                "uploaded_mb": 500.0,
-                "total_mb": 18500.0,
-                "classified_mb": 0.0,
-                "last_seen": "2026-07-25 09:00:00",
-            }]
-        return []
+        return [{"name": "Xiaomi-TV-Box", "device_type": "Unknown", "ip": "192.168.99.50", "mac": "", "downloaded_mb": 18000.0, "uploaded_mb": 500.0, "total_mb": 18500.0, "classified_mb": 0.0, "last_seen": "2026-07-25 09:00:00"}]
 
     monkeypatch.setattr(application_classification_service, "query", fake_query)
     monkeypatch.setattr(application_classification_service, "site_application_mappings", lambda: [])
@@ -439,7 +409,7 @@ def test_saved_signatures_do_not_disable_builtin_category_signatures(monkeypatch
 def test_signature_provider_match_supports_asn(monkeypatch):
     monkeypatch.setattr(
         application_classification_service,
-        "load_signatures",
+        "load_signatures_cached",
         lambda _categories: [{
             "id": 1,
             "app": "Cloudflare",
@@ -549,7 +519,7 @@ def test_application_filtered_report_traffic_uses_application_totals(monkeypatch
 
 def test_application_filtered_top_devices_use_application_rows(monkeypatch):
     def fake_query(sql, params=()):
-        assert "FROM estimated_app_traffic t" in sql
+        assert "estimated_app_traffic" in sql
         assert "t.category IN (?)" in sql
         assert params == ("2026-07-13", "2026-07-14", "ChatGPT", 5)
         return [{"name": "Gavin Pc", "ip": "192.168.99.58", "mac": "aa:bb", "downloaded_mb": 20.0, "uploaded_mb": 1.0, "total_mb": 21.0, "last_seen": "2026-07-14"}]
@@ -578,7 +548,7 @@ def test_application_filtered_top_sites_use_dns_category(monkeypatch):
 
 def test_application_filtered_destinations_use_remote_category(monkeypatch):
     def fake_query(sql, params=()):
-        assert "FROM remote_traffic_intervals r" in sql
+        assert "remote_traffic_intervals" in sql
         assert "r.category IN (?)" in sql
         assert params == ("2026-07-13", "2026-07-14", "ChatGPT", 5)
         return [{"remote_ip": "203.0.113.10", "country": "US", "category": "ChatGPT", "downloaded_mb": 20.0, "uploaded_mb": 1.0, "total_mb": 21.0, "devices": 1}]

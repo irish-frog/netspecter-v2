@@ -1,4 +1,5 @@
 import inspect
+from datetime import datetime
 import json
 import sqlite3
 import subprocess
@@ -47,6 +48,8 @@ def memory_db():
         CREATE TABLE estimated_app_traffic (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip TEXT NOT NULL,
+            device_id TEXT,
+            identity_key TEXT,
             category TEXT NOT NULL,
             downloaded_mb REAL DEFAULT 0,
             uploaded_mb REAL DEFAULT 0,
@@ -80,6 +83,8 @@ def memory_db():
         CREATE TABLE remote_traffic_intervals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip TEXT NOT NULL,
+            device_id TEXT,
+            identity_key TEXT,
             remote_ip TEXT NOT NULL,
             category TEXT NOT NULL,
             downloaded_mb REAL DEFAULT 0,
@@ -95,6 +100,8 @@ def memory_db():
         CREATE TABLE traffic_intervals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip TEXT NOT NULL,
+            device_id TEXT,
+            identity_key TEXT,
             name TEXT,
             mac TEXT,
             downloaded_mb REAL DEFAULT 0,
@@ -168,6 +175,7 @@ def memory_db():
         )
         """
     )
+    con.execute("CREATE TABLE IF NOT EXISTS device_identities (device_id TEXT, identity_key TEXT, current_ip TEXT, last_seen TEXT)")
     return con
 
 
@@ -648,6 +656,8 @@ def test_destination_delta_writes_attached_trafficdb_tables(monkeypatch):
         CREATE TABLE trafficdb.estimated_app_traffic (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip TEXT NOT NULL,
+            device_id TEXT,
+            identity_key TEXT,
             category TEXT NOT NULL,
             downloaded_mb REAL DEFAULT 0,
             uploaded_mb REAL DEFAULT 0,
@@ -662,6 +672,8 @@ def test_destination_delta_writes_attached_trafficdb_tables(monkeypatch):
         CREATE TABLE trafficdb.remote_traffic_intervals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip TEXT NOT NULL,
+            device_id TEXT,
+            identity_key TEXT,
             remote_ip TEXT NOT NULL,
             category TEXT NOT NULL,
             downloaded_mb REAL DEFAULT 0,
@@ -703,7 +715,7 @@ def test_active_classification_targets_reads_valid_adguard_client_destination(mo
     con.execute(
         """
         INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
-        VALUES ('2026-08-07 10:00:00', '192.168.1.44', 'wslcoza-my.sharepoint.com', '13.107.136.10', 177, datetime('now', 'localtime', '+2 minutes'))
+        VALUES (datetime('now', 'localtime', '-1 minute'), '192.168.1.44', 'wslcoza-my.sharepoint.com', '13.107.136.10', 177, datetime('now', 'localtime', '+2 minutes'))
         """
     )
     monkeypatch.setattr(live_packet_collector, "connect_db", lambda *args, **_kwargs: con)
@@ -804,9 +816,9 @@ def test_conntrack_classification_targets_disappear_when_conntrack_source_disapp
     monkeypatch.setattr(live_packet_collector, "iter_conntrack_lines", lambda _limit: iter([]))
     second_signature = live_packet_collector.nft_signature(config)
 
-    assert ("192.168.1.142", "169.1.36.238") in first_signature[-1]
-    assert ("192.168.1.142", "169.1.36.238") not in second_signature[-1]
-    assert second_signature[-1] == tuple()
+    assert ("192.168.1.142", "169.1.36.238") in first_signature[-2]
+    assert ("192.168.1.142", "169.1.36.238") not in second_signature[-2]
+    assert second_signature[-2] == tuple()
 
 
 def test_active_classification_targets_keeps_recent_expired_dns_destination(monkeypatch):
@@ -1018,12 +1030,12 @@ def test_destination_identity_enrichment_classifies_visible_unknown_once(monkeyp
         """
         INSERT INTO dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
         VALUES (
-            '2026-08-22 10:00:00',
+            datetime('now', 'localtime', '-2 minutes'),
             '192.168.1.67',
             'api16-normal-useast5.tiktokv.us',
             '71.18.179.1',
             300,
-            '2026-08-22 10:05:00'
+            datetime('now', 'localtime', '+3 minutes')
         )
         """
     )
@@ -1039,8 +1051,8 @@ def test_destination_identity_enrichment_classifies_visible_unknown_once(monkeyp
             25.0,
             2.0,
             27.0,
-            '2026-08-22',
-            '2026-08-22 10:02:00'
+            date('now', 'localtime'),
+            datetime('now', 'localtime')
         )
         """
     )
@@ -1090,7 +1102,7 @@ def test_active_classification_targets_prefers_attached_dnsdb_over_empty_main(mo
     con.execute(
         """
         INSERT INTO dnsdb.dns_resolution_events (ts, client_ip, domain, resolved_ip, ttl, expires_at)
-        VALUES ('2026-08-07 10:00:00', '192.168.1.44', 'wslcoza-my.sharepoint.com', '13.107.136.10', 177, datetime('now', 'localtime', '+2 minutes'))
+        VALUES (datetime('now', 'localtime', '-1 minute'), '192.168.1.44', 'wslcoza-my.sharepoint.com', '13.107.136.10', 177, datetime('now', 'localtime', '+2 minutes'))
         """
     )
     assert dns_resolution_table_name(con) == "dnsdb.dns_resolution_events"

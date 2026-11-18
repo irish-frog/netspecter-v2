@@ -57,7 +57,7 @@ class AnomalyTests(unittest.TestCase):
 
     def run_target(self, day="2026-07-12", config=None, **kwargs):
         self.seed_day(day, **kwargs)
-        return an.run_anomaly_cycle(self.connect_db, config or {"anomaly_learning_only": False}, day)
+        return an.run_anomaly_cycle(self.connect_db, {"security_features_enabled": True, "anomaly_enabled": True, **(config or {"anomaly_learning_only": False})}, day)
 
     def event_rules(self):
         con = self.connect_db()
@@ -137,7 +137,7 @@ class AnomalyTests(unittest.TestCase):
         self.seed_baseline(days=7, upload=50)
         for i in range(3):
             self.run_target(day=f"2026-07-{12+i:02d}", upload=1000 + i)
-        an.prune_anomalies(self.connect_db, {"anomaly_max_events": 1, "anomaly_min_free_mb": 0})
+        an.prune_anomalies(self.connect_db, {"security_features_enabled": True, "anomaly_max_events": 1, "anomaly_min_free_mb": 0, "anomaly_retention_days": 10000})
         con = self.connect_db()
         count = con.execute("SELECT COUNT(*) FROM anomaly_events").fetchone()[0]
         con.close()

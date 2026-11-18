@@ -92,7 +92,7 @@ def ai_attribution_summary(filters, start_time, end_time, include_dns_correlatio
     )
     for row in app_rows:
         category = str(row["category"] or "").strip()
-        if category != AI_CATEGORY:
+        if category != AI_CATEGORY and category not in AI_SERVICE_DOMAINS:
             continue
         service = category or AI_CATEGORY
         item = services.setdefault(service, _empty_service(service))

@@ -88,213 +88,6 @@ install_speedtest_optional() {
     return 0
 }
 
-install_suricata_optional() {
-  if apt install -y suricata suricata-update; then
-    mkdir -p /var/lib/suricata/rules /var/log/suricata
-    SURICATA_RULES_FILE="/var/lib/suricata/rules/suricata.rules"
-    if [ ! -e "$SURICATA_RULES_FILE" ]; then
-      printf '# NetSpecter placeholder. suricata-update will replace this when rules download succeeds.\n' > "$SURICATA_RULES_FILE"
-    fi
-    install_suricata_safety_override
-    configure_suricata_interface
-    SURICATA_REFRESH_RULES=0
-    if [ ! -s "$SURICATA_RULES_FILE" ]; then
-      SURICATA_REFRESH_RULES=1
-    elif [ "$(find "$SURICATA_RULES_FILE" -mtime +14 -print -quit 2>/dev/null)" ]; then
-      SURICATA_REFRESH_RULES=1
-    fi
-    if [ "$SURICATA_REFRESH_RULES" -eq 1 ]; then
-      if ! suricata-update; then
-        echo "WARNING: Suricata rule update failed; IDS may have no active rules until suricata-update succeeds." >&2
-      fi
-    else
-      echo "Suricata rules are present and less than 14 days old; skipping rule refresh."
-    fi
-    if [ "$SURICATA_REFRESH_RULES" -eq 0 ]; then
-      echo "Suricata rules are fresh; skipping validation restart."
-      if suricata_interface_available && ! systemctl is-active --quiet suricata; then
-        timeout 20s systemctl enable --now suricata >/dev/null 2>&1 || true
-      fi
-    elif suricata_interface_available && suricata -T -c /etc/suricata/suricata.yaml >/dev/null 2>&1; then
-      timeout 20s systemctl enable --now suricata >/dev/null 2>&1 || true
-      guard_suricata_restart_loop
-    else
-      echo "WARNING: Suricata installed but configuration validation failed; not restarting Suricata." >&2
-    fi
-  else
-    echo "WARNING: Suricata could not be installed from Debian ${OS_VERSION_CODENAME:-$OS_VERSION_ID} repositories. IDS views will stay available but may have no alert log." >&2
-  fi
-
-  mkdir -p /var/log/suricata
-  if getent group adm >/dev/null 2>&1; then
-    chgrp adm /var/log/suricata 2>/dev/null || true
-    chmod 750 /var/log/suricata 2>/dev/null || true
-  fi
-
-  cat >/etc/logrotate.d/suricata <<'EOF'
-/var/log/suricata/*.log
-/var/log/suricata/*.json
-{
-        rotate 14
-        missingok
-        compress
-        copytruncate
-        sharedscripts
-        postrotate
-                if [ -s /var/run/suricata.pid ]; then
-                        /bin/kill -HUP "$(cat /var/run/suricata.pid)" 2>/dev/null || true
-                fi
-        endscript
-}
-EOF
-}
-
-install_suricata_safety_override() {
-  mkdir -p /etc/systemd/system/suricata.service.d
-  cat >/etc/systemd/system/suricata.service.d/netspecter-safety.conf <<'EOF'
-[Unit]
-StartLimitIntervalSec=10min
-StartLimitBurst=3
-Wants=netspecter-nic-offload.service
-After=netspecter-nic-offload.service
-
-[Service]
-RestartSec=60
-CPUQuota=50%
-EOF
-  systemctl daemon-reload
-}
-
-install_nic_offload_service() {
-  if [ ! -f "$INSTALL_DIR/scripts/configure-ids-interfaces.sh" ]; then
-    echo "WARNING: IDS interface preparation script is not installed yet." >&2
-    return 0
-  fi
-  chmod 755 "$INSTALL_DIR/scripts/configure-ids-interfaces.sh"
-  if [ -f systemd/netspecter-nic-offload.service ]; then
-    cp systemd/netspecter-nic-offload.service "$SERVICE_DIR/netspecter-nic-offload.service"
-  elif [ -f "$INSTALL_DIR/systemd/netspecter-nic-offload.service" ]; then
-    cp "$INSTALL_DIR/systemd/netspecter-nic-offload.service" "$SERVICE_DIR/netspecter-nic-offload.service"
-  else
-    echo "WARNING: netspecter-nic-offload.service was not found; bridge offload settings will not be applied at boot." >&2
-    return 0
-  fi
-  systemctl daemon-reload
-  systemctl enable netspecter-nic-offload.service >/dev/null 2>&1 || true
-  if "$INSTALL_DIR/scripts/configure-ids-interfaces.sh" "$(detect_suricata_interface || echo br0)"; then
-    systemctl restart netspecter-nic-offload.service >/dev/null 2>&1 || true
-  else
-    echo "WARNING: IDS bridge members are not available yet; netspecter-nic-offload.service will retry at boot." >&2
-  fi
-}
-
-detect_suricata_interface() {
-  if [ -n "${NETSPECTER_SURICATA_IFACE:-}" ]; then
-    echo "$NETSPECTER_SURICATA_IFACE"
-    return 0
-  fi
-
-  if [ -r "$CONFIG_DIR/config.json" ]; then
-    python3 - "$CONFIG_DIR/config.json" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-try:
-    data = json.loads(Path(sys.argv[1]).read_text())
-    iface = str(data.get("packet_iface") or "").strip()
-    if iface:
-        print(iface)
-except Exception:
-    pass
-PY
-    return 0
-  fi
-
-  if ip link show br0 >/dev/null 2>&1; then
-    echo "br0"
-    return 0
-  fi
-
-  ip route show default 2>/dev/null | awk '/ default / {for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}'
-}
-
-configure_suricata_interface() {
-  local iface
-  iface="$(detect_suricata_interface)"
-  iface="${iface:-br0}"
-  echo "Configuring Suricata AF_PACKET interface: $iface"
-  cp -a /etc/suricata/suricata.yaml "/etc/suricata/suricata.yaml.netspecter.bak.$(date +%Y%m%d%H%M%S)"
-
-  python3 - "/etc/suricata/suricata.yaml" "$iface" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-iface = sys.argv[2]
-lines = path.read_text().splitlines()
-out = []
-in_af_packet = False
-changed = False
-
-for line in lines:
-    if re.match(r"^af-packet:\s*$", line):
-        in_af_packet = True
-        out.append(line)
-        continue
-    if in_af_packet and line and not line.startswith((" ", "\t", "-")):
-        in_af_packet = False
-    if in_af_packet and re.match(r"^\s*-\s*interface:\s*", line):
-        indent = line[:len(line) - len(line.lstrip())]
-        out.append(f"{indent}- interface: {iface}")
-        changed = True
-        continue
-    out.append(line)
-
-if not changed:
-    out.extend(["", "af-packet:", f"  - interface: {iface}", "    cluster-id: 99", "    cluster-type: cluster_flow", "    defrag: yes", "    use-mmap: yes"])
-
-path.write_text("\n".join(out) + "\n")
-PY
-
-  if command -v suricata >/dev/null 2>&1 && ! suricata -T -c /etc/suricata/suricata.yaml; then
-    local backup
-    backup="$(ls -1t /etc/suricata/suricata.yaml.netspecter.bak.* 2>/dev/null | head -n 1 || true)"
-    if [ -n "$backup" ]; then
-      cp -a "$backup" /etc/suricata/suricata.yaml
-    fi
-    echo "ERROR: Suricata configuration validation failed; restored previous configuration." >&2
-    return 1
-  fi
-}
-
-suricata_interface_available() {
-  local iface
-  iface="$(detect_suricata_interface)"
-  iface="${iface:-br0}"
-  if ip link show "$iface" >/dev/null 2>&1; then
-    return 0
-  fi
-  echo "WARNING: Suricata interface '$iface' does not exist. Disabling Suricata until the capture interface is corrected." >&2
-  disable_suricata_safely
-  return 1
-}
-
-guard_suricata_restart_loop() {
-  if ! systemctl list-unit-files suricata.service >/dev/null 2>&1; then
-    return 0
-  fi
-
-  local restarts
-  restarts="$(systemctl show suricata -p NRestarts --value 2>/dev/null || echo 0)"
-  restarts="${restarts:-0}"
-  if [ "$restarts" -ge 5 ]; then
-    echo "WARNING: Suricata restart loop detected ($restarts restarts). Disabling Suricata to protect appliance CPU." >&2
-    disable_suricata_safely
-  fi
-}
-
 set_config_value() {
   local key="$1"
   local value="$2"
@@ -523,10 +316,10 @@ apply_runtime_permissions() {
   chmod 644 "$CONFIG_DIR/netspecter-https.crt"
   chmod 660 "$DATA_DIR/netspecter.db" "$DATA_DIR/netspecter_dns.db" "$DATA_DIR/netspecter_traffic.db" "$DATA_DIR/netspecter_security.db" "$DATA_DIR/cache.json" "$DATA_DIR/oui_cache.json"
 
-  find "$INSTALL_DIR" -type d -exec chmod 755 {} \;
-  find "$INSTALL_DIR" -type f -exec chmod 644 {} \;
+  find "$INSTALL_DIR" -type d -exec chmod 755 {} +
+  find "$INSTALL_DIR" -type f -exec chmod 644 {} +
   if [ -d "$INSTALL_DIR/venv/bin" ]; then
-    find "$INSTALL_DIR/venv/bin" -maxdepth 1 -type f -exec chmod 755 {} \;
+    find "$INSTALL_DIR/venv/bin" -maxdepth 1 -type f -exec chmod 755 {} +
   fi
   chmod +x "$INSTALL_DIR/live_packet_collector.py"
   chmod +x "$INSTALL_DIR/netspecter_https_proxy.py"
@@ -646,7 +439,7 @@ fi
 echo "[3/10] Installing NetSpecter base packages..."
 apt install -y python3 python3-pip python3-venv sqlite3 bridge-utils nftables tcpdump curl nano git bmon vnstat ieee-data snmp dnsutils cifs-utils openssl ethtool samba-common-bin avahi-utils
 install_speedtest_optional
-install_suricata_optional
+disable_suricata_safely
 ensure_runtime_user
 
 echo "[4/10] Creating folders..."
@@ -730,9 +523,8 @@ cp systemd/netspecter-update.service "$SERVICE_DIR/netspecter-update.service"
 cp systemd/netspecter-update.path "$SERVICE_DIR/netspecter-update.path"
 cp systemd/netspecter-vault.service "$SERVICE_DIR/netspecter-vault.service"
 cp systemd/netspecter-vault.timer "$SERVICE_DIR/netspecter-vault.timer"
-cp systemd/netspecter-nic-offload.service "$SERVICE_DIR/netspecter-nic-offload.service"
 systemctl daemon-reload
-install_nic_offload_service
+systemctl disable --now netspecter-nic-offload.service >/dev/null 2>&1 || true
 validate_anomaly_permissions "netspecter-collector.service"
 systemctl enable --now netspecter-web netspecter-https netspecter-collector netspecter-watchdog.timer netspecter-speedtest.timer netspecter-monitor.timer netspecter-db-maintenance.timer netspecter-update.path netspecter-vault.timer
 systemctl restart netspecter-web netspecter-https netspecter-collector
@@ -748,7 +540,7 @@ install_beszel_optional
 "$INSTALL_DIR/scripts/post-update-maintenance.sh" || true
 apply_runtime_permissions
 
-echo "[10/10] IDS setup complete."
+echo "[10/10] Appliance setup complete. Suricata runtime is disabled."
 
 echo ""
 echo "=== NetSpecter installed ==="

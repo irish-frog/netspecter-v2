@@ -2159,6 +2159,13 @@ def shell(title, body, active="Dashboard"):
         data-live-field="total|down|up"
     """
 
+    if request.args.get("_partial") == "1":
+        response = Response(body, mimetype="text/html")
+        response.headers["Cache-Control"] = "no-store"
+        for key, value in (("X-NetSpecter-Title", title), ("X-NetSpecter-Active", active)):
+            value = "".join(char for char in str(value) if " " <= char <= "~")
+            response.headers[key] = value
+        return response
     c = cfg()
     fast_page_mode = bool(c.get("fast_page_mode", True))
 

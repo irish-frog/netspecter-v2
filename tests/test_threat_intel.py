@@ -39,9 +39,9 @@ class ThreatIntelTests(unittest.TestCase):
         self.init_schema()
         good = '[{"cidr":"203.0.113.0/24","sblid":"SBL1"}]'
         with patch.object(ti, "download_text", return_value=good):
-            ti.refresh_feeds(self.connect_db, {"threat_intel_sources": ["spamhaus_drop"]})
+            ti.refresh_feeds(self.connect_db, {"security_features_enabled": True, "threat_intel_enabled": True, "threat_intel_sources": ["spamhaus_drop"]})
         with patch.object(ti, "download_text", side_effect=ValueError("bad feed")):
-            ti.refresh_feeds(self.connect_db, {"threat_intel_sources": ["spamhaus_drop"]})
+            ti.refresh_feeds(self.connect_db, {"security_features_enabled": True, "threat_intel_enabled": True, "threat_intel_sources": ["spamhaus_drop"]})
         con = self.connect_db()
         active = con.execute("SELECT COUNT(*) FROM threat_indicators WHERE active=1").fetchone()[0]
         status = con.execute("SELECT status FROM threat_feed_state WHERE source='spamhaus_drop'").fetchone()[0]
@@ -59,9 +59,9 @@ class ThreatIntelTests(unittest.TestCase):
     def test_update_timeout_retains_previous_feed(self):
         self.init_schema()
         with patch.object(ti, "download_text", return_value='[{"cidr":"203.0.113.0/24"}]'):
-            ti.refresh_feeds(self.connect_db, {"threat_intel_sources": ["spamhaus_drop"]})
+            ti.refresh_feeds(self.connect_db, {"security_features_enabled": True, "threat_intel_enabled": True, "threat_intel_sources": ["spamhaus_drop"]})
         with patch.object(ti, "download_text", side_effect=TimeoutError("timeout")):
-            ti.refresh_feeds(self.connect_db, {"threat_intel_sources": ["spamhaus_drop"]})
+            ti.refresh_feeds(self.connect_db, {"security_features_enabled": True, "threat_intel_enabled": True, "threat_intel_sources": ["spamhaus_drop"]})
         con = self.connect_db()
         count = con.execute("SELECT COUNT(*) FROM threat_indicators WHERE active=1").fetchone()[0]
         con.close()
@@ -114,17 +114,17 @@ class ThreatIntelTests(unittest.TestCase):
     def test_correlation_deduplication_and_cleanup(self):
         self.init_schema()
         con = self.connect_db()
-        con.execute("CREATE TABLE ids_events (id INTEGER PRIMARY KEY, ts TEXT, src_ip TEXT, dest_ip TEXT, query TEXT, hostname TEXT, signature TEXT)")
+        con.execute("CREATE TABLE ids_events (id INTEGER PRIMARY KEY, ts TEXT, src_ip TEXT, dest_ip TEXT, query TEXT, hostname TEXT, signature TEXT, tls_sni TEXT, event_type TEXT)")
         con.execute("CREATE TABLE dns_querylog (id INTEGER PRIMARY KEY, ts TEXT, client TEXT, domain TEXT)")
         con.execute("CREATE TABLE remote_traffic_intervals (remote_ip TEXT, ts TEXT, total_mb REAL)")
         con.execute("CREATE TABLE remote_ip_locations (remote_ip TEXT PRIMARY KEY, country TEXT, country_code TEXT)")
-        con.execute("INSERT INTO ids_events VALUES (1, '2000-01-01 01:00:00', '192.168.1.2', '203.0.113.5', '', '', 'test')")
+        con.execute("INSERT INTO ids_events VALUES (1, '2000-01-01 01:00:00', '192.168.1.2', '203.0.113.5', '', '', 'test', '', 'alert')")
         ti.upsert_indicators(con, "spamhaus_drop", ti.FEED_STATUS["spamhaus_drop"], [("203.0.113.0/24", "cidr", "DROP")])
         con.commit()
         con.close()
-        self.assertEqual(1, ti.correlate_once(self.connect_db, {"threat_intel_correlation_days": 10000}))
-        self.assertEqual(0, ti.correlate_once(self.connect_db, {}))
-        ti.prune_threat_intel(self.connect_db, {"threat_intel_retention_days": 0, "threat_intel_min_free_mb": 0})
+        self.assertEqual(1, ti.correlate_once(self.connect_db, {"security_features_enabled": True, "threat_intel_correlation_days": 10000}))
+        self.assertEqual(0, ti.correlate_once(self.connect_db, {"security_features_enabled": True, }))
+        ti.prune_threat_intel(self.connect_db, {"security_features_enabled": True, "threat_intel_retention_days": 0, "threat_intel_min_free_mb": 0})
         con = self.connect_db()
         count = con.execute("SELECT COUNT(*) FROM threat_correlations").fetchone()[0]
         con.close()
