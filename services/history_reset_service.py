@@ -226,7 +226,12 @@ def prepare_reset(data_root,recovery,*,writers_stopped=False,cutoff=None,manifes
             guard.execute("BEGIN IMMEDIATE")
             source=_read_database(path);backup=sqlite3.connect(snapshots/name)
             os.chmod(snapshots/name,0o600)
-            try:source.backup(backup,pages=1024,sleep=0.01)
+            try:
+                source.backup(backup,pages=1024,sleep=0.01)
+                # Backup copies the source journal mode. Keep standalone snapshots
+                # in DELETE mode so read-only integrity checks cannot create WAL sidecars.
+                if backup.execute("PRAGMA journal_mode=DELETE").fetchone()[0].lower()!="delete":
+                    raise ValueError("Cannot finalize standalone recovery snapshot")
             finally:source.close();backup.close()
         finally:guard.rollback();guard.close()
         with closing(_read_database(snapshots/name)) as check:
@@ -315,6 +320,9 @@ def discard_recovery(recovery):
     if plan.get("status")!="complete":raise ValueError("Only a verified completed reset can discard its rollback copy")
     expected={"databases":set(),"cache-files":set()}
     for item in plan["files"]:expected["databases" if item["kind"]=="database" else "cache-files"].add(item["name"])
+    # Older completed snapshots may have read-only SQLite WAL/SHM companions.
+    # Only exact known database sidecar names, never arbitrary backup contents.
+    expected['databases'].update(name+suffix for name in tuple(expected['databases']) for suffix in ('-wal','-shm'))
     if set(path.name for path in recovery.iterdir())-{"databases","cache-files","reset-journal.json"}:
         raise ValueError("Unexpected files in reset recovery directory")
     for directory,names in expected.items():

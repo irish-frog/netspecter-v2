@@ -162,3 +162,32 @@ def test_current_address_mapping_survives_cleared_activity_timestamps(tmp_path):
     prepare_reset(data,recovery,writers_stopped=True);apply_prepared_reset(recovery,writers_stopped=True)
     assert scalar(data/"netspecter.db","SELECT device_id FROM device_identities WHERE current_ip='192.168.1.5'")=="stable"
     assert scalar(data/"netspecter.db","SELECT display_name FROM device_identities WHERE identity_key='mac:older'")=="Older edited name"
+
+
+def test_wal_source_snapshots_are_standalone_and_can_be_discarded(tmp_path):
+    from services.history_reset_service import discard_recovery,write_journal
+    data,recovery,_=fixture(tmp_path)
+    for name in ('netspecter.db','netspecter_dns.db','netspecter_traffic.db'):
+        with closing(sqlite3.connect(data/name)) as con:
+            assert con.execute('PRAGMA journal_mode=WAL').fetchone()[0]=='wal'
+    prepare_reset(data,recovery,writers_stopped=True);apply_prepared_reset(recovery,writers_stopped=True)
+    for path in (recovery/'databases').iterdir():
+        assert not path.name.endswith(('-wal','-shm'))
+        with closing(sqlite3.connect(path)) as con:
+            assert con.execute('PRAGMA journal_mode').fetchone()[0]=='delete'
+    write_journal(recovery,{'status':'complete'});discard_recovery(recovery)
+    assert not recovery.exists()
+    assert scalar(data/'netspecter.db','SELECT name FROM device_overrides')=='Edited device'
+
+
+def test_completed_recovery_discards_only_exact_known_sidecars(tmp_path):
+    from services.history_reset_service import discard_recovery,write_journal
+    data,recovery,_=fixture(tmp_path)
+    prepare_reset(data,recovery,writers_stopped=True);apply_prepared_reset(recovery,writers_stopped=True)
+    write_journal(recovery,{'status':'complete'})
+    (recovery/'databases/netspecter.db-wal').write_bytes(b'')
+    (recovery/'databases/netspecter.db-shm').write_bytes(bytes(32768))
+    unexpected=recovery/'databases/unrecognized.db-wal';unexpected.write_bytes(b'')
+    with pytest.raises(ValueError,match='Unexpected recovery file'):discard_recovery(recovery)
+    unexpected.unlink();discard_recovery(recovery)
+    assert not recovery.exists()

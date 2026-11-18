@@ -19,7 +19,7 @@ Finish the passive Rust TLS metadata / client DNS / measured-flow attribution pi
 
 Main currently contains the standalone safe cleanup and prior maintenance fixes at 1bfbaca3e70fd7aa9879758900113ed64ca92bb0. The integrated rebuild remains on feature/passive-attribution-rebuild until the full Linux bridge and reset integration passes. Do not claim the rebuild is deployed or ready solely because portable unit tests pass.
 
-The Linux suite has passed 377 Python regression/socket tests and Rust tests, lint, release build and loopback capture. The real bridge/systemd/reset test is still being debugged; current CI fixture fixes preserve the root safety environment flag and copy the virtual environment into the service-visible filesystem. No production settings were changed during those CI fixes.
+The Linux suite has passed 377 Python regression/socket tests and Rust tests, lint, release build and loopback capture. The real bridge/systemd/reset test is still being debugged. It exposed two production issues: upstream softflowd buffers quiet traffic indefinitely with a zero capture timeout, and the sensor timestamp was sampled before a blocking packet read. The exporter now has a pinned 100 ms timeout patch; sensor timing is sampled after reads. The two-second exact-correlation window was not widened to hide the error. CI fixture fixes also preserve the root safety environment flag, copy the virtual environment into the service-visible filesystem, and keep readiness polls read-only. No production settings were changed during those fixes.
 
 ## DNS and deployment boundaries
 
