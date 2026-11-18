@@ -41,10 +41,12 @@ jobs:
       - name: Package provenance
         working-directory: inspector
         run: python3 build_manifest.py create target/bundle --binary target/release/netspecter-tls-inspector --source-commit "$GITHUB_SHA"
+      - name: Shell syntax checks
+        run: bash -n install.sh scripts/*.sh
       - name: Python regression and local socket tests
         run: .ci-venv/bin/python -m pytest -q -p no:cacheprovider
       - name: Real bridge, systemd, TLS and measured-flow integration
-        run: sudo .ci-venv/bin/python inspector/tests/linux_pipeline.py
+        run: sudo env GITHUB_ACTIONS=true .ci-venv/bin/python inspector/tests/linux_pipeline.py
       - name: Linux build artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
