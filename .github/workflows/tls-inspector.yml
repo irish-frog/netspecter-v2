@@ -45,6 +45,8 @@ jobs:
         run: for script in install.sh scripts/*.sh; do bash -n "$script"; done
       - name: Python regression and local socket tests
         run: .ci-venv/bin/python -m pytest -q -p no:cacheprovider
+      - name: Offline third-appliance deployment bootstrap
+        run: sudo env GITHUB_ACTIONS=true python3 inspector/tests/linux_bundle.py
       - name: Real bridge, systemd, TLS and measured-flow integration
         run: sudo env GITHUB_ACTIONS=true .ci-venv/bin/python inspector/tests/linux_pipeline.py
       - name: Linux build artifact
