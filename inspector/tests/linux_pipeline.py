@@ -19,7 +19,7 @@ def run(*args,**kwargs):return subprocess.run(args,check=True,text=True,**kwargs
 
 
 def query(sql):
-    with closing(sqlite3.connect(DATA/'netspecter_traffic.db',timeout=2)) as con:return con.execute(sql).fetchall()
+    with closing(sqlite3.connect((DATA/'netspecter_traffic.db').as_uri()+'?mode=ro',uri=True,timeout=2)) as con:return con.execute(sql).fetchall()
 
 
 def counters():
