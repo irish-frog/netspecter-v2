@@ -49,7 +49,7 @@ def main():
         for path in SOURCE.glob('*.py'):shutil.copyfile(path,DEST/path.name)
         for name in ['services','config','scripts','systemd','inspector']:
             shutil.copytree(SOURCE/name,DEST/name,ignore=shutil.ignore_patterns('target','prebuilt','__pycache__'))
-        (DEST/'venv').symlink_to(SOURCE/'.ci-venv',target_is_directory=True)
+        shutil.copytree(SOURCE/'.ci-venv',DEST/'venv',symlinks=False)
         bundle=DEST/'inspector/prebuilt/linux-x86_64';shutil.copytree(SOURCE/'inspector/target/bundle',bundle)
         for user in ['netspecter']:
             if subprocess.run(['id',user],capture_output=True).returncode:
