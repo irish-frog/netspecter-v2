@@ -9905,7 +9905,7 @@ def reporting_xlsx_response(context, sections=None):
                 row.get("category") or "Other",
                 fmt_mb(row.get("total_mb") or 0),
                 f"{float(row.get('share_classified_pct') or 0):.1f}%",
-                f"{float(category_report.get('classification_coverage_pct') or 0):.1f}%",
+                "Unavailable" if category_report.get("coverage_unavailable") else f"{float(category_report.get('classification_coverage_pct') or 0):.1f}%",
             ])
         sheets.append(("Applications", rows))
         app_rows = [["Application", "Category", "Data Used", "Devices"]]
