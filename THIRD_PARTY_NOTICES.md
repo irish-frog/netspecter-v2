@@ -97,3 +97,10 @@ Before publishing a NetSpecter release that bundles AdGuard Home:
 Do not copy AdGuard Home source into the NetSpecter repository unless it is
 genuinely needed. Prefer a version-pinned upstream source/release link and
 publish only any NetSpecter-specific patch or installation scripts.
+
+
+## Passive Rust capture and measured-flow exporter
+
+The Linux release bundles the NetSpecter Rust TLS inspector and a pinned, separately licensed softflowd exporter. Rust dependency licence/copyright notices from the pinned Cargo lockfile are retained in `licenses/PassiveCapture-third-party.txt`. This inventory also identifies build-only and Windows-only dependencies conservatively; it does not claim they are all linked into the Linux binary.
+
+The softflowd build is pinned to upstream commit 433fbb7102616c671d523d4e41ae5315cd70d442 (1.1.0), with a single 100 ms capture-timeout change. Its copyright/licence is retained in `inspector/exporter/LICENSE`; source, exact build recipe and modification explanation are in `inspector/exporter/README.md` and `build.py`. These components retain their own licence terms. NetSpecter restrictions do not relicense them.
