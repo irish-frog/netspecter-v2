@@ -150,6 +150,8 @@ def _ensure_columns(con, statements):
 
 
 def connect_db():
+    if (DATA_ROOT / "history-reset.in-progress").exists():
+        raise RuntimeError("History reset in progress; database writers are paused")
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB_PATH, timeout=30)
     con.execute("PRAGMA busy_timeout=30000")
@@ -723,6 +725,8 @@ def init_traffic_db():
 def init_db(force=False):
     """Create the minimum database schema required by the web UI and collector."""
     global DB_INIT_DONE
+    if (DATA_ROOT / "history-reset.in-progress").exists():
+        raise RuntimeError("History reset in progress; database initialization is paused")
     if DB_INIT_DONE and DB_PATH.exists() and DNS_DB_PATH.exists() and TRAFFIC_DB_PATH.exists() and not force:
         return
 

@@ -1008,6 +1008,8 @@ def refresh_unifi_clients(config):
 
 
 def connect_db(timeout=30, busy_timeout_ms=30000):
+    if (DATA_DIR / "history-reset.in-progress").exists():
+        raise RuntimeError("History reset in progress; collector database writes are paused")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     busy_timeout_ms = max(30000, int(busy_timeout_ms or 30000))
     timeout = max(30, float(timeout or 30))
@@ -1916,12 +1918,12 @@ def is_blocked_reason(reason):
 
     return 1 if any(marker in r for marker in blocked_markers) else 0
 
-def parse_adguard_time(value):
+def parse_adguard_time(value, strict=False):
     """Convert AdGuard timestamp into YYYY-MM-DD HH:MM:SS."""
     text = str(value or "")
 
     if not text:
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return "" if strict else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     try:
         # AdGuard sometimes has nanosecond precision; Python wants max 6 digits.
@@ -1944,7 +1946,7 @@ def parse_adguard_time(value):
         return dt.strftime("%Y-%m-%d %H:%M:%S")
 
     except Exception:
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return "" if strict else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def init_db():
@@ -4849,6 +4851,7 @@ def import_adguard_querylog():
         cutoff = str(state[0] or "") if state else ""
     except Exception as e:
         print(f"DNS history cutoff read failed: {e}")
+        return
 
     device_updates = {}
     dns_rows = []
@@ -4865,13 +4868,16 @@ def import_adguard_querylog():
         domain = str(question.get("name") or "").strip(".")
         client = str(item.get("client") or "").strip()
         reason = str(item.get("reason") or "")
-        ts = parse_adguard_time(item.get("time"))
+        ts = parse_adguard_time(item.get("time"), strict=True)
         day = ts[:10]
         blocked = is_blocked_reason(reason)
-        category = app_from_domain(domain)
 
-        if not domain or not client:
+        if not domain or not client or not ts:
             continue
+        # Apply reset cutoff before all learning, not only querylog insertion.
+        if cutoff and ts <= cutoff:
+            continue
+        category = app_from_domain(domain)
 
         ip = ip_identifier(client)
         name = adguard_name_for_ip(ip)
@@ -4889,8 +4895,6 @@ def import_adguard_querylog():
             dns_answer_rows(ip or client, domain, item.get("answer") or [], ts)
         )
 
-        if cutoff and ts <= cutoff:
-            continue
 
         # Fast duplicate protection for this running process.
         key = f"{ts}|{client}|{domain}"
