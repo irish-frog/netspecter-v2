@@ -763,7 +763,8 @@ def test_active_classification_targets_global_cap_wins_over_per_device_conntrack
     monkeypatch.setattr(live_packet_collector, "dns_classification_targets", lambda *_args: tuple())
 
     lines = []
-    for device in range(1, 101):
+    # .1 is the inferred gateway and must not consume classification slots.
+    for device in range(2, 102):
         for dest in range(1, 6):
             lines.append(
                 "ipv4 2 tcp 6 431999 ESTABLISHED "

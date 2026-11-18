@@ -1,6 +1,5 @@
 import json
 import shutil
-import socket
 import sqlite3
 import statistics
 import subprocess
@@ -179,12 +178,10 @@ def dns_query_ms(server, query_name=DEFAULT_DNS_QUERY, timeout=2):
             return {"ok": False, "ms": None, "error": "dns timeout"}
         except Exception as error:
             return {"ok": False, "ms": None, "error": str(error)[:180]}
-    try:
-        socket.setdefaulttimeout(timeout)
-        socket.getaddrinfo(query_name, 80)
-        return {"ok": True, "ms": round((time.monotonic() - start) * 1000, 2), "error": "system resolver fallback"}
-    except Exception as error:
-        return {"ok": False, "ms": None, "error": f"dig missing; resolver failed: {error}"[:180]}
+    # The system resolver may use an entirely different server. Reporting it
+    # as an AdGuard/external probe would hide failures and change global socket
+    # timeouts in every collector thread.
+    return {"ok": False, "ms": None, "error": "dig missing; selected DNS server could not be tested", "unavailable": True}
 
 
 def mean(values):
@@ -201,7 +198,15 @@ def calculate_jitter(latencies):
     return round(statistics.mean(diffs), 2)
 
 
-def diagnose(gateway, targets, dns_result):
+def calculate_target_jitter(targets):
+    diffs = []
+    for target in targets:
+        values = [float(value) for value in target.get("latencies", []) if value is not None]
+        diffs.extend(abs(right - left) for left, right in zip(values, values[1:]))
+    return round(statistics.mean(diffs), 2) if diffs else None
+
+
+def diagnose(gateway, targets, dns_result, external_dns=None):
     target_ok = sum(1 for item in targets if item.get("ok"))
     target_total = len(targets)
     gateway_ok = bool(gateway.get("ok")) if gateway else True
@@ -213,22 +218,30 @@ def diagnose(gateway, targets, dns_result):
     gateway_latency = gateway.get("avg_ms") if gateway else None
     gateway_loss = gateway.get("loss_pct") if gateway else 0.0
 
+    if targets and all(item.get("error") == "ping missing" for item in targets):
+        return "warn", "Internet measurement unavailable: ping is not installed on NetSpecter."
     if gateway and not gateway_ok:
-        return "down", "Gateway unavailable: LAN, bridge or gateway problem."
+        return "down", "Gateway unavailable to ICMP probes: check LAN, bridge, gateway and probe filtering."
     if target_total and target_ok == 0:
-        return "down", "Gateway healthy but multiple internet targets fail: ISP/WAN problem."
+        return "down", "Internet probes failed: possible ISP/WAN issue; appliance, bridge and ICMP filtering are not ruled out."
     if target_total > 1 and target_ok == target_total - 1:
-        return "warn", "One target fails: remote-host problem."
+        return "warn", "One target fails: possible remote-host or ICMP filtering issue."
     if target_total > 1 and target_ok <= target_total // 2:
-        return "warn", "Gateway healthy but multiple internet targets fail: ISP/WAN problem."
-    if target_ok and not dns_ok:
-        return "warn", "Internet healthy but DNS fails: DNS/AdGuard problem."
+        return "warn", "Multiple internet probes failed: possible ISP/WAN issue; check appliance and bridge health too."
     if gateway_latency is not None and gateway_latency >= 50:
-        return "warn", "Gateway latency also high: LAN congestion, bridge or gateway problem."
-    if internet_loss >= 20 or (internet_latency is not None and internet_latency >= 180):
-        return "warn", "Good gateway latency but poor internet latency/loss: ISP-quality problem."
+        return "warn", "Gateway latency high: check LAN load, bridge, appliance and gateway."
     if gateway_loss and gateway_loss >= 20:
-        return "warn", "Gateway latency also high: LAN congestion, bridge or gateway problem."
+        return "warn", "Gateway packet loss observed: check LAN, bridge, appliance and ICMP filtering."
+    if internet_loss >= 20 or (internet_latency is not None and internet_latency >= 180):
+        return "warn", "High internet latency/loss observed: check WAN load, ISP path and appliance/bridge health."
+    if target_ok and not dns_ok:
+        if dns_result.get("unavailable"):
+            return "warn", "DNS measurement unavailable: install dig to test the configured resolver."
+        if external_dns and external_dns.get("ok"):
+            return "warn", "AdGuard DNS probe failed while external DNS responds: check the configured DNS listener, filtering and upstreams."
+        if external_dns and not external_dns.get("unavailable"):
+            return "warn", "Both local and external DNS probes failed: check shared DNS connectivity and resolver health."
+        return "warn", "DNS/AdGuard probe failed: resolver and upstream health need checking."
     return "ok", "WAN healthy."
 
 
@@ -238,21 +251,19 @@ def collect_quality_summary(config):
     gateway_ip = clean_target(config.get("gateway_ip", ""))
     gateway = ping_target(gateway_ip, ping_count, ping_timeout) if gateway_ip else None
     targets = []
-    all_latencies = []
     for target in quality_targets(config):
         result = ping_target(target, ping_count, ping_timeout)
         result["target"] = target
         targets.append(result)
-        all_latencies.extend(result.get("latencies") or [])
     dns_result = dns_query_ms(dns_server_from_config(config), config.get("internet_quality_dns_query", DEFAULT_DNS_QUERY), timeout=ping_timeout)
     external_dns = None
     if config.get("internet_quality_external_dns_enabled", True):
         external_dns = dns_query_ms(dns_server_from_config(config, external=True), config.get("internet_quality_dns_query", DEFAULT_DNS_QUERY), timeout=ping_timeout)
-    jitter = calculate_jitter(all_latencies)
-    status, diagnosis = diagnose(gateway, targets, dns_result)
+    jitter = calculate_target_jitter(targets)
+    status, diagnosis = diagnose(gateway, targets, dns_result, external_dns)
     if status == "ok" and jitter is not None and jitter >= 50:
         status = "warn"
-        diagnosis = "Good gateway latency but poor internet latency/loss: ISP-quality problem."
+        diagnosis = "High internet jitter observed: check WAN load, ISP path and appliance/bridge health."
     public_info = lookup_public_ip_info(timeout=4)
     return {
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

@@ -29,6 +29,7 @@ DEFAULT_CONFIG = {
     "appliance_ip": "",
     "gateway_ip": "",
     "ignore_ips": [],
+    "internal_networks": [],
     "adguard_querylog_interval_seconds": 15,
     "adguard_client_import_enabled": False,
     "web_host": "127.0.0.1",

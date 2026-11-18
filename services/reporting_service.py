@@ -649,7 +649,10 @@ def get_internet_quality_rollup(start_time, end_time):
 def get_speedtest_summary(start_time, end_time, limit=DEFAULT_LIMIT):
     return _timed_query(
         """
-        SELECT ts, source, latency_ms, download_mbps, upload_mbps, success
+        SELECT ts, source, latency_ms, download_mbps, upload_mbps,
+               CASE WHEN success=1 AND latency_ms >= 0
+                         AND download_mbps >= 0 AND upload_mbps >= 0
+                    THEN 1 ELSE 0 END AS success
         FROM speed_tests
         WHERE ts BETWEEN ? AND ?
         ORDER BY ts DESC

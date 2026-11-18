@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import netspecter_live_snapshot as live_snapshot
+from services.speedtest_result_service import parse_metrics as parse_speed_metrics, metrics_complete
 
 
 CONFIG_PATH = Path("/etc/netspecter/config.json")
@@ -91,36 +92,7 @@ def speed_value_mbps(value):
 
 
 def parse_metrics(output):
-    try:
-        payload = json.loads(output or "")
-    except Exception:
-        payload = None
-    if isinstance(payload, dict):
-        latency = payload.get("ping") or payload.get("latency")
-        if isinstance(latency, dict):
-            latency = latency.get("latency") or latency.get("value")
-        download = payload.get("download")
-        if isinstance(download, dict):
-            if download.get("bandwidth") is not None:
-                download = float(download.get("bandwidth")) * 8 / 1000000.0
-            else:
-                download = download.get("bytes") or download.get("value")
-        upload = payload.get("upload")
-        if isinstance(upload, dict):
-            if upload.get("bandwidth") is not None:
-                upload = float(upload.get("bandwidth")) * 8 / 1000000.0
-            else:
-                upload = upload.get("bytes") or upload.get("value")
-        return (
-            float(latency) if latency is not None else None,
-            speed_value_mbps(download),
-            speed_value_mbps(upload),
-        )
-    return (
-        parse_value(r"(?:Latency|Ping):\s*([0-9.]+)\s*ms", output),
-        parse_value(r"Download:\s*([0-9.]+)\s*(?:Mbit/s|Mbps)", output),
-        parse_value(r"Upload:\s*([0-9.]+)\s*(?:Mbit/s|Mbps)", output),
-    )
+    return parse_speed_metrics(output)
 
 
 def speedtest_command(config):
@@ -180,6 +152,9 @@ def run_test():
     except Exception as error:
         output = f"Scheduled speed test could not run: {error}"
     latency, download, upload = parse_metrics(output)
+    if success and not metrics_complete(latency, download, upload):
+        success = False
+        output = "Speed test incomplete: valid latency, download and upload measurements were not returned.\n" + output
     return (output, latency, download, upload, success)
 
 

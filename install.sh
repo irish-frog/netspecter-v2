@@ -538,6 +538,7 @@ apply_runtime_permissions() {
   chmod +x "$INSTALL_DIR/scripts/post-update-maintenance.sh"
   chmod +x "$INSTALL_DIR/scripts/daily-db-maintenance.sh"
   chmod +x "$INSTALL_DIR/scripts/run-ui-update.sh"
+  chmod +x "$INSTALL_DIR/scripts/configure-ids-interfaces.sh"
   chmod +x /usr/local/bin/netspecter-vault
 }
 

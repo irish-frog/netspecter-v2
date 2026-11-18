@@ -60,6 +60,18 @@ CREATE TABLE device_ip_history (
 
 
 class DeviceIdentityTests(unittest.TestCase):
+    def test_routine_traffic_does_not_downgrade_a_trusted_name(self):
+        mac = "04:BF:1B:89:83:8A"
+        key = identity_key_for_mac(mac)
+        apply_device_identity(self.con, "192.168.1.20", "Accounts-PC", mac, source="manual", config=self.config)
+        apply_device_identity(self.con, "192.168.1.20", "", mac, source="traffic", config=self.config)
+        displayed = apply_device_identity(self.con, "192.168.1.20", "Generic-Device", mac, source="adguard", config=self.config)
+        row = self.identity(key)
+        self.assertEqual("Accounts-PC", displayed)
+        self.assertEqual("Accounts-PC", row["display_name"])
+        self.assertEqual("Accounts-PC", row["hostname"])
+        self.assertEqual("manual", row["source"])
+
     def setUp(self):
         self.con = sqlite3.connect(":memory:")
         self.con.row_factory = sqlite3.Row

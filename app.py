@@ -34,6 +34,7 @@ except Exception:
 from flask import Flask, request, redirect, Response, session, g, jsonify, send_file
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
+from services.traffic_scope_service import internal_ipv4_networks
 
 try:
     import psutil
@@ -86,6 +87,7 @@ from netspecter_incidents import incident_detail, list_incidents, severity_label
 from netspecter_ids import delete_alert, fast_log_alerts_from_text, ids_endpoint_ip, recent_structured_alerts, recent_structured_event_summaries, update_alert_status
 from netspecter_internet_quality import latest_quality, recent_quality
 import netspecter_live_snapshot as live_snapshot
+from services.speedtest_result_service import parse_metrics as parse_speed_metrics, metrics_complete
 from netspecter_public_ip import lookup_public_ip_info
 from netspecter_threat_intel import feed_states, latest_reputation_for_event
 from netspecter_monitoring import (
@@ -11362,7 +11364,7 @@ def settings():
         section = "network"
     section_keys = {
         "network": [
-            "appliance_ip", "gateway_ip", "ignore_ips", "lan_prefix", "packet_iface",
+            "appliance_ip", "gateway_ip", "ignore_ips", "lan_prefix", "internal_networks", "packet_iface",
             "device_identity_tracking_enabled", "device_identity_carry_names", "device_identity_exclude_private_macs",
             "netbios_discovery_enabled", "netbios_discovery_interval_seconds", "netbios_discovery_batch_size",
             "mdns_discovery_enabled", "snmp_name_discovery_enabled", "ssdp_discovery_enabled", "vendor_fallback_names_enabled",
@@ -11526,6 +11528,15 @@ def settings():
         return local_redirect(f"/settings?section=server&saved=1&notice={quote(notice_text)}&notice_class={notice_class}")
 
     if request.method == "POST" and section in section_keys:
+        if section == "network":
+            try:
+                internal_ipv4_networks({
+                    **c,
+                    "lan_prefix": request.form.get("lan_prefix", c.get("lan_prefix")),
+                    "internal_networks": cfg_list(request.form.get("internal_networks", c.get("internal_networks", []))),
+                })
+            except (ValueError, TypeError) as error:
+                return Response(f"Invalid internal network settings: {error}", status=400, mimetype="text/plain")
         post_keys = set(section_keys[section])
         for key in editable_keys:
             if key not in post_keys:
@@ -11582,6 +11593,7 @@ def settings():
         "ignore_ips": "Extra IPs to ignore, separated by commas. The gateway IP is always ignored automatically.",
         "packet_iface": "Bridge carrying monitored traffic, usually br0. Linux nftables counts forwarded bytes on this bridge.",
         "lan_prefix": "LAN prefix used to identify local devices, for example 192.168.1.",
+        "internal_networks": "Additional internal IPv4 networks, separated by commas (for example 10.20.30.0/24 for a VPN). Transfers between LAN devices and these networks are excluded from internet usage and attribution. The LAN Prefix network is always internal. Applies to newly collected traffic.",
         "device_identity_tracking_enabled": "Track devices by stable MAC address when available, so names can follow a device when DHCP gives it a new IP.",
         "device_identity_carry_names": "Carry a known device name to a new IP when the same stable MAC address appears there.",
         "device_identity_exclude_private_macs": "Do not auto-transfer identity for locally administered/private MAC addresses used by phones and privacy features.",
@@ -11623,6 +11635,7 @@ def settings():
         "appliance_ip": "Appliance IP",
         "gateway_ip": "Gateway IP",
         "ignore_ips": "Extra Ignored IPs",
+        "internal_networks": "Additional Internal Networks",
         "packet_iface": "Monitored Bridge Interface",
         "lan_prefix": "LAN Prefix",
         "device_identity_tracking_enabled": "Track Devices By Stable MAC",
@@ -12119,40 +12132,7 @@ def _speed_value_mbps(value):
 
 
 def parse_speedtest_metrics(output):
-    try:
-        payload = json.loads(output or "")
-    except Exception:
-        payload = None
-    if isinstance(payload, dict):
-        latency = payload.get("ping") or payload.get("latency")
-        if isinstance(latency, dict):
-            latency = latency.get("latency") or latency.get("value")
-        download = payload.get("download")
-        if isinstance(download, dict):
-            if download.get("bandwidth") is not None:
-                download = float(download.get("bandwidth")) * 8 / 1000000.0
-            else:
-                download = download.get("bytes") or download.get("value")
-        upload = payload.get("upload")
-        if isinstance(upload, dict):
-            if upload.get("bandwidth") is not None:
-                upload = float(upload.get("bandwidth")) * 8 / 1000000.0
-            else:
-                upload = upload.get("bytes") or upload.get("value")
-        return (
-            float(latency) if latency is not None else None,
-            _speed_value_mbps(download),
-            _speed_value_mbps(upload),
-        )
-
-    def value(pattern):
-        match = re.search(pattern, output or "", re.IGNORECASE)
-        return float(match.group(1)) if match else None
-    return (
-        value(r"(?:Latency|Ping):\s*([0-9.]+)\s*ms"),
-        value(r"Download:\s*([0-9.]+)\s*(?:Mbit/s|Mbps)"),
-        value(r"Upload:\s*([0-9.]+)\s*(?:Mbit/s|Mbps)"),
-    )
+    return parse_speed_metrics(output)
 
 
 def speedtest_command():
@@ -12215,6 +12195,9 @@ def run_and_store_speedtest(source="manual"):
         print(f"Speed test failed: {error}")
         output = operation_failed_message("Speed test")
     latency, download, upload = parse_speedtest_metrics(output)
+    if success and not metrics_complete(latency, download, upload):
+        success = False
+        output = "Speed test incomplete: valid latency, download and upload measurements were not returned.\n" + output
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     run_sql(
         """

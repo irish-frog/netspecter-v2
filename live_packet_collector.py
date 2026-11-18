@@ -58,6 +58,7 @@ from netspecter_anomaly import prune_anomalies, run_anomaly_cycle
 from services.microsoft365_endpoints_service import cached_microsoft365_domain_mappings
 from services.application_classification_service import is_reverse_dns_lookup_domain
 from services.device_presence_service import mark_presence, mark_presence_many
+from services.traffic_scope_service import internal_ipv4_networks, is_internal_destination
 from services.classification_resolver_service import (
     Flow,
     classify_flow,
@@ -169,6 +170,7 @@ DEFAULT_CONFIG = {
     "raw_dns_retention_hours": 24,
     "gateway_ip": "",
     "ignore_ips": [],
+    "internal_networks": [],
     "site_application_mappings": [
         {"application": "Nextcloud", "category": "File Sharing & Storage", "ip": "192.168.99.4"}
     ],
@@ -1396,11 +1398,12 @@ def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unkn
     if not device_id:
         device_id = new_device_id()
     carry_name = existing_name if identity_carry_names_enabled(c) and not is_private else ""
-    display_name = observed_name or carry_name or str(name or ip)
     should_update_name = bool(observed_name) and (
         not existing_name or identity_source_rank(source) >= identity_source_rank(existing_source)
     )
     stored_name = observed_name if should_update_name else existing_name or observed_name
+    stored_source = source if should_update_name or not existing_name else existing_source
+    display_name = (stored_name if observed_name else carry_name) or str(name or ip)
     first_seen = min(str(existing["first_seen"] or ts), ts) if existing else ts
     current_ip = str(existing["current_ip"] or "").strip() if existing else ""
     ip_changed = bool(current_ip and current_ip != ip)
@@ -1435,13 +1438,13 @@ def apply_device_identity(con, ip, name="", mac="", vendor="", device_type="Unkn
             identity_key,
             device_id,
             normalized_mac,
-            observed_name,
+            observed_name if should_update_name else "",
             stored_name,
             ip,
             last_ip,
             vendor or "",
             device_type or "Unknown",
-            source,
+            stored_source,
             40 if is_private else max(50, identity_source_rank(source)),
             1 if is_private else 0,
             first_seen,
@@ -3244,8 +3247,28 @@ def active_classification_targets(config=None):
     except ValueError:
         return tuple()
     dns_targets = dns_classification_targets(c, network, limit, lookback_hours)
-    conntrack_targets = conntrack_classification_targets(c, network, max(0, limit - len(dns_targets)))
-    targets = tuple(sorted(dict.fromkeys((*dns_targets, *conntrack_targets)))[:limit])
+    internal_networks = internal_ipv4_networks(c)
+    excluded_ips = ignored_ips(c)
+
+    def eligible(pair):
+        return (
+            pair[0] not in excluded_ips and pair[1] not in excluded_ips
+            and not is_internal_destination(pair[1], internal_networks)
+        )
+
+    dns_targets = tuple(pair for pair in dns_targets if eligible(pair))
+    # DNS chatter must not consume every counter slot. Keep a bounded share
+    # for active destinations that DNS did not reveal (e.g. encrypted DNS or
+    # cached answers), without increasing the configured total rule budget.
+    conntrack_targets = tuple(
+        pair for pair in conntrack_classification_targets(c, network, limit) if eligible(pair)
+    )
+    dns_pairs = set(dns_targets)
+    additional_targets = tuple(pair for pair in dict.fromkeys(conntrack_targets) if pair not in dns_pairs)
+    reserved = min(max(1, limit // 4), len(additional_targets)) if limit > 1 else 0
+    dns_budget = max(0, limit - reserved)
+    selected = dict.fromkeys((*dns_targets[:dns_budget], *additional_targets, *dns_targets[dns_budget:]))
+    targets = tuple(sorted(tuple(selected)[:limit]))
     print(
         "Classification target refresh: "
         f"limit={limit} dns={len(dns_targets)} conntrack={len(conntrack_targets)} active={len(targets)}"
@@ -4092,6 +4115,15 @@ def request_dns_classification_target_refresh(reason="dns_resolution", now_monot
 
 def nft_signature(config=None):
     c = config or cfg()
+    internal_networks = internal_ipv4_networks(c)
+    excluded_ips = ignored_ips(c)
+
+    def counted_pair(client, destination):
+        return (
+            client not in excluded_ips and destination not in excluded_ips
+            and not is_internal_destination(destination, internal_networks)
+        )
+
     banned_ips = []
     for value in cfg_list(c.get("ids_banned_ips", [])):
         try:
@@ -4099,18 +4131,25 @@ def nft_signature(config=None):
                 banned_ips.append(value)
         except ValueError:
             continue
-    app_targets = active_estimated_app_targets()
-    classification_targets = active_classification_targets(c)
+    app_targets = tuple(
+        target for target in active_estimated_app_targets() if counted_pair(target[1], target[2])
+    )
+    classification_targets = tuple(
+        pair for pair in active_classification_targets(c) if counted_pair(*pair)
+    )
     covered_pairs = {
         *((client, destination) for _category, client, destination in app_targets),
         *classification_targets,
     }
-    visibility_targets = active_visibility_targets(c, covered_pairs)
+    visibility_targets = tuple(
+        pair for pair in active_visibility_targets(c, covered_pairs) if counted_pair(*pair)
+    )
     return (
         str(c.get("packet_iface") or "br0"),
         str(lan_network(c)),
         tuple(sorted(ignored_ips(c))),
         tuple(sorted(set(banned_ips))),
+        tuple(str(network) for network in internal_networks),
         app_targets,
         classification_targets,
         visibility_targets,
@@ -4123,8 +4162,9 @@ def install_nft_counters(config=None):
     started = time.monotonic()
     c = config or cfg()
     signature = nft_signature(c)
-    interface, network_text, ignored, banned_ips, app_targets, classification_targets, visibility_targets = signature
+    interface, network_text, ignored, banned_ips, internal_networks, app_targets, classification_targets, visibility_targets = signature
     network = ipaddress.ip_network(network_text)
+    internal_match = internal_networks[0] if len(internal_networks) == 1 else "{ " + ", ".join(internal_networks) + " }"
     ignored_set = set(ignored)
     hosts = [str(ip) for ip in network.hosts() if str(ip) not in ignored_set]
 
@@ -4167,10 +4207,10 @@ def install_nft_counters(config=None):
         )
     for ip in hosts:
         lines.append(
-            f'    ip saddr {ip} ip daddr != {network} counter comment "netspecter:tx:{ip}"'
+            f'    ip saddr {ip} ip daddr != {internal_match} counter comment "netspecter:tx:{ip}"'
         )
         lines.append(
-            f'    ip daddr {ip} ip saddr != {network} counter comment "netspecter:rx:{ip}"'
+            f'    ip daddr {ip} ip saddr != {internal_match} counter comment "netspecter:rx:{ip}"'
         )
     for category, client, destination in app_targets:
         lines.append(

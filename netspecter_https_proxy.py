@@ -202,8 +202,24 @@ class NetSpecterHttpsProxy(BaseHTTPRequestHandler):
             response = connection.getresponse()
             response_body = response.read()
             self.send_response(response.status, response.reason)
-            self.send_header("Content-Type", proxy_content_type(self.path, response.getheader("Content-Type")))
-            if 300 <= response.status < 400:
+            # Preserve application security, download, encoding and cache metadata.
+            # Framing is regenerated after buffering; connection-scoped headers
+            # (including names nominated by Connection) must not cross the proxy.
+            excluded_headers = HOP_BY_HOP_HEADERS | {
+                "server", "date", "content-length", "content-type", "location", "set-cookie",
+            }
+            for name, value in response.getheaders():
+                if name.lower() == "connection":
+                    excluded_headers.update(token.strip().lower() for token in value.split(","))
+            self.send_header(
+                "Content-Type",
+                safe_header_value(response.getheader("Content-Type"))
+                or proxy_content_type(self.path, ""),
+            )
+            for name, value in response.getheaders():
+                if name.lower() not in excluded_headers:
+                    self.send_header(name, safe_header_value(value))
+            if response.getheader("Location") is not None and 300 <= response.status < 400:
                 redirect_location = safe_redirect_path(response.getheader("Location") or "/")
                 location_header = "/"
                 if SAFE_REDIRECT_PATH_PATTERN.fullmatch(redirect_location):
@@ -211,7 +227,13 @@ class NetSpecterHttpsProxy(BaseHTTPRequestHandler):
                 self.send_header("Location", location_header)
             for cookie_header in safe_set_cookie_headers(response.getheaders()):
                 self.send_header("Set-Cookie", cookie_header)
-            self.send_header("Content-Length", str(len(response_body)))
+            # HEAD describes the GET representation even though it has no body.
+            if self.command == "HEAD":
+                upstream_length = response.getheader("Content-Length")
+                if upstream_length and upstream_length.isascii() and upstream_length.isdecimal():
+                    self.send_header("Content-Length", upstream_length)
+            elif response.status not in {204, 304} and response.status >= 200:
+                self.send_header("Content-Length", str(len(response_body)))
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(response_body)

@@ -7,6 +7,7 @@
   "adguard_pass": "",
   "adguard_client_import_enabled": false,
   "lan_prefix": "192.168.1.",
+  "internal_networks": [],
   "traffic_retention_days": 60,
   "raw_traffic_retention_hours": 2,
   "dns_retention_days": 60,

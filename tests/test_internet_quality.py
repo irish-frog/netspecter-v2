@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,6 +10,9 @@ import netspecter_internet_quality as iq
 
 class InternetQualityTests(unittest.TestCase):
     def setUp(self):
+        public_ip_lookup = patch.object(iq, "lookup_public_ip_info", return_value={})
+        public_ip_lookup.start()
+        self.addCleanup(public_ip_lookup.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmp.name) / "quality.db"
 
@@ -64,7 +68,8 @@ class InternetQualityTests(unittest.TestCase):
                 "internet_quality_external_dns_enabled": False,
             })
         self.assertEqual("warn", summary["status"])
-        self.assertIn("ISP-quality", summary["diagnosis"])
+        self.assertIn("jitter", summary["diagnosis"])
+        self.assertIn("appliance/bridge", summary["diagnosis"])
 
     def test_diagnoses_single_target_failure(self):
         status, reason = iq.diagnose(
@@ -110,7 +115,7 @@ class InternetQualityTests(unittest.TestCase):
         for index in range(5):
             con.execute(
                 "INSERT INTO internet_quality (ts, status) VALUES (?, 'ok')",
-                (f"2026-07-12 00:00:0{index}",),
+                (datetime.now().strftime("%Y-%m-%d") + f" 00:00:0{index}",),
             )
         con.commit()
         con.close()
