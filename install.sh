@@ -24,6 +24,24 @@ if [ "${EUID}" -ne 0 ]; then
   exit 1
 fi
 
+if [ -e "$DATA_DIR/history-reset.in-progress" ]; then
+  echo "An interrupted history reset must be recovered before installation." >&2
+  exit 1
+fi
+# Verify shipped code/binary before stopping an existing collector.
+if command -v python3 >/dev/null 2>&1 && [ -f "$CONFIG_DIR/config.json" ]; then
+  bash "$SOURCE_DIR/scripts/install-tls-inspector.sh" --verify-only
+fi
+collector_was_active=0
+if systemctl is-active --quiet netspecter-collector; then collector_was_active=1; fi
+resume_collector_on_failure() {
+  local status=$?
+  if ((status != 0 && collector_was_active)) && [ ! -e "$DATA_DIR/history-reset.in-progress" ]; then
+    systemctl start netspecter-collector || true
+  fi
+}
+trap resume_collector_on_failure EXIT
+
 detect_os() {
   if [ ! -r /etc/os-release ]; then
     echo "Cannot detect operating system: /etc/os-release not found." >&2

@@ -52,14 +52,16 @@ def test_metadata_addresses_must_be_strings_without_scope_suffixes():
 
 
 @pytest.mark.skipif(__import__("sys").platform!="linux",reason="Linux peer credentials")
-def test_unix_receiver_authenticates_peer_and_reconnects_after_oversized_input(tmp_path):
+def test_unix_receiver_authenticates_peer_and_reconnects_after_oversized_input(socket_directory):
     import os,socket,threading,time
     from services.tls_metadata_service import serve_metadata,peer_is_allowed
-    path=str(tmp_path/"tls.sock")
+    path=str(socket_directory/"tls.sock")
     listener=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);listener.bind(path);listener.listen(2)
-    stop=threading.Event();stored=[];errors=[]
+    stop=threading.Event();stored=[];errors=[];written=threading.Event()
+    def store(rows):
+        stored.extend(rows);written.set()
     def worker():
-        try: serve_metadata(listener,os.getuid(),lambda rows:stored.extend(rows),stop)
+        try: serve_metadata(listener,os.getuid(),store,stop)
         except Exception as exc:errors.append(exc)
     thread=threading.Thread(target=worker,daemon=True);thread.start()
     try:
@@ -73,7 +75,7 @@ def test_unix_receiver_authenticates_peer_and_reconnects_after_oversized_input(t
             now=int(time.time()*1000)
             message=wire(observed_at_unix_ms=now,connection_started_at_unix_ms=now-1000)+b"\n"
             client.sendall(message[:20]);client.sendall(message[20:])
-        stop.wait(0.1)
+        assert written.wait(3), "Receiver did not flush the valid observation"
     finally:
         stop.set();thread.join(3);listener.close()
     assert not errors and not thread.is_alive()
@@ -81,9 +83,9 @@ def test_unix_receiver_authenticates_peer_and_reconnects_after_oversized_input(t
 
 
 @pytest.mark.skipif(__import__("sys").platform!="linux",reason="Linux socket activation")
-def test_inherited_descriptor_requires_listening_unix_socket_and_expected_path(tmp_path,monkeypatch):
+def test_inherited_descriptor_requires_listening_unix_socket_and_expected_path(socket_directory,monkeypatch):
     import os,socket
-    path=str(tmp_path/"listen.sock")
+    path=str(socket_directory/"listen.sock")
     listener=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);listener.bind(path);listener.listen(1)
     duplicate=os.dup
     monkeypatch.setattr(os,"dup",lambda fd:duplicate(listener.fileno()))
@@ -94,3 +96,11 @@ def test_inherited_descriptor_requires_listening_unix_socket_and_expected_path(t
         accepted.close()
         with pytest.raises(ValueError):inherited_listener(environment,expected_path=path+"wrong")
     finally:listener.close()
+
+
+@pytest.fixture
+def socket_directory():
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory(prefix="ns-socket-",dir="/tmp") as directory:
+        yield Path(directory)

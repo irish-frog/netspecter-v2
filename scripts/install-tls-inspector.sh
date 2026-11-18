@@ -44,10 +44,11 @@ systemd-tmpfiles --create /usr/lib/tmpfiles.d/netspecter-tls-metadata.conf
 printf 'CAPTURE_INTERFACE=%s\nNETFLOW_PORT=%s\n' "$iface" "$port" > /etc/netspecter/tls-inspector.env
 chown root:root /etc/netspecter/tls-inspector.env
 chmod 640 /etc/netspecter/tls-inspector.env
+systemctl daemon-reload
+systemd-analyze verify /etc/systemd/system/netspecter-tls-inspector.service /etc/systemd/system/netspecter-softflowd.service /etc/systemd/system/netspecter-tls-metadata.socket
 install -d -o root -g root -m 755 /etc/systemd/system/netspecter-collector.service.d
 printf '[Unit]\nRequires=netspecter-tls-metadata.socket\nAfter=netspecter-tls-metadata.socket\n' > /etc/systemd/system/netspecter-collector.service.d/passive-attribution.conf
 systemctl daemon-reload
-systemd-analyze verify /etc/systemd/system/netspecter-tls-inspector.service /etc/systemd/system/netspecter-softflowd.service /etc/systemd/system/netspecter-tls-metadata.socket
 python3 scripts/configure-passive-attribution.py --activate >/dev/null
 systemctl disable --now suricata softflowd >/dev/null 2>&1 || true
 echo "Passive attribution staged. Existing settings and secrets preserved; no history reset performed."

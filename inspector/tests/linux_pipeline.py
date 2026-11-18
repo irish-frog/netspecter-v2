@@ -78,7 +78,7 @@ def main():
         server_code='''import socket
 s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind(('0.0.0.0',443));s.listen();s.settimeout(60)
 print('ready',flush=True)
-for _ in range(3):
+for _ in range(4):
  c,_=s.accept();c.settimeout(10)
  with c:
   data=bytearray()
@@ -125,6 +125,20 @@ with socket.create_connection((sys.argv[1],443),timeout=10) as s:
         assert query('SELECT sum(bytes) FROM measured_internet_flows')[0][0]>=measured_before
         assert query('SELECT count(*) FROM classified_flow_facts')[0][0]==0,'Legacy IP guesses must not contribute facts'
         assert query('SELECT count(*) FROM estimated_app_traffic')[0][0]==0,'Legacy estimates must stay disabled'
+        # Exercise actual root orchestration, not just mocked reset state transitions.
+        configuration_before=(CONFIG/'config.json').read_bytes()
+        with closing(sqlite3.connect(DATA/'netspecter.db')) as con,con:
+            con.execute("INSERT OR REPLACE INTO device_overrides (ip,name) VALUES ('192.168.77.5','CI Edited Workstation')")
+        run(sys.executable,str(DEST/'scripts/reset-collected-history.py'),'--apply','--expected-hostname',__import__('socket').gethostname())
+        assert (CONFIG/'config.json').read_bytes()==configuration_before,'Reset changed saved settings'
+        with closing(sqlite3.connect(DATA/'netspecter.db')) as con:
+            assert con.execute("SELECT name FROM device_overrides WHERE ip='192.168.77.5'").fetchone()[0]=='CI Edited Workstation'
+        assert not (DATA/'history-reset.in-progress').exists()
+        assert not list(Path('/var/backups/netspecter/history-reset').glob('reset-*')),'Temporary old history copy was retained'
+        assert query('SELECT count(*) FROM measured_internet_flows')[0][0]==0
+        run('ip','netns','exec',CLIENT,sys.executable,'-c',client_code,'8.8.8.8','www.youtube.com',capture_output=True)
+        wait_for(lambda:query("SELECT count(*) FROM measured_internet_flows WHERE application='YouTube'")[0][0]>0)
+        print('PASS: real writer-stop, database rebuild, preserved edited name/settings, discarded rollback copy, and fresh collection after restart.')
         print('PASS: dedicated systemd identities, root-owned socket activation, bridge SNI capture, real softflowd exports, exact separate apps on one IP, unchanged TCP payload, and zero internal internet attribution.')
     except BaseException:
         subprocess.run(['journalctl','--no-pager','-n','120',*[item for unit in UNITS for item in ['-u',unit]]],check=False)

@@ -19,6 +19,7 @@ cd "$(dirname "$0")/.."
 [[ $(pwd -P) == /opt/netspecter ]] || { echo "Deploy from the updated /opt/netspecter checkout." >&2; exit 1; }
 [[ ! -e /var/lib/netspecter/history-reset.in-progress ]] || { echo "Recover the interrupted history reset first." >&2; exit 1; }
 bash scripts/install-tls-inspector.sh --verify-only
+python3 scripts/configure-passive-attribution.py "${networks[@]}" >/dev/null
 if (( ! apply )); then echo "Preflight passed; no services/configuration/history changed."; exit 0; fi
 bash install.sh
 if ((${#networks[@]})); then python3 scripts/configure-passive-attribution.py --activate "${networks[@]}" >/dev/null; fi
