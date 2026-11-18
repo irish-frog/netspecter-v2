@@ -3,7 +3,7 @@
 from contextlib import closing
 import json,os
 from pathlib import Path
-import selectors,shutil,sqlite3,subprocess,sys,time
+import selectors,shutil,socket,sqlite3,struct,subprocess,sys,threading,time
 
 SOURCE=Path(__file__).resolve().parents[2]
 DEST=Path('/opt/netspecter')
@@ -43,7 +43,18 @@ def main():
         raise SystemExit('Only run as root inside a disposable GitHub-hosted CI runner.')
     for path in [DEST,CONFIG,DATA]:
         if path.exists() or path.is_symlink():raise SystemExit(f'Refusing preexisting fixture target: {path}')
-    created=[];server=None
+    created=[];server=None;trace=None;extrace=socket.socket(socket.AF_PACKET,socket.SOCK_RAW,socket.htons(3));trace.bind(('lo',0));trace.settimeout(1)
+        threading.Thread(target=trace_exports,daemon=True).start()
+        ports=[]
+    def trace_exports():
+        while trace is not None:
+            try:packet=trace.recv(65535)
+            except socket.timeout:continue
+            except OSError:return
+            if len(packet)<42 or packet[12:14]!=b'\x08\x00' or packet[23]!=17:continue
+            udp=14+(packet[14]&15)*4
+            if len(packet)<udp+8 or struct.unpack_from('!H',packet,udp+2)[0]!=2055:continue
+            if len(exports)<32:exports.append(packet[udp+8:])
     try:
         for path in [DEST,CONFIG,DATA]:path.mkdir(mode=0o755,parents=True);created.append(path)
         for path in SOURCE.glob('*.py'):shutil.copyfile(path,DEST/path.name)
@@ -106,6 +117,8 @@ with socket.create_connection((sys.argv[1],443),timeout=10) as s:
   response.extend(block)
  assert response==b'Z'*65536
 '''
+        trace=socket.socket(socket.AF_PACKET,socket.SOCK_RAW,socket.htons(3));trace.bind(('lo',0));trace.settimeout(1)
+        threading.Thread(target=trace_exports,daemon=True).start()
         ports=[]
         for name in ['www.youtube.com','www.netflix.com']:
             result=run('ip','netns','exec',CLIENT,sys.executable,'-c',client_code,'8.8.8.8',name,capture_output=True)
@@ -141,9 +154,15 @@ with socket.create_connection((sys.argv[1],443),timeout=10) as s:
         print('PASS: real writer-stop, database rebuild, preserved edited name/settings, discarded rollback copy, and fresh collection after restart.')
         print('PASS: dedicated systemd identities, root-owned socket activation, bridge SNI capture, real softflowd exports, exact separate apps on one IP, unchanged TCP payload, and zero internal internet attribution.')
     except BaseException:
+        for table in ['tls_connection_metadata','measured_internet_flows']:
+            try:print('DIAGNOSTIC '+table,query('SELECT * FROM '+table+' LIMIT 8'),flush=True)
+            except sqlite3.Error as error:print(str(error),flush=True)
+        for packet in exports[:4]:print('DIAGNOSTIC NetFlow UDP',len(packet),packet.hex(),flush=True)
+        subprocess.run(['softflowctl','-c','/run/netspecter-flow/softflowd.ctl','statistics'],check=False)
         subprocess.run(['journalctl','--no-pager','-n','120',*[item for unit in UNITS for item in ['-u',unit]]],check=False)
         raise
     finally:
+        if trace is not None:trace.close();trace=None
         if server and server.poll() is None:server.terminate();server.communicate(timeout=5)
         subprocess.run(['systemctl','stop',*UNITS],check=False)
         for namespace in [CLIENT,SERVER]:subprocess.run(['ip','netns','delete',namespace],check=False)
