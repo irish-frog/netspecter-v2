@@ -43,6 +43,8 @@ jobs:
         run: python3 build_manifest.py create target/bundle --binary target/release/netspecter-tls-inspector --source-commit "$GITHUB_SHA"
       - name: Shell syntax checks
         run: for script in install.sh scripts/*.sh; do bash -n "$script"; done
+      - name: Integration harness syntax
+        run: python3 -m py_compile inspector/tests/linux_pipeline.py inspector/tests/linux_bundle.py
       - name: Python regression and local socket tests
         run: .ci-venv/bin/python -m pytest -q -p no:cacheprovider
       - name: Offline third-appliance deployment bootstrap

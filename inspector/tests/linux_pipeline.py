@@ -43,9 +43,7 @@ def main():
         raise SystemExit('Only run as root inside a disposable GitHub-hosted CI runner.')
     for path in [DEST,CONFIG,DATA]:
         if path.exists() or path.is_symlink():raise SystemExit(f'Refusing preexisting fixture target: {path}')
-    created=[];server=None;trace=None;extrace=socket.socket(socket.AF_PACKET,socket.SOCK_RAW,socket.htons(3));trace.bind(('lo',0));trace.settimeout(1)
-        threading.Thread(target=trace_exports,daemon=True).start()
-        ports=[]
+    created=[];server=None;trace=None;exports=[]
     def trace_exports():
         while trace is not None:
             try:packet=trace.recv(65535)
