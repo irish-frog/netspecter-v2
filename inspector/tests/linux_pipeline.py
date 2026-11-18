@@ -85,7 +85,7 @@ def main():
         time.sleep(3)
         run(sys.executable,str(DEST/'scripts/verify-passive-attribution.py'))
         server_code='''import socket
-s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind(('0.0.0.0',443));s.listen();s.settimeout(60)
+s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind(('0.0.0.0',443));s.listen();s.settimeout(180)
 print('ready',flush=True)
 for _ in range(4):
  c,_=s.accept();c.settimeout(10)

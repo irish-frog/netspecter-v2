@@ -351,7 +351,7 @@ apply_runtime_permissions() {
   chmod +x "$INSTALL_DIR/scripts/run-ui-update.sh"
   chmod +x "$INSTALL_DIR/scripts/configure-ids-interfaces.sh"
   if [ -f "$INSTALL_DIR/bin/netspecter-tls-inspector" ]; then
-    chmod 755 "$INSTALL_DIR/bin/netspecter-tls-inspector"
+    chmod 755 "$INSTALL_DIR/bin/netspecter-tls-inspector" "$INSTALL_DIR/bin/softflowd"
   fi
   chmod +x /usr/local/bin/netspecter-vault
 }

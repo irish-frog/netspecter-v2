@@ -1,3 +1,6 @@
 *.sh text eol=lf
 *.service text eol=lf
 *.timer text eol=lf
+
+inspector/prebuilt/**/netspecter-tls-inspector binary
+inspector/prebuilt/**/softflowd binary

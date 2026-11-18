@@ -16,7 +16,19 @@ jobs:
         with:
           persist-credentials: false
       - name: Build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpcap-dev softflowd nftables iproute2
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpcap-dev softflowd nftables iproute2 autoconf automake build-essential pkg-config
+      - name: Pinned flow exporter source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: irino/softflowd
+          ref: 433fbb7102616c671d523d4e41ae5315cd70d442
+          path: .ci-softflowd
+          persist-credentials: false
+      - name: Build bounded flow exporter
+        env:
+          CFLAGS: -O2 -fstack-protector-strong -D_FORTIFY_SOURCE=3
+          LDFLAGS: -Wl,-z,relro,-z,now
+        run: python3 inspector/exporter/build.py .ci-softflowd
       - name: Pinned Rust toolchain
         run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
       - name: Formatting, tests and lint
@@ -40,7 +52,7 @@ jobs:
           .ci-venv/bin/python -m pip install -r requirements.txt pytest
       - name: Package provenance
         working-directory: inspector
-        run: python3 build_manifest.py create target/bundle --binary target/release/netspecter-tls-inspector --source-commit "$GITHUB_SHA"
+        run: python3 build_manifest.py create target/bundle --binary target/release/netspecter-tls-inspector --source-commit "$GITHUB_SHA" --exporter ../.ci-softflowd/softflowd
       - name: Shell syntax checks
         run: for script in install.sh scripts/*.sh; do bash -n "$script"; done
       - name: Integration harness syntax
@@ -58,5 +70,6 @@ jobs:
           path: |
             inspector/target/bundle/netspecter-tls-inspector
             inspector/target/bundle/build.json
+            inspector/target/bundle/softflowd
           retention-days: 7
           if-no-files-found: error

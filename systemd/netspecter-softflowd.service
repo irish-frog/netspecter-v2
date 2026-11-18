@@ -10,7 +10,7 @@ Group=netspecter-flow
 EnvironmentFile=/etc/netspecter/tls-inspector.env
 RuntimeDirectory=netspecter-flow
 RuntimeDirectoryMode=0700
-ExecStart=/usr/sbin/softflowd -d -6 -i ${CAPTURE_INTERFACE} -n 127.0.0.1:${NETFLOW_PORT} -v 9 -T full -m 8192 -B 4194304 -C 256 -p /run/netspecter-flow/softflowd.pid -c /run/netspecter-flow/softflowd.ctl -t tcp=60 -t tcp.fin=5 -t tcp.rst=5 -t udp=15 -t general=30 -t maxlife=60 -t expint=5
+ExecStart=/opt/netspecter/bin/softflowd -d -6 -i ${CAPTURE_INTERFACE} -n 127.0.0.1:${NETFLOW_PORT} -v 9 -T full -m 8192 -B 4194304 -C 256 -p /run/netspecter-flow/softflowd.pid -c /run/netspecter-flow/softflowd.ctl -t tcp=60 -t tcp.fin=5 -t tcp.rst=5 -t udp=15 -t general=30 -t maxlife=60 -t expint=5
 Restart=on-failure
 RestartSec=5
 AmbientCapabilities=CAP_NET_RAW

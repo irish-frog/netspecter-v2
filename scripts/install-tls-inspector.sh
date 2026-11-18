@@ -17,9 +17,9 @@ mapfile -t settings < <(python3 scripts/configure-passive-attribution.py)
 iface="${settings[0]}"; port="${settings[1]}"
 [[ -d "/sys/class/net/$iface/bridge" ]] || { echo "Configured capture interface must be an existing Linux bridge: $iface" >&2; exit 1; }
 if [[ ${1:-} == --verify-only ]]; then exit 0; fi
-if ! command -v softflowd >/dev/null 2>&1 || ! ldconfig -p | grep 'libpcap.so.0.8' >/dev/null; then
+if ! ldconfig -p | grep 'libpcap.so.0.8' >/dev/null; then
   apt-get update
-  apt-get install -y --no-install-recommends softflowd libpcap0.8t64
+  apt-get install -y --no-install-recommends libpcap0.8t64
 fi
 for group in netspecter-metadata netspecter-flow; do
   getent group "$group" >/dev/null || groupadd --system "$group"
@@ -36,6 +36,9 @@ trap 'rm -f -- "$binary_stage"' EXIT
 install -o root -g root -m 755 "$bundle/netspecter-tls-inspector" "$binary_stage"
 mv -f -- "$binary_stage" "$install_dir/bin/netspecter-tls-inspector"
 "$install_dir/bin/netspecter-tls-inspector" --version
+exporter_stage="$(mktemp "$install_dir/bin/.softflowd-XXXXXX")"
+install -o root -g root -m 755 "$bundle/softflowd" "$exporter_stage"
+mv -f -- "$exporter_stage" "$install_dir/bin/softflowd"
 install -o root -g root -m 644 systemd/netspecter-tls-inspector.service /etc/systemd/system/
 install -o root -g root -m 644 systemd/netspecter-softflowd.service /etc/systemd/system/
 install -o root -g root -m 644 systemd/netspecter-tls-metadata.socket /etc/systemd/system/

@@ -28,6 +28,8 @@ def test_bundle_source_and_binary_integrity(tmp_path):
     binary=bytearray(128);binary[:6]=b'\x7fELF\x02\x01';struct.pack_into('<H',binary,18,62)
     (tmp_path/'netspecter-tls-inspector').write_bytes(binary)
     manifest={'schema_version':1,'target':'x86_64-unknown-linux-gnu','source_commit':'a'*40,'source_sha256':module.fingerprint(),'sha256':hashlib.sha256(binary).hexdigest()}
+    (tmp_path/'softflowd').write_bytes(binary)
+    manifest['exporter']={'upstream_commit':module.EXPORTER_COMMIT,'patch':module.EXPORTER_PATCH,'sha256':hashlib.sha256(binary).hexdigest()}
     (tmp_path/'build.json').write_text(json.dumps(manifest))
     assert module.verify(tmp_path)['sha256']==manifest['sha256']
     (tmp_path/'netspecter-tls-inspector').write_bytes(b'tampered')

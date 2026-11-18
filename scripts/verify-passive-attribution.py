@@ -16,6 +16,7 @@ def check():
     interface,port=validate(config)
     build=verify(root/'inspector/prebuilt/linux-x86_64')
     if hashlib.sha256((root/'bin/netspecter-tls-inspector').read_bytes()).hexdigest()!=build['sha256']:raise ValueError('Installed sensor checksum differs from tested bundle')
+    if hashlib.sha256((root/'bin/softflowd').read_bytes()).hexdigest()!=build['exporter']['sha256']:raise ValueError('Installed exporter differs from tested bundle')
     units=['netspecter-collector','netspecter-tls-inspector','netspecter-softflowd','netspecter-tls-metadata.socket']
     subprocess.run(['systemctl','is-active','--quiet',*units],check=True)
     for unit in units:
