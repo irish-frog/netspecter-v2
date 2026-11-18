@@ -39,3 +39,6 @@ Thumbs.db
 .vscode/
 .idea/
 .test-runtime/
+
+# Rust build artifacts
+inspector/target/
