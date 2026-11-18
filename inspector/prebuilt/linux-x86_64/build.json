@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "target": "x86_64-unknown-linux-gnu",
+  "minimum_glibc": "2.39",
+  "version": "0.1.0",
+  "source_commit": "ac60ce6f65f33325c256f2bf7076253cebeb790b",
+  "source_sha256": "3c553426b5f9662aefbef1c5dabbd2e11453b78171b69ef71b8e73823e2cb4ec",
+  "sha256": "b029f3358e0828c73a07e66009c1f27e8478f51591b3e51fc66b6e3c0cdfc761",
+  "toolchain": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+  "exporter": {
+    "upstream_commit": "433fbb7102616c671d523d4e41ae5315cd70d442",
+    "patch": "capture-timeout-100ms-v1",
+    "sha256": "73a46265345e864804cf80611b3f589f3f9a3d8f078c6c91fbb6215debd234c6"
+  }
+}

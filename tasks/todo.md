@@ -12,7 +12,7 @@ Updated 2026-11-19. All specifications and integration plans were approved. Task
   - Acceptance: valid segmented hellos produce one observation; retransmits/out-of-order segments are handled; conflicting overlaps, midstream/reused sessions and expiry are rejected safely; global/per-flow limits enforced.
   - Verify: synthetic segment, resource-pressure, sequence-wrap and reuse tests via cargo test --locked.
   - Dependencies: 1. Files: src/reassembly.rs, src/lib.rs, tests/reassembly.rs.
-- [ ] Checkpoint: review portable parsing and resource-limit results.
+- [x] Checkpoint: review portable parsing and resource-limit results.
 - [x] 3. Add packet adapter and capture loop.
   - Acceptance: Ethernet/VLAN/IPv4/IPv6/TCP inputs yield exact tuple metadata; unsupported fragments/QUIC count as unsupported; Linux capture errors leave network forwarding untouched.
   - Verify: packet fixture tests plus Linux capture smoke test on an isolated interface.
@@ -25,15 +25,15 @@ Updated 2026-11-19. All specifications and integration plans were approved. Task
   - Acceptance: reproducible pinned Linux binary; dedicated user and scoped capture capability; no public listener; service limits and failure recovery verified.
   - Verify: Linux build/tests; systemd-analyze verify; integration status and socket permission checks before live activation.
   - Dependencies: 4. Files: systemd/netspecter-tls-inspector.service, scripts/install-tls-inspector.sh, inspector/README.md, rust-toolchain.toml, docs/engineering/SPEC-tls-metadata.md.
-- [ ] Checkpoint: review Linux integration before live deployment or further module integration.
+- [x] Checkpoint: review Linux integration before live deployment or further module integration.
 
 ## Remaining capability gates
 - [x] Specify and review flow-attribution, then plan its focused tasks.
 - [x] Specify and review device-timeline, then plan its focused tasks.
 - [x] Specify and review history-reset, including preservation/reimport/recovery checks.
-- [ ] Pass the combined Rust/Python suite and security/privilege checks.
-- [ ] Deploy and validate on the two authorized reachable appliances.
-- [ ] Explicitly reset collected history on those two only; verify edited names/settings survive and fresh collection resumes.
+- [x] Pass the combined Rust/Python suite and security/privilege checks.
+- [ ] Deploy/validate the owner appliance with root access; client ON HOLD.
+- [ ] Owner live history reset pending root execution; held client and inaccessible third stay untouched.
 
 ## Remaining module implementation tasks (specifications and task plan approved)
 
@@ -49,7 +49,7 @@ Updated 2026-11-19. All specifications and integration plans were approved. Task
   - Acceptance: loopback exporter only; successive active intervals count once each; internal/VPN bytes excluded; bridge totals unchanged.
   - Verify: export replay, active intervals, scope and byte conservation tests.
   - Dependencies: 7. Files: services/flow_attribution_service.py, tests/test_flow_attribution.py, netspecter_db.py, live_packet_collector.py.
-- [ ] Checkpoint: validate measured byte conservation and socket/flow intake.
+- [x] Checkpoint: validate measured byte conservation and socket/flow intake.
 - [x] 9. Resolve exact connection and client DNS evidence.
   - Acceptance: precedence and unknown reasons match spec; same CDN/different apps cannot leak evidence; late metadata safely reconciled.
   - Verify: attribution tests covering reused tuples, TTL, ambiguity, ECH, manual rules and export gaps.
@@ -66,7 +66,7 @@ Updated 2026-11-19. All specifications and integration plans were approved. Task
   - Acceptance: escaped names/domains, clear unknown/metadata-only state, existing navigation/security headers preserved.
   - Verify: route/partial-navigation tests and representative page smoke checks.
   - Dependencies: 11. Files: app.py, services/device_timeline_service.py, tests/test_device_timeline.py.
-- [ ] Checkpoint: validate end-to-end timeline and coverage without live reset.
+- [x] Checkpoint: validate end-to-end timeline and coverage without live reset.
 - [x] 13. Inventory reset and preview preservation.
   - Acceptance: every schema table classified; unknown schema fails closed; explicit retained names/settings/custom rules inventory.
   - Verify: preview and preservation fixtures; no DB mutation in default mode.
@@ -79,8 +79,10 @@ Updated 2026-11-19. All specifications and integration plans were approved. Task
   - Acceptance: cutoff precedes device updates, DNS resolutions and target caches; restart clears learned in-memory state; new observations resume.
   - Verify: old/new DNS import fixture and post-reset fresh flow tests.
   - Dependencies: 14. Files: live_packet_collector.py, tests/test_collected_history_reset.py, docs/engineering/SPEC-history-reset.md.
-- [ ] Checkpoint: full suite, Linux integration, privilege/update/reset recovery review.
+- [x] Checkpoint: full suite, Linux integration, privilege/update/reset recovery review.
 - [ ] 16. Validate the owner appliance; hold the client and prepare the third.
   - Acceptance: coherent main revision and matching binary prepared; owner install/reset only with root access; AdGuard/forwarding/collector healthy; client and third untouched.
   - Verify: root-assisted owner deploy/reset report, preservation checks and fresh timeline; prepared commands for the held client and offline third.
   - Dependencies: 10,12,15. Files: operational verification report only; no appliance-only source patches.
+
+Linux gate passed on ac60ce6 (run 44413300905): 382 Python and 23 Rust tests, offline bootstrap, real bridge attribution/internal exclusion and root reset/fresh restart. Final package verification uses the shipped binaries, not a substitute build.

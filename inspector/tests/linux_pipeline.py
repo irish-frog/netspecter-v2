@@ -59,7 +59,9 @@ def main():
         for name in ['services','config','scripts','systemd','inspector']:
             shutil.copytree(SOURCE/name,DEST/name,ignore=shutil.ignore_patterns('target','prebuilt','__pycache__'))
         shutil.copytree(SOURCE/'.ci-venv',DEST/'venv',symlinks=False)
-        bundle=DEST/'inspector/prebuilt/linux-x86_64';shutil.copytree(SOURCE/'inspector/target/bundle',bundle)
+        bundle=DEST/'inspector/prebuilt/linux-x86_64'
+        shipped=SOURCE/'inspector/prebuilt/linux-x86_64'
+        shutil.copytree(shipped if (shipped/'build.json').is_file() else SOURCE/'inspector/target/bundle',bundle)
         for user in ['netspecter']:
             if subprocess.run(['id',user],capture_output=True).returncode:
                 run('useradd','--system','--user-group','--home-dir','/nonexistent','--shell','/usr/sbin/nologin',user)
