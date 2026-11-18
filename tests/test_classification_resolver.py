@@ -978,7 +978,7 @@ def test_tcpdump_sampler_uses_packet_size_fallback_without_length():
 def test_netflow_v5_parser_extracts_ipv4_flow():
     import struct
 
-    header = struct.pack("!HHIIIIBBH", 5, 1, 0, 1787314682, 0, 1, 0, 0, 0)
+    header = struct.pack("!HHIIIIBBH", 5, 1, 0, int(__import__("time").time()), 0, 1, 0, 0, 0)
     record = struct.pack(
         "!IIIHHIIIIHHBBBBHHBBH",
         int.from_bytes(bytes([192, 168, 1, 57]), "big"),

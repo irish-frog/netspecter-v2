@@ -14,7 +14,7 @@ rm -f "$REQUEST_FILE"
   printf '\n=== NetSpecter UI update started %s ===\n' "$(date)"
   printf 'running %s\n' "$(date +%s)" > "$STATE_FILE"
   cd "$INSTALL_DIR"
-  if git -c "safe.directory=$INSTALL_DIR" pull --ff-only origin main && bash ./install.sh; then
+  if git -c "safe.directory=$INSTALL_DIR" -c core.filemode=false pull --ff-only origin main && bash ./install.sh; then
     printf 'Restarting NetSpecter services in readiness order...\n'
     systemctl restart netspecter-collector || true
     systemctl restart netspecter-web || true

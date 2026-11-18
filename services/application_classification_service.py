@@ -52,6 +52,9 @@ def traffic_history_source_sql():
 
 
 def remote_traffic_source_sql():
+    if cfg().get("passive_attribution_enabled", False):
+        from services.flow_attribution_service import measured_usage_source_sql
+        return measured_usage_source_sql(destination=True)
     ignore_ip_filter = _ignored_ip_filter("ip")
     ignore_remote_filter = _ignored_ip_filter("remote_ip")
     return """
@@ -71,6 +74,9 @@ def remote_traffic_source_sql():
 
 
 def estimated_app_source_sql():
+    if cfg().get("passive_attribution_enabled", False):
+        from services.flow_attribution_service import measured_usage_source_sql
+        return measured_usage_source_sql(destination=False)
     ignore_ip_filter = _ignored_ip_filter("ip")
     return """
         SELECT ip, category, downloaded_mb, uploaded_mb, total_mb, day, hour AS ts, hour
@@ -234,6 +240,15 @@ def _profile_set(profile, key, value):
 
 
 def category_summary(start_time, end_time, filters=None, limit=8, total_network_mb=None, profile=None):
+    if cfg().get("passive_attribution_enabled", False):
+        from netspecter_db import connect_db, init_db
+        from services.device_timeline_service import measured_category_report
+        init_db()
+        con = connect_db()
+        try:
+            return measured_category_report(con, start_time, end_time, filters, limit, traffic_history_source_sql())
+        finally:
+            con.close()
     filters = filters or {}
     started = time.perf_counter()
     _profile_add(profile, "category_summary_calls")

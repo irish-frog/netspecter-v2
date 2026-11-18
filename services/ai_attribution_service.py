@@ -80,11 +80,17 @@ def ai_attribution_summary(filters, start_time, end_time, include_dns_correlatio
         placeholders = ",".join(["?"] * len(device_ids))
         app_where.append(f"ip IN ({placeholders})")
         app_params.extend(device_ids)
+    from netspecter_config import cfg
+    if cfg().get("passive_attribution_enabled", False):
+        from services.flow_attribution_service import measured_usage_source_sql
+        app_source = "(" + measured_usage_source_sql() + ")"
+    else:
+        app_source = "estimated_app_traffic"
     app_rows = query(
         f"""
         SELECT category, ip, SUM(downloaded_mb) AS downloaded_mb, SUM(uploaded_mb) AS uploaded_mb,
                SUM(total_mb) AS total_mb, MIN(ts) AS first_seen, MAX(ts) AS last_seen
-        FROM estimated_app_traffic
+        FROM {app_source}
         WHERE {' AND '.join(app_where)}
         GROUP BY category, ip
         """,

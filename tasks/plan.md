@@ -26,3 +26,15 @@ Timeline displays source, confidence and actual attributed bytes using escaped u
 
 ## Review checkpoints
 The detailed inspector tasks are in tasks/todo.md. Review parser/reassembly test results before capture integration; review Linux integration before attribution integration; validate the full replacement before either live reset.
+
+## Integration plan (approved by operator on 2026-11-18)
+
+After the sensor tests, implement the remaining modules sequentially using the tasks below. Add new traffic tables without destructive migrations. Systemd owns the listening socket and hands its descriptor to the collector. The receiver validates Linux peer credentials, schema, tuple, hostname, timestamps and bounded JSON before transactional batch writes. Receiver failure leaves DNS/forwarding independent.
+
+Extract bounded NetFlow parsing and add stable export identities/start-end times. Persist deduplicated measurements before correlation. Reconcile late metadata and flow data without changing measured bytes. Bind intake to loopback and reject remote exporters. Classification uses explicit rules, exact connection evidence, unambiguous client DNS, then explicit unknown. Existing IP-only guesses must not continue contributing to primary-attributed bytes alongside the replacement. Bridge totals remain separate.
+
+Add timeline queries/UI only after measurement and attribution tests pass. Integrate service installation using a verified Linux artifact, create the dedicated sensor identity/group and root-owned socket, and stage/validate units before enabling. Do not add compilers to units or alter AdGuard resolver behavior.
+
+For reset, first inventory all schemas/retained state. Add preview and synthetic preservation tests. Then implement exclusive orchestration: record service/timer states, stop writers, make consistent protected recovery snapshots, set a single cutoff and clear explicit collected-history tables, verify retained data, and restore prior running services. Cross-database failure must recover snapshots before writers resume. Move DNS cutoff validation ahead of every cache/device update. Fresh-collection and internal-transfer checks are prerequisites to live reset.
+
+Final checkpoint: complete Rust/Linux and Python tests; review privilege and update failure paths; deploy the coherent replacement to the two reachable authorized appliances; validate sensor/flow/timeline/DNS health; only then explicitly reset their histories and verify preserved settings/names and fresh collection. The third unit is excluded.

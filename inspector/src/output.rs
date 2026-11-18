@@ -116,6 +116,52 @@ pub mod unix {
         use super::*;
         use std::os::unix::fs::PermissionsExt;
         #[test]
+        fn missing_consumer_drops_bounded_output_without_blocking_producer() {
+            use crate::{reassembly::Connection, tls::HelloMetadata};
+            let output = Output::spawn(PathBuf::from(
+                "/run/netspecter-nonexistent-test/metadata.sock",
+            ));
+            for _ in 0..10_000 {
+                output.send(Observation::new(
+                    Connection {
+                        source: "192.0.2.1".parse().unwrap(),
+                        destination: "203.0.113.1".parse().unwrap(),
+                        source_port: 12345,
+                        destination_port: 443,
+                    },
+                    HelloMetadata {
+                        hostname: Some("example.com".into()),
+                        ech_present: false,
+                    },
+                    1,
+                    2,
+                ));
+            }
+            assert!(output.dropped.load(Ordering::Relaxed) > 0);
+        }
+        #[test]
+        fn slow_consumer_hits_write_timeout() {
+            use std::os::unix::net::UnixListener;
+            let directory =
+                std::env::temp_dir().join(format!("netspecter-output-slow-{}", std::process::id()));
+            fs::create_dir(&directory).unwrap();
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+            let socket = directory.join("socket");
+            let listener = UnixListener::bind(&socket).unwrap();
+            fs::set_permissions(&socket, fs::Permissions::from_mode(0o660)).unwrap();
+            let owner = fs::metadata(&directory).unwrap().uid();
+            let mut stream = connect_checked(&socket, owner).unwrap();
+            let (peer, _) = listener.accept().unwrap();
+            let started = Instant::now();
+            assert!(stream.write_all(&vec![0; 4 * 1024 * 1024]).is_err());
+            assert!(started.elapsed() < Duration::from_secs(5));
+            drop(peer);
+            drop(stream);
+            drop(listener);
+            fs::remove_file(&socket).unwrap();
+            fs::remove_dir(&directory).unwrap();
+        }
+        #[test]
         fn rejects_regular_files_and_world_accessible_socket() {
             use std::os::unix::net::UnixListener;
             let directory =

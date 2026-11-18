@@ -28,6 +28,9 @@ def traffic_history_source_sql(alias="t"):
 
 
 def estimated_app_source_sql(alias="t"):
+    if cfg().get("passive_attribution_enabled", False):
+        from services.flow_attribution_service import measured_usage_source_sql
+        return measured_usage_source_sql(destination=False)
     ignore_ip_filter = _ignored_ip_filter("ip")
     return """
         SELECT ip, category, downloaded_mb, uploaded_mb, total_mb, day, hour AS ts, hour
@@ -43,6 +46,9 @@ def estimated_app_source_sql(alias="t"):
 
 
 def remote_traffic_source_sql(alias="r"):
+    if cfg().get("passive_attribution_enabled", False):
+        from services.flow_attribution_service import measured_usage_source_sql
+        return measured_usage_source_sql(destination=True)
     ignore_ip_filter = _ignored_ip_filter("ip")
     ignore_remote_filter = _ignored_ip_filter("remote_ip")
     return """

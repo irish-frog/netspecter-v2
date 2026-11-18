@@ -1,0 +1,16 @@
+[Unit]
+Description=NetSpecter private TLS metadata intake
+After=systemd-tmpfiles-setup.service
+
+[Socket]
+ListenStream=/run/netspecter-metadata/tls.sock
+SocketUser=root
+SocketGroup=netspecter-metadata
+SocketMode=0660
+DirectoryMode=0750
+Service=netspecter-collector.service
+Accept=no
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

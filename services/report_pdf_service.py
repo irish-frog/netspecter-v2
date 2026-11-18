@@ -74,7 +74,7 @@ def _draw_report(pdf, context):
     _small_kpi_cards(pdf, small_cards, MARGIN, y, PAGE_W - (MARGIN * 2))
 
     y -= 94
-    coverage = float(category_report.get("classification_coverage_pct") or 0)
+    coverage = None if category_report.get("coverage_unavailable") else float(category_report.get("classification_coverage_pct") or 0)
     app_w = 382
     side_w = PAGE_W - (MARGIN * 2) - app_w - 10
     _application_usage_card(pdf, category_rows, coverage, MARGIN, y - 210, app_w, 210)
@@ -657,7 +657,7 @@ def _ai_panel(pdf, ai_summary, x, y, w, h):
 def _application_usage_card(pdf, category_rows, coverage, x, y, w, h):
     _card(pdf, x, y, w, h)
     pdf.text(x + 12, y + h - 20, "APPLICATION USAGE", 9, bold=True, color=(0.04, 0.14, 0.30))
-    pdf.text(x + 12, y + h - 36, f"{coverage:.1f}% of total traffic is attributed to applications.", 7, color=(0.24, 0.34, 0.50))
+    pdf.text(x + 12, y + h - 36, ("Application coverage unavailable; check measured/bridge counters." if coverage is None else f"{coverage:.1f}% of total traffic is attributed to applications."), 7, color=(0.24, 0.34, 0.50))
     rows = [row for row in category_rows if _row_value(row, "category") != "Traffic Without Application Attribution"][:6]
     if not rows:
         pdf.text(x + 12, y + h - 60, "No classified application traffic found for this period.", 8, color=(0.36, 0.43, 0.54))

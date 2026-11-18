@@ -332,6 +332,9 @@ apply_runtime_permissions() {
   chmod +x "$INSTALL_DIR/scripts/daily-db-maintenance.sh"
   chmod +x "$INSTALL_DIR/scripts/run-ui-update.sh"
   chmod +x "$INSTALL_DIR/scripts/configure-ids-interfaces.sh"
+  if [ -f "$INSTALL_DIR/bin/netspecter-tls-inspector" ]; then
+    chmod 755 "$INSTALL_DIR/bin/netspecter-tls-inspector"
+  fi
   chmod +x /usr/local/bin/netspecter-vault
 }
 
@@ -523,11 +526,16 @@ cp systemd/netspecter-update.service "$SERVICE_DIR/netspecter-update.service"
 cp systemd/netspecter-update.path "$SERVICE_DIR/netspecter-update.path"
 cp systemd/netspecter-vault.service "$SERVICE_DIR/netspecter-vault.service"
 cp systemd/netspecter-vault.timer "$SERVICE_DIR/netspecter-vault.timer"
+# Prebuilt binary is verified before activation. No compiler or history reset on appliances.
+bash "$INSTALL_DIR/scripts/install-tls-inspector.sh"
 systemctl daemon-reload
+systemctl enable --now netspecter-tls-metadata.socket
 systemctl disable --now netspecter-nic-offload.service >/dev/null 2>&1 || true
 validate_anomaly_permissions "netspecter-collector.service"
 systemctl enable --now netspecter-web netspecter-https netspecter-collector netspecter-watchdog.timer netspecter-speedtest.timer netspecter-monitor.timer netspecter-db-maintenance.timer netspecter-update.path netspecter-vault.timer
 systemctl restart netspecter-web netspecter-https netspecter-collector
+systemctl enable --now netspecter-softflowd netspecter-tls-inspector
+systemctl restart netspecter-softflowd netspecter-tls-inspector
 systemctl restart netspecter-watchdog.timer
 systemctl restart netspecter-speedtest.timer
 systemctl restart netspecter-monitor.timer
@@ -544,7 +552,7 @@ echo "[10/10] Appliance setup complete. Suricata runtime is disabled."
 
 echo ""
 echo "=== NetSpecter installed ==="
-echo "Anomaly engine:        AVAILABLE (learning/detection runs inside netspecter-collector.service)"
+echo "Attribution:          PASSIVE TLS + CLIENT DNS + MEASURED FLOWS"
 echo "Anomaly database:      READ/WRITE OK"
 echo "Baseline state:        READ/WRITE OK"
 echo "Anomaly permissions:   VALID"

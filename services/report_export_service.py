@@ -84,11 +84,13 @@ def structured_report_text(context, mask_options=None):
     if category_report:
         lines.append("## Application Attribution Coverage")
         lines.append(
-            f"{category_report.get('classification_coverage_pct', 0)}% "
+            ("Unavailable " if category_report.get("coverage_unavailable") else f"{category_report.get('classification_coverage_pct', 0)}% ") +
             f"({float(category_report.get('classified_application_mb') or 0):.2f} MB of "
             f"{float(category_report.get('total_network_mb') or 0):.2f} MB attributed to applications)"
         )
         lines.append("")
+    if category_report.get("coverage_note"):
+        lines.append(str(category_report["coverage_note"]))
     flow_report = context.get("classified_flow_report") or {}
     if flow_report.get("total_bytes"):
         lines.append("## Classification Pipeline Coverage")

@@ -514,6 +514,14 @@ def unknown_traffic_trend(filters, start_time, end_time):
 
 
 def classified_flow_source_sql():
+    if cfg().get("passive_attribution_enabled", False):
+        return """SELECT datetime(last_ms/1000,'unixepoch','localtime') AS ts,
+            date(last_ms/1000,'unixepoch','localtime') AS day,local_ip,remote_ip,
+            CASE WHEN direction='upload' THEN destination_port ELSE source_port END AS port,
+            CAST(protocol AS TEXT) AS protocol,bytes,
+            CASE WHEN application IS NULL THEN 'Unknown' ELSE category END AS category,
+            COALESCE(application,'Unknown application') AS application,evidence AS evidence_source,confidence
+            FROM measured_internet_flows"""
     return """
         SELECT ts, day, local_ip, remote_ip, port, protocol, bytes,
                category, application, evidence_source, confidence

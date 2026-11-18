@@ -1,0 +1,29 @@
+name: History reset safety
+on:
+  push:
+    branches: [main, fix/preserve-names-history-reset]
+    paths: ['services/history_reset*.py', 'scripts/reset-collected-history.py', 'config/history-reset-schema-v1.json', 'tests/**', 'netspecter_db.py', 'live_packet_collector.py', '.github/workflows/history-reset.yml']
+  pull_request:
+    paths: ['services/history_reset*.py', 'scripts/reset-collected-history.py', 'config/history-reset-schema-v1.json', 'tests/**', 'netspecter_db.py', 'live_packet_collector.py', '.github/workflows/history-reset.yml']
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Test dependencies
+        run: |
+          python3 -m venv .ci-venv
+          .ci-venv/bin/python -m pip install -r requirements.txt pytest
+      - name: Regression and reset preservation/recovery tests
+        run: .ci-venv/bin/python -m pytest -q -p no:cacheprovider
+      - name: Validate reset guard syntax
+        run: |
+          mkdir -p /tmp/netspecter-unit-test
+          printf '[Unit]\nConditionPathExists=!/var/lib/netspecter/history-reset.in-progress\n[Service]\nType=oneshot\nExecStart=/bin/true\n' > /tmp/netspecter-unit-test/reset-guard-test.service
+          systemd-analyze verify /tmp/netspecter-unit-test/reset-guard-test.service
+

@@ -32,3 +32,27 @@ def internal_ipv4_networks(config):
 def is_internal_destination(destination, networks):
     address = ipaddress.ip_address(str(destination))
     return any(address in network for network in networks)
+
+
+# Destinations that cannot represent public internet usage. Keep bridge and flow scope aligned.
+NON_INTERNET_V4 = tuple(ipaddress.ip_network(value) for value in (
+    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+    "172.16.0.0/12", "192.0.0.0/29", "192.0.0.8/32", "192.0.0.11/32", "192.0.0.12/30",
+    "192.0.0.16/28", "192.0.0.32/27", "192.0.0.64/26", "192.0.0.128/25", "192.0.2.0/24",
+    "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/3",
+))
+
+
+def accounting_destinations(config):
+    return tuple(ipaddress.collapse_addresses((*internal_ipv4_networks(config), *NON_INTERNET_V4)))
+
+
+def accounting_clients(config):
+    hosts=set()
+    for network in internal_ipv4_networks(config):
+        # Large routed networks are exclusions, not millions of counter rules.
+        if network.num_addresses<=1024:
+            hosts.update(str(address) for address in network.hosts())
+    if len(hosts)>4096:
+        raise ValueError("Configured client networks exceed the 4096-address accounting limit")
+    return hosts

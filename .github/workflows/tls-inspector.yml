@@ -2,9 +2,9 @@ name: Passive TLS inspector
 on:
   push:
     branches: [main, feature/passive-attribution-rebuild]
-    paths: ['inspector/**', 'systemd/netspecter-tls-inspector.service', '.github/workflows/tls-inspector.yml']
+    paths: ['inspector/**', 'systemd/netspecter-tls-*', 'services/**', 'tests/**', '*.py', 'scripts/**', 'install.sh', '.github/workflows/tls-inspector.yml']
   pull_request:
-    paths: ['inspector/**', 'systemd/netspecter-tls-inspector.service', '.github/workflows/tls-inspector.yml']
+    paths: ['inspector/**', 'systemd/netspecter-tls-*', 'services/**', 'tests/**', '*.py', 'scripts/**', 'install.sh', '.github/workflows/tls-inspector.yml']
 permissions:
   contents: read
 jobs:
@@ -16,7 +16,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpcap-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpcap-dev softflowd nftables iproute2
       - name: Pinned Rust toolchain
         run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
       - name: Formatting, tests and lint
@@ -34,12 +34,23 @@ jobs:
           sha256sum netspecter-tls-inspector > netspecter-tls-inspector.sha256
       - name: Isolated capture and IPC smoke test
         run: sudo python3 inspector/tests/linux_capture.py inspector/target/release/netspecter-tls-inspector
+      - name: Python integration dependencies
+        run: |
+          python3 -m venv .ci-venv
+          .ci-venv/bin/python -m pip install -r requirements.txt pytest
+      - name: Package provenance
+        working-directory: inspector
+        run: python3 build_manifest.py create target/bundle --binary target/release/netspecter-tls-inspector --source-commit "$GITHUB_SHA"
+      - name: Python regression and local socket tests
+        run: .ci-venv/bin/python -m pytest -q -p no:cacheprovider
+      - name: Real bridge, systemd, TLS and measured-flow integration
+        run: sudo .ci-venv/bin/python inspector/tests/linux_pipeline.py
       - name: Linux build artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: tls-inspector-linux-x86_64
           path: |
-            inspector/target/release/netspecter-tls-inspector
-            inspector/target/release/netspecter-tls-inspector.sha256
+            inspector/target/bundle/netspecter-tls-inspector
+            inspector/target/bundle/build.json
           retention-days: 7
           if-no-files-found: error

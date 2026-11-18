@@ -150,6 +150,8 @@ def _ensure_columns(con, statements):
 
 
 def connect_db():
+    if (DATA_ROOT / "history-reset.in-progress").exists():
+        raise RuntimeError("History reset in progress; database writers are paused")
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB_PATH, timeout=30)
     con.execute("PRAGMA busy_timeout=30000")
@@ -716,6 +718,10 @@ def init_traffic_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_internet_quality_ts ON internet_quality(ts)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_internet_quality_status ON internet_quality(status)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_internet_quality_isp ON internet_quality(asn, isp_name, public_ip)")
+    from services.tls_metadata_service import ensure_metadata_schema
+    from services.flow_attribution_service import ensure_flow_schema
+    ensure_metadata_schema(con)
+    ensure_flow_schema(con)
     con.commit()
     con.close()
 
@@ -723,6 +729,8 @@ def init_traffic_db():
 def init_db(force=False):
     """Create the minimum database schema required by the web UI and collector."""
     global DB_INIT_DONE
+    if (DATA_ROOT / "history-reset.in-progress").exists():
+        raise RuntimeError("History reset in progress; database initialization is paused")
     if DB_INIT_DONE and DB_PATH.exists() and DNS_DB_PATH.exists() and TRAFFIC_DB_PATH.exists() and not force:
         return
 

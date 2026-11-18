@@ -45,7 +45,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("invalid capture interface or socket path".into());
     }
     let mut capture = pcap::Capture::from_device(interface.as_str())?
-        .promisc(false)
+        .promisc(true)
         .snaplen(65_535)
         .buffer_size(4 * 1024 * 1024)
         .timeout(250)

@@ -58,7 +58,10 @@ from netspecter_anomaly import prune_anomalies, run_anomaly_cycle
 from services.microsoft365_endpoints_service import cached_microsoft365_domain_mappings
 from services.application_classification_service import is_reverse_dns_lookup_domain
 from services.device_presence_service import mark_presence, mark_presence_many
-from services.traffic_scope_service import internal_ipv4_networks, is_internal_destination
+from services.traffic_scope_service import internal_ipv4_networks, is_internal_destination, accounting_destinations, accounting_clients
+from services.netflow_measurement_service import NetflowDecoder
+from services.flow_attribution_service import persist_measurements, reconcile_metadata, reconcile_pending, flow_table, internet_endpoints
+from services.tls_metadata_service import inherited_listener, serve_metadata, store_metadata, metadata_table
 from services.classification_resolver_service import (
     Flow,
     classify_flow,
@@ -347,7 +350,7 @@ sampled_visibility_targets = {}
 sampled_visibility_targets_lock = threading.Lock()
 netflow_promotion_totals = {}
 netflow_promotion_lock = threading.Lock()
-netflow_templates = {}
+netflow_decoder = NetflowDecoder()
 last_suricata_import = 0.0
 last_ids_default_reclassify = 0.0
 last_unknown_reclassify = 0.0
@@ -1008,6 +1011,8 @@ def refresh_unifi_clients(config):
 
 
 def connect_db(timeout=30, busy_timeout_ms=30000):
+    if (DATA_DIR / "history-reset.in-progress").exists():
+        raise RuntimeError("History reset in progress; collector database writes are paused")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     busy_timeout_ms = max(30000, int(busy_timeout_ms or 30000))
     timeout = max(30, float(timeout or 30))
@@ -1916,12 +1921,12 @@ def is_blocked_reason(reason):
 
     return 1 if any(marker in r for marker in blocked_markers) else 0
 
-def parse_adguard_time(value):
+def parse_adguard_time(value, strict=False):
     """Convert AdGuard timestamp into YYYY-MM-DD HH:MM:SS."""
     text = str(value or "")
 
     if not text:
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return "" if strict else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     try:
         # AdGuard sometimes has nanosecond precision; Python wants max 6 digits.
@@ -1944,7 +1949,7 @@ def parse_adguard_time(value):
         return dt.strftime("%Y-%m-%d %H:%M:%S")
 
     except Exception:
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return "" if strict else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def init_db():
@@ -2653,7 +2658,7 @@ def run_unknown_queue_reclassification(batch_size=200):
 def run_destination_identity_enrichment(config=None):
     """Classify high-volume visible Unknown destinations from local evidence."""
     c = config or cfg()
-    if not c.get("destination_identity_enrichment_enabled", True):
+    if c.get("passive_attribution_enabled", False) or not c.get("destination_identity_enrichment_enabled", True):
         return {"processed": 0, "classified": 0}
     if database_contention_remaining() > 0:
         return {"processed": 0, "classified": 0}
@@ -2837,6 +2842,12 @@ def prune_history(config=None):
             "DELETE FROM raw_flow_events WHERE day < date('now', 'localtime', ?)",
             (raw_flow_cutoff,),
         )
+        measured_cutoff_ms = int((time.time() - raw_flow_days * 86400) * 1000)
+        metadata_cutoff_ms = int((time.time() - 2 * 86400) * 1000)
+        measured_table = flow_table(con)
+        tls_table = metadata_table(con)
+        con.execute(f"DELETE FROM {measured_table} WHERE rowid IN (SELECT rowid FROM {measured_table} WHERE last_ms<? LIMIT 5000)", (measured_cutoff_ms,))
+        con.execute(f"DELETE FROM {tls_table} WHERE rowid IN (SELECT rowid FROM {tls_table} WHERE observed_ms<? LIMIT 5000)", (metadata_cutoff_ms,))
         from services.dns_rollup_service import prune_dns_history
         prune_dns_history(con, c)
         con.execute(
@@ -3155,6 +3166,8 @@ def monitored_app_ips(config=None):
 
 
 def remember_estimated_app_targets(config, client, domain, answers, observed_at="", blocked=False):
+    if config.get("passive_attribution_enabled", False):
+        return
     """Remember client/destination pairs for explicitly monitored app categories."""
     if blocked:
         return
@@ -3670,6 +3683,8 @@ def destination_sampler_loop():
 
 
 def sample_destination_pairs(config):
+    if config.get("passive_attribution_enabled", False):
+        return
     tcpdump_path = shutil.which("tcpdump")
     if not tcpdump_path:
         print("Destination sampler skipped: tcpdump unavailable")
@@ -3810,6 +3825,34 @@ def tcpdump_endpoint_ip(value):
     return ".".join(parts[:4])
 
 
+def tls_metadata_loop():
+    try:
+        import pwd
+        listener = inherited_listener()
+        if listener is None:
+            print("Passive TLS intake unavailable: no systemd socket descriptor")
+            return
+        sensor_uid = pwd.getpwnam("netspecter-tls").pw_uid
+    except (ImportError, KeyError, OSError, ValueError):
+        print("Passive TLS intake unavailable: socket or sensor identity validation failed")
+        return
+    def write_batch(rows):
+        scoped_config = {**cfg(), "_appliance_addresses": appliance_addresses()}
+        eligible = [row for row in rows if internet_endpoints({"src_ip": row.source_ip, "dst_ip": row.destination_ip}, scoped_config)]
+        if not eligible:
+            return
+        with timed_db_write("tls_connection_metadata") as con:
+            store_metadata(con, eligible)
+            reconcile_metadata(con, eligible, scoped_config)
+    stop = threading.Event()
+    while True:
+        try:
+            serve_metadata(listener, sensor_uid, write_batch, stop)
+        except Exception as error:
+            print(f"Passive TLS intake retry: {type(error).__name__}")
+            time.sleep(1)
+
+
 def netflow_receiver_loop():
     """Receive softflowd NetFlow and promote high-volume destinations."""
     sock = None
@@ -3825,7 +3868,8 @@ def netflow_receiver_loop():
                 bound = None
             time.sleep(30)
             continue
-        host = str(c.get("netflow_receiver_host") or "127.0.0.1")
+        # Never expose the measurement receiver outside this appliance.
+        host = "127.0.0.1"
         try:
             port = int(c.get("netflow_receiver_port", 2055) or 2055)
         except (TypeError, ValueError):
@@ -3842,13 +3886,18 @@ def netflow_receiver_loop():
                 bound = endpoint
                 print(f"NetFlow receiver listening on {host}:{port}")
             try:
-                packet, _addr = sock.recvfrom(65535)
-                pending.extend(parse_netflow_packet(packet))
+                packet, exporter = sock.recvfrom(65535)
+                decoded = netflow_decoder.decode(packet, exporter=exporter[0])
+                overflow = max(0, len(pending) + len(decoded) - 4096)
+                if overflow:
+                    print(f"NetFlow backpressure: dropping {overflow} old measurement(s)")
+                pending = (pending + decoded)[-4096:]
             except socket.timeout:
                 pass
             now = time.monotonic()
             if pending and (len(pending) >= 200 or now - last_flush >= 10):
-                write_netflow_batch(c, pending)
+                for offset in range(0, len(pending), 200):
+                    write_netflow_batch(c, pending[offset:offset + 200])
                 pending = []
                 last_flush = now
         except Exception as error:
@@ -3861,135 +3910,27 @@ def netflow_receiver_loop():
 
 
 def parse_netflow_packet(packet):
-    if len(packet or b"") < 2:
-        return []
-    version = struct.unpack("!H", packet[:2])[0]
-    if version == 5:
-        return parse_netflow_v5(packet)
-    if version == 9:
-        return parse_netflow_v9(packet)
-    return []
+    return netflow_decoder.decode(packet)
 
 
-def parse_netflow_v5(packet):
-    if len(packet) < 24:
-        return []
-    _version, count, _sys_uptime, unix_secs, _unix_nsecs, *_rest = struct.unpack("!HHIIIIBBH", packet[:24])
-    rows = []
-    offset = 24
-    for _idx in range(min(count, 30)):
-        record = packet[offset:offset + 48]
-        offset += 48
-        if len(record) < 48:
-            break
-        srcaddr, dstaddr, _nexthop, _input, _output, packets, octets, *_tail = struct.unpack("!IIIHHIIIIHHBBBBHHBBH", record)
-        protocol = record[38]
-        src_port = struct.unpack("!H", record[32:34])[0]
-        dst_port = struct.unpack("!H", record[34:36])[0]
-        rows.append({
-            "ts": datetime.fromtimestamp(unix_secs).strftime("%Y-%m-%d %H:%M:%S"),
-            "src_ip": int_to_ipv4(srcaddr),
-            "dst_ip": int_to_ipv4(dstaddr),
-            "src_port": src_port,
-            "dst_port": dst_port,
-            "protocol": protocol,
-            "bytes": int(octets or 0),
-            "packets": int(packets or 0),
-        })
-    return rows
+_local_address_cache = {"expires": 0, "values": ()}
 
 
-def parse_netflow_v9(packet):
-    if len(packet) < 20:
-        return []
-    _version, _count, _sys_uptime, unix_secs, _sequence, source_id = struct.unpack("!HHIIII", packet[:20])
-    rows = []
-    offset = 20
-    while offset + 4 <= len(packet):
-        flowset_id, length = struct.unpack("!HH", packet[offset:offset + 4])
-        if length < 4 or offset + length > len(packet):
-            break
-        payload = packet[offset + 4:offset + length]
-        if flowset_id == 0:
-            parse_netflow_v9_templates(source_id, payload)
-        elif flowset_id >= 256:
-            rows.extend(parse_netflow_v9_data(source_id, flowset_id, payload, unix_secs))
-        offset += length
-    return rows
-
-
-def parse_netflow_v9_templates(source_id, payload):
-    offset = 0
-    while offset + 4 <= len(payload):
-        template_id, field_count = struct.unpack("!HH", payload[offset:offset + 4])
-        offset += 4
-        fields = []
-        for _idx in range(field_count):
-            if offset + 4 > len(payload):
-                return
-            field_type, field_length = struct.unpack("!HH", payload[offset:offset + 4])
-            offset += 4
-            fields.append((field_type, field_length))
-        netflow_templates[(source_id, template_id)] = fields
-
-
-def parse_netflow_v9_data(source_id, template_id, payload, unix_secs):
-    fields = netflow_templates.get((source_id, template_id))
-    if not fields:
-        return []
-    record_len = sum(length for _field_type, length in fields)
-    if record_len <= 0:
-        return []
-    rows = []
-    offset = 0
-    while offset + record_len <= len(payload):
-        record = payload[offset:offset + record_len]
-        offset += record_len
-        values = {}
-        pos = 0
-        for field_type, field_length in fields:
-            values[field_type] = record[pos:pos + field_length]
-            pos += field_length
-        row = netflow_values_to_row(values, unix_secs)
-        if row:
-            rows.append(row)
-    return rows
-
-
-def netflow_values_to_row(values, unix_secs):
-    src = netflow_ipv4(values.get(8))
-    dst = netflow_ipv4(values.get(12))
-    if not src or not dst:
-        return None
-    return {
-        "ts": datetime.fromtimestamp(unix_secs).strftime("%Y-%m-%d %H:%M:%S"),
-        "src_ip": src,
-        "dst_ip": dst,
-        "src_port": netflow_int(values.get(7)),
-        "dst_port": netflow_int(values.get(11)),
-        "protocol": netflow_int(values.get(4)),
-        "bytes": netflow_int(values.get(1)),
-        "packets": netflow_int(values.get(2)),
-    }
-
-
-def netflow_ipv4(raw):
-    if not raw or len(raw) != 4:
-        return ""
-    return ".".join(str(part) for part in raw)
-
-
-def netflow_int(raw):
-    if not raw:
-        return 0
-    return int.from_bytes(raw, "big", signed=False)
-
-
-def int_to_ipv4(value):
-    return ".".join(str(part) for part in value.to_bytes(4, "big"))
+def appliance_addresses():
+    if time.monotonic() >= _local_address_cache["expires"]:
+        result = subprocess.run(["ip", "-j", "address", "show"], capture_output=True, text=True, timeout=3, check=True)
+        interfaces = json.loads(result.stdout)
+        values = tuple(str(ipaddress.ip_address(item["local"])) for interface in interfaces for item in interface.get("addr_info", []) if item.get("local"))
+        _local_address_cache.update(expires=time.monotonic()+60, values=values)
+    return _local_address_cache["values"]
 
 
 def write_netflow_batch(config, rows):
+    if config.get("passive_attribution_enabled", False):
+        with timed_db_write("measured_flow_attribution") as con:
+            scoped_config = {**config, "_appliance_addresses": appliance_addresses()}
+            persist_measurements(con, rows, scoped_config)
+        return
     try:
         network = lan_network(config)
     except ValueError:
@@ -4117,7 +4058,7 @@ def request_dns_classification_target_refresh(reason="dns_resolution", now_monot
 
 def nft_signature(config=None):
     c = config or cfg()
-    internal_networks = internal_ipv4_networks(c)
+    internal_networks = accounting_destinations(c) if c.get("passive_attribution_enabled", False) else internal_ipv4_networks(c)
     excluded_ips = ignored_ips(c)
 
     def counted_pair(client, destination):
@@ -4127,24 +4068,24 @@ def nft_signature(config=None):
         )
 
     banned_ips = []
-    for value in cfg_list(c.get("ids_banned_ips", [])):
+    for value in ([] if c.get("passive_attribution_enabled", False) else cfg_list(c.get("ids_banned_ips", []))):
         try:
             if isinstance(ipaddress.ip_address(value), ipaddress.IPv4Address):
                 banned_ips.append(value)
         except ValueError:
             continue
     app_targets = tuple(
-        target for target in active_estimated_app_targets() if counted_pair(target[1], target[2])
+        target for target in (() if c.get("passive_attribution_enabled", False) else active_estimated_app_targets()) if counted_pair(target[1], target[2])
     )
     classification_targets = tuple(
-        pair for pair in active_classification_targets(c) if counted_pair(*pair)
+        pair for pair in (() if c.get("passive_attribution_enabled", False) else active_classification_targets(c)) if counted_pair(*pair)
     )
     covered_pairs = {
         *((client, destination) for _category, client, destination in app_targets),
         *classification_targets,
     }
     visibility_targets = tuple(
-        pair for pair in active_visibility_targets(c, covered_pairs) if counted_pair(*pair)
+        pair for pair in (() if c.get("passive_attribution_enabled", False) else active_visibility_targets(c, covered_pairs)) if counted_pair(*pair)
     )
     return (
         str(c.get("packet_iface") or "br0"),
@@ -4168,7 +4109,7 @@ def install_nft_counters(config=None):
     network = ipaddress.ip_network(network_text)
     internal_match = internal_networks[0] if len(internal_networks) == 1 else "{ " + ", ".join(internal_networks) + " }"
     ignored_set = set(ignored)
-    hosts = [str(ip) for ip in network.hosts() if str(ip) not in ignored_set]
+    hosts = sorted(accounting_clients(c) - ignored_set) if c.get("passive_attribution_enabled", False) else [str(ip) for ip in network.hosts() if str(ip) not in ignored_set]
 
     subprocess.run(
         ["nft", "delete", "table", NFT_FAMILY, NFT_TABLE],
@@ -4200,6 +4141,9 @@ def install_nft_counters(config=None):
         f"  chain {NFT_CHAIN} {{",
         "    type filter hook forward priority filter; policy accept;",
     ])
+    if c.get("passive_attribution_enabled", False):
+        lines = [f"table {NFT_FAMILY} {NFT_TABLE} {{", f"  chain {NFT_CHAIN} {{",
+                 "    type filter hook forward priority filter; policy accept;"]
     for ip in banned_ips:
         lines.append(
             f'    ip saddr {ip} drop comment "netspecter:ids-ban:forward-source:{ip}"'
@@ -4350,6 +4294,8 @@ def read_arp_macs():
 
 
 def write_destination_delta(con, ip, destination, cur, day, now, default_category="Unknown", identity_ref=None):
+    if cfg().get("passive_attribution_enabled", False):
+        return
     interval_rx_mb = cur["rx"] / 1024 / 1024
     interval_tx_mb = cur["tx"] / 1024 / 1024
     interval_total_mb = interval_rx_mb + interval_tx_mb
@@ -4732,7 +4678,7 @@ def flush_loop():
                     traffic_step_timings["traffic_fact_write"] += time.monotonic() - step_started
 
                 step_started = time.monotonic()
-                for (category, ip), cur in estimated_deltas.items():
+                for (category, ip), cur in ({} if c.get("passive_attribution_enabled", False) else estimated_deltas).items():
                     interval_rx_mb = cur["rx"] / 1024 / 1024
                     interval_tx_mb = cur["tx"] / 1024 / 1024
                     interval_total_mb = interval_rx_mb + interval_tx_mb
@@ -4849,6 +4795,7 @@ def import_adguard_querylog():
         cutoff = str(state[0] or "") if state else ""
     except Exception as e:
         print(f"DNS history cutoff read failed: {e}")
+        return
 
     device_updates = {}
     dns_rows = []
@@ -4865,13 +4812,16 @@ def import_adguard_querylog():
         domain = str(question.get("name") or "").strip(".")
         client = str(item.get("client") or "").strip()
         reason = str(item.get("reason") or "")
-        ts = parse_adguard_time(item.get("time"))
+        ts = parse_adguard_time(item.get("time"), strict=True)
         day = ts[:10]
         blocked = is_blocked_reason(reason)
-        category = app_from_domain(domain)
 
-        if not domain or not client:
+        if not domain or not client or not ts:
             continue
+        # Apply reset cutoff before all learning, not only querylog insertion.
+        if cutoff and ts <= cutoff:
+            continue
+        category = app_from_domain(domain)
 
         ip = ip_identifier(client)
         name = adguard_name_for_ip(ip)
@@ -4889,8 +4839,6 @@ def import_adguard_querylog():
             dns_answer_rows(ip or client, domain, item.get("answer") or [], ts)
         )
 
-        if cutoff and ts <= cutoff:
-            continue
 
         # Fast duplicate protection for this running process.
         key = f"{ts}|{client}|{domain}"
@@ -4974,6 +4922,8 @@ def import_adguard_querylog():
                     """,
                     enriched_resolution_rows,
                 )
+            if c.get("passive_attribution_enabled", False):
+                reconcile_pending(con, c)
         imported_dns_keys.update(pending_dns_keys)
     except Exception as e:
         if "database is locked" in str(e).lower():
@@ -4982,7 +4932,7 @@ def import_adguard_querylog():
         print(f"DNS querylog batch insert failed: {e}")
         return
 
-    if dns_resolution_rows:
+    if dns_resolution_rows and not c.get("passive_attribution_enabled", False):
         request_dns_classification_target_refresh(f"adguard_rows={len(dns_resolution_rows)}")
 
     if dns_rows:
@@ -5191,6 +5141,10 @@ if __name__ == "__main__":
     # Thread 7: Bounded destination discovery when conntrack is unavailable.
     destination_sampler_thread = threading.Thread(target=destination_sampler_loop, daemon=True)
     destination_sampler_thread.start()
+
+    if startup_config.get("passive_attribution_enabled", False):
+        metadata_thread = threading.Thread(target=tls_metadata_loop, daemon=True)
+        metadata_thread.start()
 
     # Thread 8: softflowd/NetFlow destination visibility.
     netflow_thread = threading.Thread(target=netflow_receiver_loop, daemon=True)

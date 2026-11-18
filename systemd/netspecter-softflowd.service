@@ -1,0 +1,39 @@
+[Unit]
+Description=NetSpecter local measured-flow exporter
+After=network-online.target netspecter-collector.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=netspecter-flow
+Group=netspecter-flow
+EnvironmentFile=/etc/netspecter/tls-inspector.env
+RuntimeDirectory=netspecter-flow
+RuntimeDirectoryMode=0700
+ExecStart=/usr/sbin/softflowd -d -6 -i ${CAPTURE_INTERFACE} -n 127.0.0.1:${NETFLOW_PORT} -v 9 -T full -m 8192 -B 4194304 -C 256 -p /run/netspecter-flow/softflowd.pid -c /run/netspecter-flow/softflowd.ctl -t tcp=60 -t tcp.fin=5 -t tcp.rst=5 -t udp=15 -t general=30 -t maxlife=60 -t expint=5
+Restart=on-failure
+RestartSec=5
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_PACKET AF_UNIX AF_NETLINK AF_INET AF_INET6
+ReadWritePaths=/run/netspecter-flow
+UMask=0077
+MemoryMax=128M
+CPUQuota=50%
+TasksMax=8
+LimitNOFILE=64
+
+[Install]
+WantedBy=multi-user.target

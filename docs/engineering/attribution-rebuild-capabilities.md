@@ -28,3 +28,7 @@ Build order: tls-metadata -> flow-attribution -> device-timeline -> validated de
 - Rust/Cargo 1.100.0 are installed in the local development workspace; native compilation and execution passed. No compiler was installed on an appliance.
 - Native Windows tests and Linux cross-target checks do not replace Linux linking and runtime validation.
 - Existing SSH access is unprivileged; installation, package removal and live data resets require the operator's root shell.
+
+## Later operator instruction
+
+Prepare the same explicit cleanup/deployment procedure and source/binary package for the inaccessible third appliance. Do not contact or reset it now. When access returns, the operator supplies its exact hostname and runs preflight followed by explicit deployment/reset. Preserve settings, login credentials, licences, edited names and custom rules. Do not retain an extra history backup after verified reset success.

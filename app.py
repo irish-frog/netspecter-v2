@@ -4356,6 +4356,7 @@ def devices():
         fd_alert_metric = f'<div class="ns-mini-metric"><span>IDS Alerts</span><b>{fd_alert_count}</b></div>' if security_enabled else ''
         fd_dns_count = int(fd_dns[0]["total"] or 0) if fd_dns else 0
         fd_traffic_total = fmt_mb(fd_traffic[0]["total"] if fd_traffic else 0)
+        fd_timeline_link = f'<a id="deviceToolTimeline" href="/device/{quote(str(first_device["ip"]), safe="")}/timeline"><i class="fa-solid fa-list"></i> Application timeline</a>' if cfg().get("passive_attribution_enabled", False) else ''
         drawer = f"""
 <aside class="ns-polish-drawer ns-device-drawer" data-drawer-root>
   <div class="ns-drawer-head">
@@ -4369,6 +4370,7 @@ def devices():
         <a id="deviceToolPing" href="/ping/{fd_ip}"><i class="fa-solid fa-satellite-dish"></i> Ping device</a>
         <a id="deviceToolScan" href="/scan/{fd_ip}"><i class="fa-solid fa-magnifying-glass"></i> Port check</a>
         <button type="button" data-device-dns-lookup><i class="fa-solid fa-globe"></i> DNS lookup</button>
+        {fd_timeline_link}
         <button id="deviceToolHistory" type="button" data-drawer-tab-jump="history"><i class="fa-solid fa-clock-rotate-left"></i> Open device history</button>
         <button type="button" data-drawer-tab-jump="overview"><i class="fa-solid fa-tag"></i> Set device label</button>
         <button type="button" data-confirm-target="#confirmIgnoreDevice"><i class="fa-solid fa-eye-slash"></i> <span id="deviceIgnoreMenuText">{'Unignore device' if fd_ignored else 'Ignore device'}</span></button>
@@ -5348,6 +5350,56 @@ def quick_detect_services(ip):
 
     return found
 
+
+
+@app.route("/device/<ip>/timeline")
+def device_application_timeline(ip):
+    from services.device_timeline_service import device_timeline, coverage_summary, MIB
+    try:
+        ip = str(ipaddress.ip_address(ip))
+        days = max(1, min(30, int(request.args.get("days", "1"))))
+        page = max(0, min(1000, int(request.args.get("page", "0"))))
+    except (ValueError, TypeError):
+        return shell("Application timeline", "<div class='panel'>Invalid device or time range.</div>", "Devices"), 400
+    config = cfg()
+    if not config.get("passive_attribution_enabled", False):
+        return shell("Application timeline", "<div class='panel'>Passive application attribution is not enabled on this appliance yet.</div>", "Devices")
+    now_ms = int(time.time() * 1000)
+    start_ms = now_ms - days * 86400_000
+    con = connect_db()
+    try:
+        timeline = device_timeline(con, ip, start_ms, now_ms, page=page, config=config)
+        coverage = coverage_summary(con, start_ms, now_ms, ips=[ip], bridge_source_sql=traffic_history_source_sql())
+    finally:
+        con.close()
+    rows_html = ""
+    for row in timeline["rows"]:
+        observed = datetime.fromtimestamp(row["last_ms"] / 1000).strftime("%Y-%m-%d %H:%M:%S")
+        detail = row["confidence"] if row["application"] else str(row["reason"] or "no evidence").replace("_", " ")
+        rows_html += f"<tr><td>{h(observed)}</td><td>{h(row['local_ip'])}</td><td>{h(row['application'] or 'Unknown application')}</td><td>{h(row['hostname'] or '-')}</td><td>{h(fmt_mb(row['downloaded_bytes']/MIB))}</td><td>{h(fmt_mb(row['uploaded_bytes']/MIB))}</td><td>{h(row['evidence'].replace('_',' '))}</td><td>{h(detail)}</td></tr>"
+    if not rows_html:
+        rows_html = '<tr><td colspan="8">No measured internet connections in this period. Traffic must cross the monitored bridge.</td></tr>'
+    observations = ""
+    for row in timeline["observations"]:
+        observed = datetime.fromtimestamp(row["observed_ms"] / 1000).strftime("%Y-%m-%d %H:%M:%S")
+        observations += f"<tr><td>{h(observed)}</td><td>{h(row['hostname'] or 'Encrypted or unavailable hostname')}</td><td>Traffic measurement pending or unavailable</td></tr>"
+    metadata_panel = f'<div class="panel"><h2>Hostname observations</h2><p>These observations have no attributed byte count.</p><table><tr><th>Time</th><th>Hostname</th><th>Measurement</th></tr>{observations}</table></div>' if observations else ''
+    url = f"/device/{quote(ip, safe='')}/timeline?days={days}"
+    pagination = (f'<a class="btn" href="{h(url)}&amp;page={page-1}">Newer</a> ' if page else '')
+    if timeline["has_more"]:
+        pagination += f'<a class="btn" href="{h(url)}&amp;page={page+1}">Older</a>'
+    coverage_label = f"{coverage['coverage_pct']:.1f}%" if coverage['coverage_pct'] is not None else "Unavailable"
+    note = "Flow and bridge counters disagree; coverage cannot be calculated reliably." if coverage['counter_mismatch'] else "Coverage uses settled measurements, excluding the latest two minutes. Encrypted names and missed connections can remain unknown."
+    body = f"""
+{topbar('Application timeline')}
+<div class="panel"><h2>{h(timeline['name'])}</h2><p>{h(ip)} · Last {days} day(s). Device identity history can include previous addresses.</p>
+<p><a href="{h(devices_page_url(device=ip, tab='history'))}">Back to device</a> · <a href="/device/{quote(ip,safe='')}/timeline?days=1">1 day</a> · <a href="/device/{quote(ip,safe='')}/timeline?days=7">7 days</a> · <a href="/device/{quote(ip,safe='')}/timeline?days=30">30 days</a></p></div>
+<div class="panel"><h2>Selected address coverage</h2><p>Application attribution: {h(coverage_label)}</p><p>Bridge internet traffic: {h(fmt_mb(coverage['bridge_bytes']/MIB))} · Measured flows: {h(fmt_mb(coverage['measured_bytes']/MIB))} · Attributed flows: {h(fmt_mb(coverage['attributed_bytes']/MIB))}</p><p>{h(note)}</p></div>
+<div class="panel"><h2>Measured application activity</h2><p>Download and upload are independently measured. Hostnames identify connections; shared destination addresses do not prove an application.</p>
+<table><thead><tr><th>Time</th><th>Device address</th><th>Application</th><th>Hostname</th><th>Download</th><th>Upload</th><th>Evidence</th><th>Confidence / unknown reason</th></tr></thead><tbody>{rows_html}</tbody></table><p>{pagination}</p></div>
+{metadata_panel}
+"""
+    return shell("Application timeline", body, "Devices")
 
 
 @app.route("/device/<ip>")
@@ -9119,6 +9171,10 @@ def reporting_page():
     dns_blocked = int(overview.get("dns_blocked") or 0)
     blocked_pct = round((dns_blocked / dns_total * 100), 1) if dns_total else 0.0
     overlap_note = ""
+    coverage_display = "Unavailable" if category_report.get("coverage_unavailable") else f"{coverage_pct:.1f}%"
+    unknown_coverage_display = "Unavailable" if category_report.get("coverage_unavailable") else f"{max(0.0, 100.0-coverage_pct):.1f}%"
+    if category_report.get("coverage_note"):
+        overlap_note = " " + str(category_report["coverage_note"])
     if category_report.get("classification_is_overlapping"):
         overlap_note = f" Multi-tag/application matches are non-exclusive; match rate is {match_rate_pct:.1f}%."
     category_legend = ""
@@ -9183,7 +9239,7 @@ def reporting_page():
         preview_sections += f"""
 <section class="ns-report-a4-section">
   <h2>Application Categories</h2>
-  <p>Application categories use exclusive primary classification. Coverage: {coverage_pct:.1f}%. Traffic without application attribution: {max(0.0, 100.0 - coverage_pct):.1f}%.{h(overlap_note)}</p>
+  <p>Application categories use exclusive primary classification. Coverage: {h(coverage_display)}. Traffic without application attribution: {h(unknown_coverage_display)}.{h(overlap_note)}</p>
 </section>
 <section class="ns-report-a4-section">
   <h2>Top Applications by Data Used</h2>
@@ -9227,7 +9283,7 @@ def reporting_page():
           <div class="ns-report-donut"><div><b>{h(fmt_mb(overview.get("total_mb") or 0))}</b><span>Total Traffic</span></div></div>
           <div>{category_legend}</div>
         </div>
-        <div class="ns-report-coverage">Primary application attribution coverage: {coverage_pct:.1f}%. Traffic without application attribution: {max(0.0, 100.0 - coverage_pct):.1f}%.{h(overlap_note)}</div>
+        <div class="ns-report-coverage">Primary application attribution coverage: {h(coverage_display)}. Traffic without application attribution: {h(unknown_coverage_display)}.{h(overlap_note)}</div>
       </section>
 """
 
@@ -9535,6 +9591,10 @@ def reporting_page():
     else:
         coverage_label = "High coverage"
         coverage_class = "ns-coverage-good"
+    if category_report.get("coverage_unavailable"):
+        coverage_label, coverage_class = "Coverage unavailable", "ns-coverage-warning"
+    coverage_card_display = "Unavailable" if category_report.get("coverage_unavailable") else f"{coverage_pct:.1f}%"
+    coverage_detail = category_report.get("coverage_note") or f"{coverage_pct:.1f}% of total network traffic had application byte attribution."
     copy_report = h(structured_report_text(report_context))
     clear_m365_ready_script = ""
     if request.args.get("m365_ready") == "1":
@@ -9634,7 +9694,7 @@ def reporting_page():
     {stat_card("Active Devices", f'{overview["active_devices"]:,}', "Devices seen in period", "desktop", "blue")}
     {stat_card("Applications", f'{overview["applications"]:,}', "Detected categories", "grip", "blue")}
     {stat_card("Destinations", f'{overview["unique_destinations"]:,}', "Remote IPs contacted", "location-dot", "teal")}
-    {stat_card("Application Attribution", f'{coverage_pct}%', f'{fmt_mb(category_report["classified_application_mb"])} of {fmt_mb(category_report["total_network_mb"])} attributed', "chart-pie", "teal")}
+    {stat_card("Application Attribution", coverage_card_display, f'{fmt_mb(category_report["classified_application_mb"])} of {fmt_mb(category_report["total_network_mb"])} attributed', "chart-pie", "teal")}
   </div>
 
   <div class="ns-reporting-shell">
@@ -9658,7 +9718,7 @@ def reporting_page():
       <section class="ns-card ns-reporting-section ns-reporting-wide">
         <h2>Application Usage by Category</h2>
         <p class="ns-muted">Default view is based on total network traffic. The table also shows each category's share of application-attributed traffic.</p>
-        <div class="ns-coverage-note {coverage_class}"><strong>{h(coverage_label)}:</strong> {h(coverage_pct)}% of total network traffic had application byte attribution. Category percentages should be interpreted with this coverage in mind.</div>
+        <div class="ns-coverage-note {coverage_class}"><strong>{h(coverage_label)}:</strong> {h(coverage_detail)} Category percentages should be interpreted with this coverage in mind.</div>
         {ai_summary_panel}
         <div class="ns-category-panel">
           <div class="ns-category-donut"><span>{h(fmt_mb(overview["total_mb"]))}<small>Total Traffic</small></span></div>

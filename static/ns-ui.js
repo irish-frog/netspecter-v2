@@ -359,6 +359,7 @@
     });
 
     setHref("deviceToolPing", `/ping/${encodedIp}`);
+    setHref("deviceToolTimeline", `/device/${encodedIp}/timeline`);
     setHref("deviceToolScan", `/scan/${encodedIp}`);
     setHref("deviceDrawerTimeline", `/device/${encodedIp}`);
     setHref("deviceDrawerAlertsLink", `/ids-alerts?device=${encodedIp}`);
