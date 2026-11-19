@@ -288,3 +288,15 @@ def test_queued_page_has_manual_and_non_javascript_progress_fallback(web_client,
     assert 'Refresh' in response.headers
     assert 'Check preview or result' in response.get_data(as_text=True)
     assert 'c'*32 in response.headers['Refresh']
+
+
+
+def test_missing_job_stops_refresh_after_bounded_wait(web_client,monkeypatch):
+    import app as web
+    client,config,state,queued=web_client
+    monkeypatch.setattr(web.maintenance_service,'read_state',lambda **kwargs:{})
+    response=client.get('/settings?section=maintenance&result='+'c'*32+'&wait_started='+str(int(time.time())-31))
+    assert 'Refresh' not in response.headers
+    assert 'Automatic checking stopped' in response.get_data(as_text=True)
+    assert 'Back to maintenance' in response.get_data(as_text=True)
+    assert not queued

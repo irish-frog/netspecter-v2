@@ -11499,6 +11499,11 @@ def maintenance_settings():
     if not re.fullmatch('[0-9a-f]{32}',pending):pending=''
     waiting=bool(target_id and state.get('id')!=target_id) or state.get('status')=='running'
     if state.get('id')==current_state.get('id') and current_state.get('status')=='running':waiting=True
+    now=int(time.time())
+    try:wait_started=min(now,int(request.args.get('wait_started',now)))
+    except (TypeError,ValueError):wait_started=now
+    known_job=bool(state.get('id') and (not target_id or state.get('id')==target_id))
+    auto_wait=waiting and now-wait_started<(2700 if known_job else 30)
     notice=f'<p class="red">{h(error)}</p>' if error else ''
     if not available and not waiting:notice+='<p class="yellow">Maintenance worker unavailable. Update this appliance before requesting cleanup.</p>'
     if state.get('status')=='failed':notice+=f'<p class="red">Maintenance failed: {h(state.get("error") or "Check the maintenance service journal before retrying.")}</p>'
@@ -11532,7 +11537,7 @@ def maintenance_settings():
     disabled='disabled' if waiting or not available else ''
     progress='<p id="maintenance-progress" class="yellow">Maintenance is queued or running. The web page may briefly disconnect during a reset; it will reconnect automatically.</p>' if waiting else ''
     poll=''
-    if waiting:
+    if auto_wait:
         target=target_id or str(state.get('id') or '')
         poll="""<script>(function(){let attempts=0;const target="""+json.dumps(target)+""";async function check(){try{const r=await fetch('/api/maintenance/status?id='+encodeURIComponent(target),{cache:'no-store'});if(r.ok){const s=await r.json();if(s.id===target&&s.status!=='running'){location.replace('/settings?section=maintenance&result='+encodeURIComponent(target));return;}}}catch(e){}if(++attempts<900)setTimeout(check,3000);else document.getElementById('maintenance-progress').textContent='Still waiting. Refresh this page or check the maintenance service journal.';}setTimeout(check,2000);})();</script>"""
     selected_scope=(state.get('plan') or {}).get('scope','none')
@@ -11542,7 +11547,8 @@ def maintenance_settings():
     change_close='</details>' if preview_ready else ''
     if waiting:
         check_id=target_id or str(state.get('id') or '')
-        progress+=f'<p><a class="btn" href="/settings?section=maintenance&amp;result={h(check_id)}">Check preview or result</a></p>'
+        progress+=f'<p><a class="btn" href="/settings?section=maintenance&amp;result={h(check_id)}">Check preview or result</a> <a href="/settings?section=maintenance">Back to maintenance</a></p>'
+        if not auto_wait:progress+='<p class="yellow">Automatic checking stopped. Use Check preview or result to check again, or return to maintenance for a new preview.</p>'
     body=f"""{topbar('Settings')}{settings_menu('Settings')}
 <div class="settings-category-menu"><a href="/settings">Back to settings</a><a class="active" href="/settings?section=maintenance">Maintenance</a></div>
 <style>.maintenance-form{{max-width:680px;display:grid;gap:16px}}.maintenance-form label{{display:grid;gap:8px}}.maintenance-form .maintenance-check{{display:flex;align-items:center;gap:10px}}.maintenance-check input{{width:auto}}.maintenance-form button{{justify-self:start}}</style>
@@ -11554,7 +11560,7 @@ def maintenance_settings():
 <p class="sub">Purge removes only Suricata and suricata-update, without autoremove. All-history cleanup also clears NetSpecter DNS, quality, speed-test and activity history. Traffic-only cleanup keeps those histories. Native AdGuard query logs and existing backups are retained.</p>
 <button type="submit" {disabled}>Preview selected maintenance</button></form>{change_close}</div>{poll}"""
     response=Response(shell('Maintenance',body,'Settings'),status=code,mimetype='text/html');response.headers['Cache-Control']='no-store'
-    if waiting:response.headers['Refresh']='3; url=/settings?section=maintenance&result='+(target_id or str(state.get('id') or ''))
+    if auto_wait:response.headers['Refresh']='3; url=/settings?section=maintenance&result='+(target_id or str(state.get('id') or ''))+'&wait_started='+str(wait_started)
     return response
 
 
