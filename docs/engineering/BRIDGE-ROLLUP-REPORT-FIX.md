@@ -26,7 +26,16 @@ Tests cover successive partial-hour batches, exact cutoff, retry/idempotence, we
 
 A fresh-context adversarial review identified nullable counter/average and missing concurrency coverage. The operator requested Codex CLI second review. Its first pass also flagged explicit transaction boundaries, cutoff freezing and checkpoint outcome reporting. The accepted findings were corrected and reproduced in tests. The corrected public-code-only artifact passed the Codex CLI re-review with no material issues found. Previously lost history and retired legacy aggregation issues are documented limitations, not repaired by manufacturing data.
 
-Owner rollout is pending Linux CI and temporary maintenance access. DNS configuration/process, settings, login/licence, names and collected history must be retained. Do not contact or deploy to the held client. QUIC/service-context work remains a separate proposed scope; no QUIC inspection has been added by this report fix.
+Owner rollout completed after Linux validation; details follow. DNS configuration/process, settings, login/licence, names and collected history must be retained. Do not contact or deploy to the held client. QUIC/service-context work remains a separate proposed scope; no QUIC inspection has been added by this report fix.
 
 
 Linux validation also ran in an isolated temporary checkout on the owner as the unprivileged account, with the existing test isolation/configured temporary databases: all435tests passed on Debian13. No service/settings/production data was modified by that test run. Two hosted CI attempts (44521874765) failed before tests when Ubuntu mirrors returned503, not because of code failures. CI mirror lists now prefer signed HTTPS Ubuntu mirrors with bounded retries/IPv4; no signature checks are disabled and no appliance APT/DNS configuration is changed.
+
+
+## Owner verification — 19 November 2026, 14:43 SAST
+
+Installed runtime 5efeb0c4 on 192.168.99.6. Feature Linux CI 44524117121 passed all 435 Python and 23 Rust tests, real bridge/systemd/TLS/flow integration, binary provenance and offline bootstrap. The final SQLite-row compatibility correction passed its targeted regression including actual sqlite3.Row inputs, then the actual owner generated report returned HTTP 200 in 4.325 seconds: TikTok/Social Media, ChatGPT/AI Services, Instagram/Social Media, YouTube/Video Streaming and Windows Update/Software Updates. Security Events is absent and the separate measured-flow explanation is present. Follow-up CI is tracked separately; do not conflate its status with the prior complete run.
+
+The fixed historical window was unchanged before/after: bridge 19,177,715,446 bytes; measured 19,377,732,892; attributed 3,023,542,352. Primary bridge coverage correctly remains unavailable; separate measured-flow classification is 15.6%. Previously deleted history was not fabricated. Collection continued (199,027 measured flows and 14,039 TLS observations at verification); all six services were active and updater check under the service user returned current=latest=5efeb0c, available=false. AdGuard PID830/NRestarts0 remained unchanged; UDP loopback and TCP LAN DNS succeeded. No history reset. Settings/secrets retained. Client and third appliance untouched.
+
+Temporary fixed-action owner maintenance access remains enabled only until its existing 18:23 SAST expiry. QUIC inspection is not implemented by this release.
