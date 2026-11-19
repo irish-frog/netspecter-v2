@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Preview/apply catalogue improvements to stored exact-SNI unknowns; never reset history."""
 import argparse,json,os,pwd,socket,sqlite3,sys,time
+from functools import lru_cache
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from services.flow_attribution_service import reclassify_unrecognized_batch
+from services.flow_attribution_service import classify_domain,reclassify_unrecognized_batch
 
 
 def main():
@@ -25,10 +26,13 @@ def main():
     if not args.apply:con.execute('PRAGMA query_only=ON')
     result={'mode':'apply' if args.apply else 'preview','scanned':0,'candidates':0,'updated':0,'bytes':0,'applications':{},'measurements_deleted':0,'settings_changed':False}
     cursor=''
+    # One bounded cache per invocation: repeated hostnames need one classification,
+    # while subsequent runs still pick up edited operator rules and catalogue changes.
+    classify_once=lru_cache(maxsize=2048)(classify_domain)
     try:
         while result['scanned']<args.max_flows:
             with con:
-                batch=reclassify_unrecognized_batch(con,config,after_id=cursor,limit=min(200,args.max_flows-result['scanned']),apply=args.apply)
+                batch=reclassify_unrecognized_batch(con,config,after_id=cursor,limit=min(200,args.max_flows-result['scanned']),apply=args.apply,domain_classifier=classify_once)
             for key in ('scanned','candidates','updated','bytes'):result[key]+=batch[key]
             for app,size in batch['applications'].items():result['applications'][app]=result['applications'].get(app,0)+size
             cursor=batch['next_id']
