@@ -13,6 +13,15 @@ rm -f "$REQUEST_FILE"
 {
   printf '\n=== NetSpecter UI update started %s ===\n' "$(date)"
   printf 'running %s\n' "$(date +%s)" > "$STATE_FILE"
+  # Serialize with UI maintenance and manual resets. /run is root-owned.
+  [[ ! -L /run/netspecter-operation.lock ]] || { echo "Unsafe operation lock"; exit 1; }
+  exec 9>/run/netspecter-operation.lock
+  if ! flock -n 9; then
+    echo "Another maintenance operation is running; update refused."
+    printf 'failed %s\n' "$(date +%s)" > "$STATE_FILE"
+    exit 1
+  fi
+  [[ ! -e "$DATA_DIR/history-reset.in-progress" ]] || { echo "Recover the interrupted reset before updating."; printf 'failed %s\n' "$(date +%s)" > "$STATE_FILE"; exit 1; }
   cd "$INSTALL_DIR"
   # Appliance updates preserve installed optional services and their configurations.
   # Provisioning or upgrading DNS/monitoring components is an explicit install task.

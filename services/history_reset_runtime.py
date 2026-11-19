@@ -12,7 +12,7 @@ import sys
 import time
 from services.history_reset_service import prepare_reset,apply_prepared_reset,recover_reset,write_journal,preview_reset,_attributes
 
-WATCHERS=("netspecter-watchdog.timer","netspecter-monitor.timer","netspecter-speedtest.timer","netspecter-db-maintenance.timer","netspecter-vault.timer","netspecter-update.path","netspecter-tls-metadata.socket")
+WATCHERS=("netspecter-maintenance.path","netspecter-watchdog.timer","netspecter-monitor.timer","netspecter-speedtest.timer","netspecter-db-maintenance.timer","netspecter-vault.timer","netspecter-update.path","netspecter-tls-metadata.socket")
 WORKERS=("netspecter-watchdog.service","netspecter-monitor.service","netspecter-speedtest.service","netspecter-db-maintenance.service","netspecter-vault.service","netspecter-tls-inspector.service","netspecter-softflowd.service","netspecter-https.service","netspecter-web.service","netspecter-collector.service")
 MARKER="history-reset.in-progress"
 

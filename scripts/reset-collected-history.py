@@ -9,6 +9,7 @@ import stat
 import sys
 import uuid
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+from services.appliance_operation_service import operation_lock
 from services.history_reset_service import preview_reset,discard_recovery,recover_reset,write_journal
 from services.history_reset_runtime import coordinated_reset,SystemdController,DataDirectoryProtection,collector_lock,MARKER
 
@@ -67,6 +68,7 @@ def main():
     action.add_argument("--discard-completed",metavar="RECOVERY_DIRECTORY")
     parser.add_argument("--expected-hostname",help="Required for any action; must match this appliance exactly")
     parser.add_argument("--traffic-only",action="store_true",help="Clear traffic measurements/attribution only; retain DNS and other collected history")
+    parser.add_argument("--operation-lock-fd",type=int,help=argparse.SUPPRESS)
     args=parser.parse_args()
     scope="traffic" if args.traffic_only else "all"
     if not (args.apply or args.recover or args.discard_completed):
@@ -78,7 +80,7 @@ def main():
     secure_recovery_root()
     lock_path=Path("/run/lock/netspecter-history-reset.lock")
     descriptor=os.open(lock_path,os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600)
-    with os.fdopen(descriptor,"r+") as lock:
+    with os.fdopen(descriptor,"r+") as lock,operation_lock(inherited_fd=args.operation_lock_fd):
         if os.fstat(lock.fileno()).st_uid!=0:parser.error("Unsafe reset lock ownership")
         fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
         if args.recover:

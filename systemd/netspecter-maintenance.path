@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for confirmed NetSpecter maintenance requests
+
+[Path]
+PathExists=/var/lib/netspecter/maintenance.request
+Unit=netspecter-maintenance.service
+
+[Install]
+WantedBy=multi-user.target

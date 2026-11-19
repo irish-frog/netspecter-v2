@@ -1,0 +1,19 @@
+[Unit]
+Description=NetSpecter confirmed history reset and retired IDS maintenance
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/netspecter
+ExecStart=/usr/bin/python3 /opt/netspecter/scripts/run-ui-maintenance.py
+TimeoutStartSec=2400
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+Nice=10
+IOSchedulingClass=idle

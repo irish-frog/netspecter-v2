@@ -548,6 +548,11 @@ cp systemd/netspecter-db-maintenance.service "$SERVICE_DIR/netspecter-db-mainten
 cp systemd/netspecter-db-maintenance.timer "$SERVICE_DIR/netspecter-db-maintenance.timer"
 cp systemd/netspecter-update.service "$SERVICE_DIR/netspecter-update.service"
 cp systemd/netspecter-update.path "$SERVICE_DIR/netspecter-update.path"
+# Worker state is outside the web-writable data tree; requests contain fixed actions only.
+[[ ! -L /var/lib/netspecter-maintenance ]] || { echo "Refusing linked maintenance state directory"; exit 1; }
+install -d -o root -g "$RUNTIME_GROUP" -m 750 /var/lib/netspecter-maintenance
+cp systemd/netspecter-maintenance.service "$SERVICE_DIR/netspecter-maintenance.service"
+cp systemd/netspecter-maintenance.path "$SERVICE_DIR/netspecter-maintenance.path"
 cp systemd/netspecter-vault.service "$SERVICE_DIR/netspecter-vault.service"
 cp systemd/netspecter-vault.timer "$SERVICE_DIR/netspecter-vault.timer"
 # Prebuilt binary is verified before activation. No compiler or history reset on appliances.
@@ -556,7 +561,7 @@ systemctl daemon-reload
 systemctl enable --now netspecter-tls-metadata.socket
 systemctl disable --now netspecter-nic-offload.service >/dev/null 2>&1 || true
 validate_anomaly_permissions "netspecter-collector.service"
-systemctl enable --now netspecter-web netspecter-https netspecter-collector netspecter-watchdog.timer netspecter-speedtest.timer netspecter-monitor.timer netspecter-db-maintenance.timer netspecter-update.path netspecter-vault.timer
+systemctl enable --now netspecter-web netspecter-https netspecter-collector netspecter-watchdog.timer netspecter-speedtest.timer netspecter-monitor.timer netspecter-db-maintenance.timer netspecter-update.path netspecter-maintenance.path netspecter-vault.timer
 systemctl restart netspecter-web netspecter-https netspecter-collector
 systemctl enable --now netspecter-softflowd netspecter-tls-inspector
 systemctl restart netspecter-softflowd netspecter-tls-inspector

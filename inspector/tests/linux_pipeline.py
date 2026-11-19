@@ -10,10 +10,11 @@ SOURCE=Path(__file__).resolve().parents[2]
 DEST=Path('/opt/netspecter')
 CONFIG=Path('/etc/netspecter')
 DATA=Path('/var/lib/netspecter')
+MAINTENANCE=Path('/var/lib/netspecter-maintenance')
 BRIDGE='nsbrtest'
 CLIENT='netspecter-ci-client'
 SERVER='netspecter-ci-server'
-UNITS=['netspecter-tls-inspector','netspecter-softflowd','netspecter-collector','netspecter-tls-metadata.socket']
+UNITS=['netspecter-maintenance.path','netspecter-maintenance.service','netspecter-tls-inspector','netspecter-softflowd','netspecter-collector','netspecter-tls-metadata.socket']
 
 
 def run(*args,**kwargs):return subprocess.run(args,check=True,text=True,**kwargs)
@@ -42,7 +43,7 @@ def wait_for(predicate,seconds=60):
 def main():
     if sys.platform!='linux' or os.geteuid()!=0 or os.environ.get('GITHUB_ACTIONS')!='true':
         raise SystemExit('Only run as root inside a disposable GitHub-hosted CI runner.')
-    for path in [DEST,CONFIG,DATA]:
+    for path in [DEST,CONFIG,DATA,MAINTENANCE]:
         if path.exists() or path.is_symlink():raise SystemExit(f'Refusing preexisting fixture target: {path}')
     created=[];server=None;trace=None;exports=[]
     def trace_exports():
@@ -55,7 +56,7 @@ def main():
             if len(packet)<udp+8 or struct.unpack_from('!H',packet,udp+2)[0]!=2055:continue
             if len(exports)<32:exports.append(packet[udp+8:])
     try:
-        for path in [DEST,CONFIG,DATA]:path.mkdir(mode=0o755,parents=True);created.append(path)
+        for path in [DEST,CONFIG,DATA,MAINTENANCE]:path.mkdir(mode=0o755,parents=True);created.append(path)
         for path in SOURCE.glob('*.py'):shutil.copyfile(path,DEST/path.name)
         for name in ['services','config','scripts','systemd','inspector']:
             shutil.copytree(SOURCE/name,DEST/name,ignore=shutil.ignore_patterns('target','prebuilt','__pycache__'))
@@ -189,6 +190,42 @@ with socket.create_connection((sys.argv[1],443),timeout=10) as s:
         assert query('SELECT count(*) FROM measured_internet_flows')[0][0]==0
         run('ip','netns','exec',CLIENT,sys.executable,'-c',client_code,'8.8.8.8','www.youtube.com',capture_output=True)
         wait_for(lambda:query("SELECT count(*) FROM measured_internet_flows WHERE application='YouTube'")[0][0]>0)
+        # Exercise the actual root worker/path, including inherited operation locks.
+        run('chown','root:netspecter',str(MAINTENANCE));run('chmod','750',str(MAINTENANCE))
+        for name in ('netspecter-maintenance.service','netspecter-maintenance.path'):
+            run('install','-m','644',str(DEST/'systemd'/name),'/etc/systemd/system/'+name)
+        run('systemctl','daemon-reload');run('systemctl','start','netspecter-maintenance.path')
+        def request_maintenance(kind,**options):
+            import uuid
+            payload={'id':uuid.uuid4().hex,'kind':kind,'hostname':socket.gethostname(),**options}
+            code="import sys,json;sys.path.insert(0,'/opt/netspecter');from services.appliance_maintenance_service import queue_request;queue_request(json.loads(sys.argv[1]))"
+            run('runuser','-u','netspecter','--',str(DEST/'venv/bin/python'),'-c',code,json.dumps(payload))
+            def finished():
+                try:state=json.loads((MAINTENANCE/'state.json').read_text())
+                except (FileNotFoundError,ValueError):return None
+                return state if state.get('id')==payload['id'] and state.get('status')!='running' else None
+            return wait_for(finished,seconds=120)
+        plan=request_maintenance('preview',scope='traffic',purge_ids=False)
+        assert plan['status']=='ready'
+        sys.path.insert(0,str(DEST))
+        from services.appliance_operation_service import operation_lock
+        with operation_lock():
+            blocked=request_maintenance('apply',preview_id=plan['id'])
+        assert blocked['status']=='failed' and 'running' in blocked['error']
+        assert query('SELECT COUNT(*) FROM measured_internet_flows')[0][0]>0,'Contended maintenance cleared traffic'
+        plan=request_maintenance('preview',scope='traffic',purge_ids=False)
+        assert plan['status']=='ready'
+        completed=request_maintenance('apply',preview_id=plan['id'])
+        assert completed['status']=='complete',completed
+        assert completed['result']['reset_scope']=='traffic' and completed['result']['dns_verified']
+        assert (CONFIG/'config.json').read_bytes()==configuration_before
+        with closing(sqlite3.connect(DATA/'netspecter.db')) as con:
+            assert con.execute("SELECT name FROM device_overrides WHERE ip='192.168.77.5'").fetchone()[0]=='CI Edited Workstation'
+        assert not (DATA/'history-reset.in-progress').exists()
+        assert run('systemctl','is-active','netspecter-maintenance.path',capture_output=True).stdout.strip()=='active'
+        run('ip','netns','exec',CLIENT,sys.executable,'-c',client_code,'8.8.8.8','www.youtube.com',capture_output=True)
+        wait_for(lambda:query("SELECT count(*) FROM measured_internet_flows WHERE application='YouTube'")[0][0]>0)
+        print('PASS: actual systemd maintenance preview/confirmation worker, contended-lock refusal, inherited-lock traffic reset, path restart and fresh collection.')
         print('PASS: real writer-stop, database rebuild, preserved edited name/settings, discarded rollback copy, and fresh collection after restart.')
         print('PASS: dedicated systemd identities, root-owned socket activation, bridge SNI capture, real softflowd exports, exact separate apps on one IP, unchanged TCP payload, and zero internal internet attribution.')
     except BaseException:
@@ -207,7 +244,7 @@ with socket.create_connection((sys.argv[1],443),timeout=10) as s:
         subprocess.run(['ip','link','delete',BRIDGE],check=False)
         # Only fixture directories which were absent before this disposable CI test.
         for path in reversed(created):
-            if path in [DEST,CONFIG,DATA] and not path.is_symlink():shutil.rmtree(path)
+            if path in [DEST,CONFIG,DATA,MAINTENANCE] and not path.is_symlink():shutil.rmtree(path)
 
 
 if __name__=='__main__':main()
