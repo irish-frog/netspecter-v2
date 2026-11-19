@@ -155,6 +155,7 @@ def build_reporting_context_from_request(args):
     end_value = _expand_report_end(args.get("end"))
     period = str(args.get("period") or "30d").strip().lower()
     selected_sections = {str(value or "").strip() for value in args.getlist("section") if str(value or "").strip()}
+    if not security_features_enabled(cfg()):selected_sections.discard("security")
     if not selected_sections:
         selected_sections = {"traffic", "devices", "applications"}
     if period in {"7d", "7"} and not start_value and not end_value:

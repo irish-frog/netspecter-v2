@@ -12,19 +12,8 @@ MAX_LIMIT = 500
 
 
 def traffic_history_source_sql(alias="t"):
-    ignore_ip_filter = _ignored_ip_filter("ip")
-    return """
-        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, avg_live_bps AS live_bps,
-               day, hour AS ts, hour
-        FROM traffic_hourly_rollups
-        WHERE {ignore_ip_filter}
-        UNION ALL
-        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts,
-               substr(ts, 1, 13) || ':00' AS hour
-        FROM traffic_intervals
-        WHERE {ignore_ip_filter}
-          AND ts > (SELECT COALESCE(MAX(hour), '0000-00-00 00:00') FROM traffic_hourly_rollups)
-    """.format(ignore_ip_filter=ignore_ip_filter)
+    from services.traffic_rollup_service import bridge_history_source_sql
+    return bridge_history_source_sql(_ignored_ip_filter("ip"))
 
 
 def estimated_app_source_sql(alias="t"):
@@ -431,6 +420,20 @@ def get_dns_summary(filters, start_time, end_time, limit=DEFAULT_LIMIT):
 
 
 def get_application_summary(filters, start_time, end_time, limit=DEFAULT_LIMIT):
+    if cfg().get("passive_attribution_enabled",False):
+        from services.device_timeline_service import bounded_window
+        start,end=bounded_window(int(datetime.fromisoformat(str(start_time)).timestamp()*1000),int(datetime.fromisoformat(str(end_time)).timestamp()*1000),settle=True)
+        where,params=_filter_clause(filters,{"device_ids":"local_ip"})
+        application=str((filters or {}).get("application") or "").strip()
+        if application:
+            where+=" AND (application=? OR category=?)";params=[*params,application,application]
+        return _timed_query(f"""SELECT application,application AS category,category AS primary_category,
+            SUM(CASE WHEN direction='download' THEN bytes ELSE 0 END)/1048576.0 AS downloaded_mb,
+            SUM(CASE WHEN direction='upload' THEN bytes ELSE 0 END)/1048576.0 AS uploaded_mb,
+            SUM(bytes)/1048576.0 AS total_mb,COUNT(DISTINCT local_ip) AS devices
+            FROM measured_internet_flows WHERE first_ms>=? AND last_ms<? AND application IS NOT NULL {where}
+            GROUP BY application,category ORDER BY total_mb DESC LIMIT ?""",
+            (start,end,*params,_limit(limit)),"application_summary")
     where, params = _filter_clause(filters, {"device_ids": "ip", "application": "category"})
     return _timed_query(
         f"""

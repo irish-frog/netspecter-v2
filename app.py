@@ -8789,6 +8789,12 @@ def api_microsoft365_endpoints_refresh():
         return jsonify({"ok": False, "error": "Microsoft 365 endpoint refresh failed."}), 502
 
 
+def report_security_checkbox(checked=False):
+    if not security_features_enabled(cfg()):return ""
+    selected=" checked" if checked else ""
+    return f'<label><input form="reportSetupForm" type="checkbox" name="section" value="security"{selected}> Security Events</label>'
+
+
 @app.route("/reporting")
 def reporting_page():
     c = cfg()
@@ -8874,7 +8880,7 @@ def reporting_page():
           <label><input form="reportSetupForm" type="checkbox" name="section" value="devices" checked> Devices</label>
           <label><input form="reportSetupForm" type="checkbox" name="section" value="applications" checked> Applications</label>
           <label><input form="reportSetupForm" type="checkbox" name="section" value="blocked_dns"> Blocked DNS</label>
-          <label><input form="reportSetupForm" type="checkbox" name="section" value="security"> Security Events</label>
+          {report_security_checkbox()}
         </div>
       </section>
     </aside>
@@ -8971,6 +8977,7 @@ def reporting_page():
     default_report_sections = ["traffic", "devices", "applications"]
     selected_sections = request.args.getlist("section") or default_report_sections
     selected_sections = {str(value) for value in selected_sections}
+    if not security_features_enabled(cfg()):selected_sections.discard("security")
     query_suffix = request.query_string.decode("utf-8")
     if not query_suffix:
         query_suffix = "period=30d&report_type=management&" + "&".join(f"section={section}" for section in default_report_sections)
@@ -9021,11 +9028,12 @@ def reporting_page():
         rows_html = ""
         for row in (app_rows or [])[:5]:
             traffic = float(row["total_mb"] or 0)
-            app_name = str(row["category"] or "Other")
+            app_name = str(row.get("application") or row["category"] or "Other")
+            app_category = str(row.get("primary_category") or row["category"] or "Other")
             rows_html += f"""
 <tr>
   <td>{h(app_name)}</td>
-  <td>{h(app_name)}</td>
+  <td>{h(app_category)}</td>
   <td>{h(fmt_mb(traffic))}</td>
   <td>{int(row["devices"] or 0):,}</td>
 </tr>
@@ -9261,6 +9269,7 @@ def reporting_page():
           <div class="ns-report-donut"><div><b>{h(fmt_mb(overview.get("total_mb") or 0))}</b><span>Total Traffic</span></div></div>
           <div>{category_legend}</div>
         </div>
+        <p>Category percentages show each category's share of attributed application bytes.</p>
         <div class="ns-report-coverage">Primary application attribution coverage: {h(coverage_display)}. Traffic without application attribution: {h(unknown_coverage_display)}.{h(overlap_note)}</div>
       </section>
 """
@@ -9380,7 +9389,7 @@ def reporting_page():
           <label><input form="reportSetupForm" type="checkbox" name="section" value="devices"{report_content_checked("devices")}> Devices</label>
           <label><input form="reportSetupForm" type="checkbox" name="section" value="applications"{report_content_checked("applications")}> Applications</label>
           <label><input form="reportSetupForm" type="checkbox" name="section" value="blocked_dns"{report_content_checked("blocked_dns")}> Blocked DNS</label>
-          <label><input form="reportSetupForm" type="checkbox" name="section" value="security"{report_content_checked("security")}> Security Events</label>
+          {report_security_checkbox("security" in selected_sections)}
         </div>
       </section>
     </aside>
@@ -9796,6 +9805,7 @@ def attachment_headers(filename):
 
 def reporting_xlsx_response(context, sections=None):
     selected = set(sections or ["traffic", "devices", "applications"])
+    if not security_features_enabled(cfg()):selected.discard("security")
     overview = context["overview"]
     total_mb = float(overview.get("total_mb") or 0)
     sheets = []
@@ -9889,7 +9899,7 @@ def reporting_xlsx_response(context, sections=None):
         app_rows = [["Application", "Category", "Data Used", "Devices"]]
         for row in (context.get("app_rows") or [])[:5]:
             name = row["category"] or "Other"
-            app_rows.append([name, name, fmt_mb(row["total_mb"] or 0), int(row["devices"] or 0)])
+            app_rows.append([row.get("application") or name, row.get("primary_category") or name, fmt_mb(row["total_mb"] or 0), int(row["devices"] or 0)])
         sheets.append(("Top Apps", app_rows))
     if "blocked_dns" in selected:
         rows = [["Domain", "Category", "Blocked Requests", "Clients"]]

@@ -36,19 +36,8 @@ DEVICE_IDENTITY_HINTS = [
 
 
 def traffic_history_source_sql():
-    ignore_ip_filter = _ignored_ip_filter("ip")
-    return """
-        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, avg_live_bps AS live_bps,
-               day, hour AS ts, hour
-        FROM traffic_hourly_rollups
-        WHERE {ignore_ip_filter}
-        UNION ALL
-        SELECT ip, name, mac, downloaded_mb, uploaded_mb, total_mb, live_bps, day, ts,
-               substr(ts, 1, 13) || ':00' AS hour
-        FROM traffic_intervals
-        WHERE {ignore_ip_filter}
-          AND ts > (SELECT COALESCE(MAX(hour), '0000-00-00 00:00') FROM traffic_hourly_rollups)
-    """.format(ignore_ip_filter=ignore_ip_filter)
+    from services.traffic_rollup_service import bridge_history_source_sql
+    return bridge_history_source_sql(_ignored_ip_filter("ip"))
 
 
 def remote_traffic_source_sql():
@@ -461,14 +450,15 @@ def unclassified_device_summary(start_time, end_time, filters=None, limit=8):
         (start_time, end_time, *params),
     )
 
-    mapped_by_ip = {row["ip"]: row for row in site_application_mappings()}
+    passive=bool(cfg().get("passive_attribution_enabled",False))
+    mapped_by_ip = {} if passive else {row["ip"]: row for row in site_application_mappings()}
     output = []
     for row in rows:
         total_mb = float(row["total_mb"] or 0)
         classified_mb = float(row["classified_mb"] or 0)
         if row["ip"] in mapped_by_ip:
             classified_mb = max(classified_mb, total_mb)
-        elif device_identity_hint(row["name"], row["device_type"]):
+        elif not passive and device_identity_hint(row["name"], row["device_type"]):
             classified_mb = max(classified_mb, total_mb)
         unclassified_mb = max(0.0, total_mb - classified_mb)
         if unclassified_mb <= 0.01:

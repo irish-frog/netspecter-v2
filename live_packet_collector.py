@@ -2900,35 +2900,12 @@ def rollup_and_prune_raw_traffic(config=None):
     try:
         con = connect_db()
         con.execute("PRAGMA busy_timeout=1000")
-        con.execute(
-            """
-            INSERT INTO traffic_hourly_rollups
-                (hour, day, ip, name, mac, downloaded_mb, uploaded_mb, total_mb, avg_live_bps, samples)
-            SELECT
-                substr(ts, 1, 13) || ':00' AS hour,
-                day,
-                ip,
-                COALESCE(MAX(NULLIF(name, '')), ip) AS name,
-                COALESCE(MAX(NULLIF(mac, '')), '') AS mac,
-                SUM(downloaded_mb),
-                SUM(uploaded_mb),
-                SUM(total_mb),
-                AVG(live_bps),
-                COUNT(*)
-            FROM traffic_intervals
-            WHERE ts < datetime('now', 'localtime', ?)
-            GROUP BY hour, day, ip
-            ON CONFLICT(hour, ip) DO UPDATE SET
-                name=excluded.name,
-                mac=excluded.mac,
-                downloaded_mb=excluded.downloaded_mb,
-                uploaded_mb=excluded.uploaded_mb,
-                total_mb=excluded.total_mb,
-                avg_live_bps=excluded.avg_live_bps,
-                samples=excluded.samples
-            """,
-            (raw_cutoff,),
-        )
+        # Freeze one cutoff for selection/deletion; SQLite 'now' can advance
+        # between statements and otherwise delete rows never added to the rollup.
+        raw_before=con.execute("SELECT datetime('now','localtime',?)",(raw_cutoff,)).fetchone()[0]
+        retention_before=con.execute("SELECT date('now','localtime',?)",(rollup_cutoff,)).fetchone()[0]
+        from services.traffic_rollup_service import compact_bridge_intervals
+        compact_bridge_intervals(con,raw_before)
         con.execute(
             """
             INSERT INTO estimated_app_hourly_rollups
@@ -2943,7 +2920,7 @@ def rollup_and_prune_raw_traffic(config=None):
                 SUM(total_mb),
                 COUNT(*)
             FROM estimated_app_traffic
-            WHERE ts < datetime('now', 'localtime', ?)
+            WHERE ts < ?
             GROUP BY hour, day, ip, category
             ON CONFLICT(hour, ip, category) DO UPDATE SET
                 downloaded_mb=excluded.downloaded_mb,
@@ -2951,7 +2928,7 @@ def rollup_and_prune_raw_traffic(config=None):
                 total_mb=excluded.total_mb,
                 samples=excluded.samples
             """,
-            (raw_cutoff,),
+            (raw_before,),
         )
         con.execute(
             """
@@ -2968,7 +2945,7 @@ def rollup_and_prune_raw_traffic(config=None):
                 SUM(total_mb),
                 COUNT(*)
             FROM remote_traffic_intervals
-            WHERE ts < datetime('now', 'localtime', ?)
+            WHERE ts < ?
             GROUP BY hour, day, ip, remote_ip, category
             ON CONFLICT(hour, ip, remote_ip, category) DO UPDATE SET
                 downloaded_mb=excluded.downloaded_mb,
@@ -2976,7 +2953,7 @@ def rollup_and_prune_raw_traffic(config=None):
                 total_mb=excluded.total_mb,
                 samples=excluded.samples
             """,
-            (raw_cutoff,),
+            (raw_before,),
         )
         con.execute(
             """
@@ -3008,7 +2985,7 @@ def rollup_and_prune_raw_traffic(config=None):
                 MIN(ts) AS first_seen,
                 MAX(ts) AS last_seen
             FROM classified_flow_facts
-            WHERE ts < datetime('now', 'localtime', ?)
+            WHERE ts < ?
             GROUP BY bucket, day, source_ip, destination_ip, domain, sni, protocol, port, primary_app, primary_category, confidence
             ON CONFLICT(bucket, source_ip, destination_ip, domain, sni, protocol, port, primary_app) DO UPDATE SET
                 primary_category=excluded.primary_category,
@@ -3020,18 +2997,20 @@ def rollup_and_prune_raw_traffic(config=None):
                 first_seen=excluded.first_seen,
                 last_seen=excluded.last_seen
             """,
-            (raw_cutoff,),
+            (raw_before,),
         )
-        con.execute("DELETE FROM traffic_intervals WHERE ts < datetime('now', 'localtime', ?)", (raw_cutoff,))
-        con.execute("DELETE FROM traffic_samples WHERE ts < datetime('now', 'localtime', ?)", (raw_cutoff,))
-        con.execute("DELETE FROM classified_flow_facts WHERE ts < datetime('now', 'localtime', ?)", (raw_cutoff,))
-        con.execute("DELETE FROM traffic_hourly_rollups WHERE day < date('now', 'localtime', ?)", (rollup_cutoff,))
-        con.execute("DELETE FROM estimated_app_hourly_rollups WHERE day < date('now', 'localtime', ?)", (rollup_cutoff,))
-        con.execute("DELETE FROM remote_traffic_hourly_rollups WHERE day < date('now', 'localtime', ?)", (rollup_cutoff,))
-        con.execute("DELETE FROM classified_flow_rollups WHERE day < date('now', 'localtime', ?)", (rollup_cutoff,))
-        con.execute("DELETE FROM classified_flow_facts WHERE day < date('now', 'localtime', ?)", (rollup_cutoff,))
+        con.execute("DELETE FROM traffic_samples WHERE ts < ?", (raw_before,))
+        con.execute("DELETE FROM classified_flow_facts WHERE ts < ?", (raw_before,))
+        con.execute("DELETE FROM traffic_hourly_rollups WHERE day < ?", (retention_before,))
+        con.execute("DELETE FROM estimated_app_hourly_rollups WHERE day < ?", (retention_before,))
+        con.execute("DELETE FROM remote_traffic_hourly_rollups WHERE day < ?", (retention_before,))
+        con.execute("DELETE FROM classified_flow_rollups WHERE day < ?", (retention_before,))
+        con.execute("DELETE FROM classified_flow_facts WHERE day < ?", (retention_before,))
         con.commit()
-        con.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        try:
+            con.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        except sqlite3.Error as error:
+            print(f"Traffic rollup committed; checkpoint deferred: {error}")
     except Exception as e:
         if con:
             con.rollback()

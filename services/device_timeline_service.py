@@ -125,6 +125,10 @@ def measured_category_report(con,start_time,end_time,filters=None,limit=8,bridge
             "downloaded_mb":0,"uploaded_mb":0,"total_mb":unknown/MIB,"devices":0,"applications":0,"application_names":[],"share_classified_pct":0,
             "share_total_pct":round(unknown/bridge*100,1) if bridge else 0,"share_pct":round(unknown/bridge*100,1) if bridge else 0})
     note="Flow and bridge counters disagree; application coverage is unavailable." if coverage["counter_mismatch"] else "Application bytes use measured connections. Coverage excludes the latest two minutes while flow exports settle; unobserved traffic remains unattributed."
+    if coverage['counter_mismatch']:
+        note+=f" Settled bridge traffic: {bridge/MIB:.2f} MiB; measured connections: {coverage['measured_bytes']/MIB:.2f} MiB."
+        if coverage['flow_classification_pct'] is not None:
+            note+=f" {coverage['flow_classification_pct']:.1f}% of measured connection bytes have an application label (a separate denominator)."
     if not bridge and not coverage["counter_mismatch"]:note="No settled bridge traffic is available for calculating application coverage."
     return {"rows":rows,"total_network_mb":bridge/MIB,"classified_application_mb":known/MIB,"matched_application_mb":known/MIB,
         "unclassified_application_mb":unknown/MIB,"classification_coverage_pct":coverage["coverage_pct"],"classification_match_rate_pct":coverage["coverage_pct"],
