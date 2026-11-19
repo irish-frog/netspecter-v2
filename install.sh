@@ -558,7 +558,7 @@ cp systemd/netspecter-vault.timer "$SERVICE_DIR/netspecter-vault.timer"
 # Prebuilt binary is verified before activation. No compiler or history reset on appliances.
 bash "$INSTALL_DIR/scripts/install-tls-inspector.sh"
 systemctl daemon-reload
-systemctl enable --now netspecter-tls-metadata.socket
+bash "$INSTALL_DIR/scripts/activate-metadata-socket.sh"
 systemctl disable --now netspecter-nic-offload.service >/dev/null 2>&1 || true
 validate_anomaly_permissions "netspecter-collector.service"
 systemctl enable --now netspecter-web netspecter-https netspecter-collector netspecter-watchdog.timer netspecter-speedtest.timer netspecter-monitor.timer netspecter-db-maintenance.timer netspecter-update.path netspecter-maintenance.path netspecter-vault.timer

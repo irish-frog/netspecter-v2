@@ -17,7 +17,7 @@ mode="${2:---preview}"
 [[ -d /opt/netspecter/.git && ! -L /opt/netspecter ]] || { echo "Existing /opt/netspecter checkout required." >&2; exit 1; }
 [[ ! -e /var/lib/netspecter/history-reset.in-progress ]] || { echo "Recover the interrupted reset before updating." >&2; exit 1; }
 cd /opt/netspecter
-gitcmd() { git -c safe.directory=/opt/netspecter -c core.filemode=false "$@"; }
+gitcmd() { (umask 022; git -c safe.directory=/opt/netspecter -c core.filemode=false "$@"); }
 [[ $(gitcmd branch --show-current) == main ]] || { echo "Expected main branch; no checkout changed." >&2; exit 1; }
 gitcmd diff --quiet HEAD -- || { echo "Local source edits need review; nothing discarded." >&2; exit 1; }
 origin="$(gitcmd remote get-url origin)"
@@ -65,7 +65,7 @@ fi
 stage="$(mktemp -d /run/netspecter-update-clean.XXXXXX)"
 trap 'rm -f -- "$stage/dns.json"; rmdir -- "$stage"' EXIT
 python3 scripts/check-dns-continuity.py snapshot "$stage/dns.json"
-INSTALL_ADGUARD=0 INSTALL_GATUS=0 INSTALL_BESZEL=0 bash install.sh
+(umask 022; INSTALL_ADGUARD=0 INSTALL_GATUS=0 INSTALL_BESZEL=0 bash install.sh)
 ready=0
 for attempt in {1..15}; do
   if python3 scripts/verify-passive-attribution.py >/dev/null 2>&1; then ready=1; break; fi

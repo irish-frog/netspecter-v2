@@ -84,8 +84,16 @@ def main():
         # Match production installer permissions before exercising the web normalizer.
         run('chown','root:netspecter',str(CONFIG),str(CONFIG/'config.json'))
         run('chmod','750',str(CONFIG));run('chmod','660',str(CONFIG/'config.json'))
+        # Reproduce a live legacy collector with no inherited socket descriptor.
+        legacy=Path('/etc/systemd/system/netspecter-collector.service')
+        legacy.write_text('[Unit]\nDescription=Legacy collector migration fixture\n[Service]\nType=simple\nUser=netspecter\nExecStart=/usr/bin/sleep infinity\n')
+        run('systemctl','daemon-reload');run('systemctl','start','netspecter-collector')
+        assert run('systemctl','is-active','netspecter-collector',capture_output=True).stdout.strip()=='active'
         run('install','-m','644',str(DEST/'systemd/netspecter-collector.service'),'/etc/systemd/system/netspecter-collector.service')
         run('bash',str(DEST/'scripts/install-tls-inspector.sh'))
+        run('bash',str(DEST/'scripts/activate-metadata-socket.sh'))
+        assert run('systemctl','is-active','netspecter-tls-metadata.socket',capture_output=True).stdout.strip()=='active'
+        print('PASS: first-install socket handoff from an active legacy collector without inherited descriptors.')
         # Exercise the actual web loader before collection; it must retain activation.
         run(str(DEST/'venv/bin/python'),'-c',"import netspecter_config; assert netspecter_config.cfg()['passive_attribution_enabled']",cwd=DEST)
         run('systemctl','start','netspecter-tls-metadata.socket','netspecter-collector')
