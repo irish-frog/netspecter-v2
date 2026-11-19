@@ -10,6 +10,7 @@ from pathlib import Path
 
 import netspecter_live_snapshot as live_snapshot
 from services.speedtest_result_service import parse_metrics as parse_speed_metrics, metrics_complete
+from services.speedtest_job_service import acquire_lock
 
 
 CONFIG_PATH = Path("/etc/netspecter/config.json")
@@ -158,7 +159,7 @@ def run_test():
     return (output, latency, download, upload, success)
 
 
-def main():
+def run_due_test():
     config = load_config()
     runs = min(5, max(0, int(config.get("scheduled_speedtests_per_day", 0) or 0)))
     if runs == 0:
@@ -219,6 +220,13 @@ def main():
             "source": "scheduled",
         }
     }, ts)
+
+
+def main():
+    descriptor=acquire_lock(DB_PATH.parent/'speedtest-run.lock')
+    if descriptor is None:return
+    try:run_due_test()
+    finally:os.close(descriptor)
 
 
 if __name__ == "__main__":

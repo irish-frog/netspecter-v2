@@ -45,3 +45,11 @@ Install the catalogue on the owner, preview/apply its relabeling, then verify th
 Primary headline accounting is IPv4. Unseen VPN inner traffic, ECH, QUIC and missing/long-lived handshake evidence can remain unknown. Raw measured-flow retention defaults to 14 days and TLS metadata to two days; retention pruning is bounded per pass. Current history still grows with flow volume, so do not promise a fixed disk-growth rate or speed improvement without measurements.
 
 A separate SSH session remains unprivileged even when the operator's terminal is already in su -. Never automate terminal UI or request/store root passwords. Appliance settings are outside Git at /etc/netspecter/config.json; SQLite data is under /var/lib/netspecter. Never repair attribution by deleting database/WAL files or backup directories with wildcards.
+
+## Owner maintenance follow-up (19 November)
+
+Main workflow 44456720679 also completed successfully. Pending owner follow-up changes replace the web updater's writing git fetch with read-only ls-remote, move public-IP lookup off page requests, and queue manual speed tests with a shared scheduled/manual exclusion lock. Existing installs skip optional DNS/Gatus/Beszel provisioning unless explicitly requested, preserving those configurations during updates.
+
+The retired device drawer Alerts tab and IDS empty-state text are removed. Attribution Review reads current measured unknown flows rather than the legacy queue; it remains a view, not a background collector. Exact TLS hostname rules require an operator-supplied verified application; no provider/IP inference is added. Historical relabeling remains a separate preview-first command.
+
+Local regression before publication: 390 passed, five Linux-only skipped; only existing UTC deprecation warnings. New Linux workflow and live owner profiling/verification remain required. Temporary, hostname-restricted maintenance access has been staged for root installation, expires at 18:23 SAST on 19 November, and has no DNS restart or database-reset action. At the last access check it was not installed. Client and third appliance remain untouched.

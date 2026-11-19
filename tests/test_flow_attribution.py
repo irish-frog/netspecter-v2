@@ -191,3 +191,15 @@ def test_catalogue_backfill_refuses_internal_or_non_sni_evidence():
     con.execute("UPDATE measured_internet_flows SET destination_ip='192.168.1.10' WHERE measurement_id='one'")
     con.execute("UPDATE measured_internet_flows SET evidence='client_dns' WHERE measurement_id='two'")
     assert reclassify_unrecognized_batch(con,CONFIG,apply=True,domain_classifier=lambda _:('Unsafe','Business'))['updated']==0
+
+
+def test_review_groups_only_current_measured_unknowns():
+    from services.flow_attribution_service import unknown_measured_review
+    con=database();metadata(con,'newapp.example.com');metadata(con,'newapp.example.com',sport=12346)
+    persist_measurements(con,[flow(),flow('two',sport=12346),flow('old',sport=12347)],CONFIG,lambda _: (None,'Unknown'))
+    con.execute("UPDATE measured_internet_flows SET last_ms=? WHERE measurement_id='old'",(NOW-100000,))
+    rows=unknown_measured_review(con,since_ms=NOW-2000)
+    assert len(rows)==1 and rows[0]['flow_count']==2 and rows[0]['total_bytes']==2000
+    assert rows[0]['hostname']=='newapp.example.com' and rows[0]['devices_seen']==1
+    con.execute("UPDATE measured_internet_flows SET application='Verified' WHERE measurement_id='two'")
+    assert unknown_measured_review(con,since_ms=NOW-2000)[0]['total_bytes']==1000

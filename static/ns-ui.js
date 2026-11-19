@@ -225,6 +225,7 @@
   function activateDrawerTab(name) {
     const root = document.querySelector("[data-drawer-root]");
     if (!root || !name) return;
+    if (!["overview", "activity", "history"].includes(name)) name = "overview";
     root.querySelectorAll("[data-drawer-tab]").forEach((item) => item.classList.toggle("is-active", item.getAttribute("data-drawer-tab") === name));
     root.querySelectorAll("[data-drawer-panel]").forEach((panel) => {
       panel.classList.toggle("is-active", panel.getAttribute("data-drawer-panel") === name);
@@ -298,12 +299,6 @@
       renderDrawerList("deviceTopApps", data.apps, "No application activity in this range.", (row) => `<div class="ns-drawer-list-row"><b>${esc(row.name || "Other")}</b><span>${Number(row.total || 0)} DNS hits</span></div>`);
       renderDrawerList("deviceTopDomains", data.domains, "No recent domains in this range.", (row) => `<div class="ns-drawer-list-row"><b>${esc(row.name || "-")}</b><span>${Number(row.total || 0)} hits</span></div>`);
       renderDrawerList("deviceHistoryList", data.history, `No ${esc(historyRange)} history events found.`, (row) => `<a class="ns-timeline-row" href="${esc(row.href || "#")}"><span>${esc(row.ts || "-")}</span><b>${esc(row.title || row.type)}</b><em>${esc(row.detail || "")}</em></a>`);
-      const alertRows = [
-        ...(data.alerts.ids || []).map((row) => ({ href: row.href, title: `IDS P${row.severity}: ${row.signature}`, meta: row.ts })),
-        ...(data.alerts.anomalies || []).map((row) => ({ href: row.href, title: `Anomaly: ${row.rule}`, meta: `${row.severity} / ${row.status}` })),
-        ...(data.alerts.incidents || []).map((row) => ({ href: row.href, title: `Incident: ${row.title}`, meta: `${row.severity} / ${row.status}` }))
-      ];
-      renderDrawerList("deviceAlertsList", alertRows, "No related IDS, anomaly or incident records.", (row) => `<a class="ns-drawer-list-row" href="${esc(row.href)}"><b>${esc(row.title)}</b><span>${esc(row.meta || "")}</span></a>`);
     } catch (error) {
       renderDrawerList("deviceHistoryList", [{ title: "Device drawer data failed", detail: String(error), ts: "" }], "Device data unavailable.", (row) => `<div class="ns-timeline-row"><b>${esc(row.title)}</b><em>${esc(row.detail)}</em></div>`);
     }
@@ -362,7 +357,6 @@
     setHref("deviceToolTimeline", `/device/${encodedIp}/timeline`);
     setHref("deviceToolScan", `/scan/${encodedIp}`);
     setHref("deviceDrawerTimeline", `/device/${encodedIp}`);
-    setHref("deviceDrawerAlertsLink", `/ids-alerts?device=${encodedIp}`);
 
     const labelForm = document.getElementById("deviceLabelForm");
     if (labelForm) labelForm.setAttribute("action", `/device/${encodedIp}/label`);

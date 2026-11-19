@@ -286,3 +286,15 @@ def reclassify_unrecognized_batch(con,config,*,after_id='',limit=200,apply=False
                 AND evidence='tls_sni' AND hostname=?""",(application,category,int(time.time()*1000),row['measurement_id'],row['hostname']))
             result['updated']+=changed.rowcount
     return result
+
+
+def unknown_measured_review(con,*,since_ms,limit=100):
+    """Current unknowns only; no legacy queue, provider guesses or background job."""
+    table=flow_table(con)
+    cursor=con.execute(f"""SELECT MIN(measurement_id) AS id,hostname,reason,evidence,
+        SUM(bytes) AS total_bytes,COUNT(*) AS flow_count,COUNT(DISTINCT local_ip) AS devices_seen,
+        MIN(first_ms) AS first_ms,MAX(last_ms) AS last_ms FROM {table}
+        WHERE application IS NULL AND last_ms>=? GROUP BY hostname,reason,evidence
+        ORDER BY total_bytes DESC LIMIT ?""",(int(since_ms),max(1,min(100,int(limit)))))
+    names=[item[0] for item in cursor.description]
+    return [dict(zip(names,row)) for row in cursor]

@@ -35,6 +35,7 @@ from flask import Flask, request, redirect, Response, session, g, jsonify, send_
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 from services.traffic_scope_service import internal_ipv4_networks
+from services import speedtest_job_service
 
 try:
     import psutil
@@ -1030,29 +1031,30 @@ def auto_lock_known_vendors():
         )
 
 
+_PUBLIC_IP_REFRESH_LOCK=threading.Lock()
+_PUBLIC_IP_NEXT_ATTEMPT=0.0
+
+
 def public_ip(refresh=True):
-    c = cfg()
-    cached = cache_get("public_ip", int(c.get("public_ip_cache_seconds", 1800)))
-
-    if cached:
-        return cached
-
-    stale = cache_value("public_ip")
-    if not refresh:
-        return stale or "Unknown"
-
-    try:
-        info = lookup_public_ip_info(timeout=5)
-        ip = str(info.get("public_ip") or "").strip()
-        if ip:
-            cache_set("public_ip", ip)
-            cache_set("public_ip_info", info)
-            return ip
-    except Exception:
-        pass
-
+    """Serve cached/stale IP immediately; external lookups never block page rendering."""
+    global _PUBLIC_IP_NEXT_ATTEMPT
+    c=cfg()
+    cached=cache_get("public_ip",int(c.get("public_ip_cache_seconds",1800)))
+    if cached:return cached
+    stale=cache_value("public_ip")
+    if refresh and time.monotonic()>=_PUBLIC_IP_NEXT_ATTEMPT and _PUBLIC_IP_REFRESH_LOCK.acquire(blocking=False):
+        _PUBLIC_IP_NEXT_ATTEMPT=time.monotonic()+60
+        def refresh_cached_ip():
+            try:
+                info=lookup_public_ip_info(timeout=3)
+                ip=str(info.get("public_ip") or "").strip()
+                if ip:
+                    cache_set("public_ip",ip);cache_set("public_ip_info",info)
+            except Exception:pass
+            finally:_PUBLIC_IP_REFRESH_LOCK.release()
+        try:threading.Thread(target=refresh_cached_ip,daemon=True,name="public-ip-refresh").start()
+        except Exception:_PUBLIC_IP_REFRESH_LOCK.release()
     return stale or "Unknown"
-
 
 
 
@@ -1305,45 +1307,30 @@ def update_status(force=False, fetch_remote=True):
         UPDATE_STATUS_CACHE.update({"ts": now, "data": data})
         return data
 
-    remote_name = upstream.split("/", 1)[0] if "/" in upstream else "origin"
-    if fetch_remote:
-        rc, _out, err = git_command(source, "fetch", "--quiet", remote_name, timeout=12)
-        if rc != 0:
-            detail = err or f"Could not fetch from {remote_name}."
-            data = {"ok": False, "available": False, "detail": detail, "source": str(source), "upstream": upstream}
-            print(f"Update check fetch failed for {remote_name}: {detail}")
-            UPDATE_STATUS_CACHE.update({"ts": now, "data": data})
-            return data
-    rc, current, err = git_command(source, "rev-parse", "--short", "HEAD")
-    if rc != 0 or not current:
-        data = {"ok": False, "available": False, "detail": err or "Could not read installed Git version.", "source": str(source), "upstream": upstream}
-        print(f"Update check failed reading HEAD: {data['detail']}")
-        UPDATE_STATUS_CACHE.update({"ts": now, "data": data})
-        return data
-    rc, latest, err = git_command(source, "rev-parse", "--short", upstream)
-    if rc != 0 or not latest:
-        data = {"ok": False, "available": False, "detail": err or f"Could not read {upstream}."}
-        print(f"Update check failed reading {upstream}: {data['detail']}")
-        UPDATE_STATUS_CACHE.update({"ts": now, "data": data})
-        return data
-
-    rc, behind, err = git_command(source, "rev-list", "--count", f"HEAD..{upstream}")
-    if rc != 0:
-        data = {"ok": False, "available": False, "detail": err or f"Could not compare HEAD with {upstream}."}
-        print(f"Update check compare failed for {upstream}: {data['detail']}")
-        UPDATE_STATUS_CACHE.update({"ts": now, "data": data})
-        return data
-    available = str(behind or "0").isdigit() and int(behind) > 0
-    data = {
-        "ok": True,
-        "available": available,
-        "current": current,
-        "latest": latest,
-        "behind": int(behind or 0) if str(behind or "0").isdigit() else 0,
-        "source": str(source),
-        "upstream": upstream,
-    }
-    UPDATE_STATUS_CACHE.update({"ts": now, "data": data})
+    rc,current,err=git_command(source,"rev-parse","HEAD")
+    if rc or not current:
+        data={"ok":False,"available":False,"detail":err or "Could not read installed Git version."}
+    else:
+        if fetch_remote:
+            remote_name,branch=upstream.split("/",1) if "/" in upstream else ("origin",upstream)
+            rc,advertised,err=git_command(source,"ls-remote","--exit-code","--heads",remote_name,"refs/heads/"+branch,timeout=6)
+            tips=[line.split() for line in advertised.splitlines()]
+            latest=next((parts[0] for parts in tips if len(parts)==2 and parts[1]=="refs/heads/"+branch and re.fullmatch(r"[0-9a-f]{40,64}",parts[0])),"")
+        else:
+            rc,latest,err=git_command(source,"rev-parse",upstream)
+        if rc or not latest:
+            data={"ok":False,"available":False,"current":current[:7],"detail":err or "Could not read the remote branch version."}
+        else:
+            behind=0;available=current!=latest
+            if available:
+                # New remote objects need not exist locally: checking updates never fetches/writes .git.
+                known,_,_=git_command(source,"cat-file","-e",latest+"^{commit}")
+                if known==0:
+                    compared,count,_=git_command(source,"rev-list","--count",f"HEAD..{latest}")
+                    if compared==0 and count.isdigit():behind=int(count);available=behind>0
+                else:behind=None
+            data={"ok":True,"available":available,"current":current[:7],"latest":latest[:7],"behind":behind,"source":str(source),"upstream":upstream}
+    UPDATE_STATUS_CACHE.update({"ts":now,"data":data})
     return data
 
 
@@ -4383,7 +4370,6 @@ def devices():
     <button class="is-active" type="button" data-drawer-tab="overview">Overview</button>
     <button type="button" data-drawer-tab="activity">Activity</button>
     <button type="button" data-drawer-tab="history">History</button>
-    <button type="button" data-drawer-tab="alerts">Alerts</button>
   </div>
   <div class="ns-drawer-panel is-active" data-drawer-panel="overview">
     <div class="ns-kv">
@@ -4403,7 +4389,7 @@ def devices():
         <input id="deviceLabelInput" name="name" value="{fd_name}" maxlength="80" placeholder="Device label">
         <button class="ns-compact-button" type="submit">Save Label</button>
       </div>
-      <small class="ns-polish-subtle">Saved labels override collector names and are reused across dashboard, devices and security views.</small>
+      <small class="ns-polish-subtle">Saved labels override collector names and are reused across dashboard and device views.</small>
     </form>
     <form id="deviceUserForm" method="post" action="/device/{fd_ip}/user" class="ns-drawer-form">
       {csrf_input()}
@@ -4441,13 +4427,6 @@ def devices():
       <button type="button" data-device-history-refresh>Apply</button>
     </div>
     <div id="deviceHistoryList" class="ns-timeline-list"></div>
-  </div>
-  <div class="ns-drawer-panel" data-drawer-panel="alerts">
-    <div class="ns-mini-metrics">
-      {fd_alert_metric}
-      <div class="ns-mini-metric"><span>DNS Queries</span><b>{fd_dns_count:,}</b></div>
-    </div>
-    <div id="deviceAlertsList" class="ns-drawer-list"></div>
   </div>
 </aside>
 <div class="ns-confirm-backdrop" id="confirmIgnoreDevice" hidden>
@@ -5681,7 +5660,6 @@ def device(ip):
   <div class="device-stat"><div class="label">Total</div><span class="value teal">{fmt_mb(r['total_mb'])}</span></div>
   <div class="device-stat"><div class="label">Live Speed</div><span class="value green" data-live-ip="{h(ip)}" data-live-field="total">{live_speed}</span><small>DL <span data-live-ip="{h(ip)}" data-live-field="down">{live_rx}</span> | UL <span data-live-ip="{h(ip)}" data-live-field="up">{live_tx}</span></small></div>
   <div class="device-stat"><div class="label">DNS Queries</div><span class="value blue">{total_queries}</span></div>
-  <div class="device-stat"><div class="label">Alerts</div><span class="value red">{r['alerts'] if 'alerts' in r.keys() else 0}</span></div>
 </div>
 
 <div class="device-grid-main">
@@ -10381,8 +10359,34 @@ def adguard_action():
     return redirect("/adguard")
 
 
+def passive_unknown_traffic_review():
+    from services.flow_attribution_service import unknown_measured_review,flow_table
+    notice="";config=cfg()
+    if request.method=="POST":
+        app_name=request.form.get("application","").strip();category=request.form.get("category","").strip()
+        with connect_db() as con:
+            row=con.execute(f"SELECT hostname FROM {flow_table(con)} WHERE measurement_id=? AND application IS NULL AND evidence='tls_sni' AND reason='unrecognized_hostname'",(request.form.get("measurement_id","")[:128],)).fetchone()
+        if not row or not row[0] or not valid_domain_pattern(row[0]):notice="Choose an unrecognized hostname backed by TLS evidence."
+        elif not app_name or len(app_name)>80 or category not in {row["name"] for row in application_categories()}:notice="Choose an application name and valid category."
+        else:
+            create_application_signature(app_name,category,domains=[row[0]],tags=["Operator rule"],confidence=95,priority=95)
+            notice="Exact hostname rule saved for subsequent attribution. Existing measured bytes are unchanged; historical labels can be refreshed with the preview-first maintenance command."
+    with connect_db() as con:rows=unknown_measured_review(con,since_ms=int((time.time()-86400)*1000))
+    options=''.join(f'<option value="{h(row["name"])}">{h(row["name"])}</option>' for row in application_categories())
+    rendered=[]
+    for row in rows:
+        form="No application rule can be inferred from this evidence."
+        if row["hostname"] and row["evidence"]=="tls_sni" and row["reason"]=="unrecognized_hostname":
+            form=f'''<form method="post">{csrf_input()}<input type="hidden" name="measurement_id" value="{h(row['id'])}"><input name="application" maxlength="80" placeholder="Verified application" required><select name="category" required><option value="">Category</option>{options}</select><button class="ns-compact-button" type="submit">Save hostname rule</button></form>'''
+        rendered.append(f'''<tr><td>{h(row['hostname'] or 'Hostname not observed')}</td><td>{h(row['reason'])}</td><td>{row['total_bytes']/1048576:.2f} MiB<small>{row['flow_count']} flows / {row['devices_seen']} devices</small></td><td>{form}</td></tr>''')
+    table=''.join(rendered) or '<tr><td colspan="4">No measured unknown traffic in the last 24 hours.</td></tr>'
+    body=f'''{topbar('Attribution Review')}<div class="panel"><h2>Attribution Review</h2><p class="sub">Measured unknown internet traffic from the last 24 hours. This page does not run a separate collector.</p><p>Only assign a hostname after verifying the service. A shared CDN or provider does not prove an application. Saved hostname rules apply across devices; byte counts are unchanged.</p><p>{h(notice)}</p><div class="ns-table-shell"><table class="table"><thead><tr><th>Hostname</th><th>Unknown reason</th><th>Measured traffic</th><th>Verified hostname rule</th></tr></thead><tbody>{table}</tbody></table></div></div>'''
+    return shell("Attribution Review",body,"Traffic")
+
+
 @app.route("/unknown-traffic", methods=["GET", "POST"])
 def unknown_traffic_review():
+    if cfg().get("passive_attribution_enabled",False):return passive_unknown_traffic_review()
     notice = ""
     notice_class = "setup-ok"
     if request.method == "POST":
@@ -12229,7 +12233,7 @@ def speedtest_command():
         command.extend(["--server", server_id])
     return command
 
-def run_and_store_speedtest(source="manual"):
+def run_and_store_speedtest(source="manual",return_status=False):
     success = False
     try:
         command = speedtest_command()
@@ -12283,14 +12287,19 @@ def run_and_store_speedtest(source="manual"):
             "source": source,
         }
     }, ts)
-    return output
+    return {"success":success,"output":output} if return_status else output
+
+
+@app.route("/api/speed-test-status")
+def speed_test_job_status():
+    return jsonify(speedtest_job_service.status(DATA_ROOT/"speedtest-job.json",DATA_ROOT/"speedtest-run.lock"))
 
 
 @app.route("/speed-test", methods=["POST"])
 def speed_test():
-    """Run an administrator-triggered speed test and store its result."""
-    run_and_store_speedtest("manual")
-    return redirect("/speed-tests?ran=1")
+    """Queue one administrator test and return without waiting for network measurements."""
+    speedtest_job_service.start(lambda:run_and_store_speedtest("manual",return_status=True),DATA_ROOT/"speedtest-job.json",DATA_ROOT/"speedtest-run.lock")
+    return redirect("/speed-tests?running=1")
 
 
 def display_speed_source(source):
@@ -12343,7 +12352,7 @@ def speedtest_server_label(result_text):
 @app.route("/speed-tests", methods=["GET", "POST"])
 def speed_tests():
     c = cfg()
-    notice = '<div class="ns-inline-notice ns-inline-notice--ok">Speed test completed and saved.</div>' if request.args.get("ran") == "1" else ""
+    notice = '<div class="ns-inline-notice ns-inline-notice--ok">Speed test finished. See the latest result below.</div>' if request.args.get("ran") == "1" else ""
     if request.args.get("failed") == "1":
         notice = '<div class="ns-inline-notice ns-inline-notice--error">Speed test failed. Check the latest result details.</div>'
     if request.method == "POST":
@@ -12366,6 +12375,18 @@ def speed_tests():
         save_cfg(c)
         return redirect("/speed-tests?saved=1#automaticTesting")
 
+    job=speedtest_job_service.status(DATA_ROOT/"speedtest-job.json",DATA_ROOT/"speedtest-run.lock")
+    if job.get("status")=="running" or request.args.get("running")=="1":
+        notice='''<div class="ns-inline-notice" id="speedJobNotice">Speed test is running. You can continue using NetSpecter.</div>
+<script>
+(function pollSpeedJob(){
+ fetch('/api/speed-test-status',{cache:'no-store',credentials:'same-origin'})
+ .then(r=>{if(!r.ok)throw new Error('status');return r.json();})
+ .then(data=>{if(data.status==='running'){setTimeout(pollSpeedJob,2000);}
+ else{window.location.replace('/speed-tests?'+((data.status==='failed'||data.status==='interrupted')?'failed=1':'ran=1'));}})
+ .catch(()=>setTimeout(pollSpeedJob,5000));
+})();
+</script>'''
     speed_days = request.args.get("speed_days", "7")
     if speed_days not in ("1", "7", "30"):
         speed_days = "7"

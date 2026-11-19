@@ -14,7 +14,9 @@ rm -f "$REQUEST_FILE"
   printf '\n=== NetSpecter UI update started %s ===\n' "$(date)"
   printf 'running %s\n' "$(date +%s)" > "$STATE_FILE"
   cd "$INSTALL_DIR"
-  if git -c "safe.directory=$INSTALL_DIR" -c core.filemode=false pull --ff-only origin main && bash ./install.sh; then
+  # Appliance updates preserve installed optional services and their configurations.
+  # Provisioning or upgrading DNS/monitoring components is an explicit install task.
+  if git -c "safe.directory=$INSTALL_DIR" -c core.filemode=false pull --ff-only origin main && INSTALL_ADGUARD=0 INSTALL_GATUS=0 INSTALL_BESZEL=0 bash ./install.sh; then
     printf 'Restarting NetSpecter services in readiness order...\n'
     systemctl restart netspecter-collector || true
     systemctl restart netspecter-web || true
