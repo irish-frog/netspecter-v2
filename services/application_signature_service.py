@@ -56,6 +56,14 @@ APPLICATION_DOMAINS = {
     "Autodesk Fusion": ["*.fusionapi.autodesk.com"],
     "Life360": ["*.life360.com"],
     "Dropbox": ["*.dropbox.com", "*.dropboxapi.com"],
+    # Dedicated service endpoints; a service label does not identify its calling app.
+    "AnyDesk": ["*.net.anydesk.com"],
+    "Google Safe Browsing": ["safebrowsing.googleapis.com"],
+    "Apple WeatherKit": ["weatherkit.apple.com"],
+    "Home Assistant Connectivity": ["checkonline.home-assistant.io"],
+    "Firebase Remote Config": ["firebaseremoteconfig.googleapis.com"],
+    "N-able Software Distribution": ["sis.n-able.com"],
+    "N-able Take Control": ["*.mspa.n-able.com", "comserver-hb-*.n-able.com"],
 }
 
 

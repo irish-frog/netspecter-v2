@@ -713,3 +713,28 @@ def test_dedicated_service_domains_from_hostname_review():
                    'res.public.onecdn.static.microsoft','gateway.icloud.com','odr.itunes.apple.com',
                    'p16-ttam-va.ibyteimg.com','www.gstatic.com']:
         assert classify_domain(domain)[0] is None,domain
+
+
+
+def test_dedicated_service_endpoints_are_identified_without_guessing_calling_apps(monkeypatch):
+    from services.flow_attribution_service import classify_domain
+    monkeypatch.setattr(application_signature_service,'query',lambda *args:[])
+    expected={
+      'relay-6c3adaf6.net.anydesk.com':('AnyDesk','Remote Access'),
+      'safebrowsing.googleapis.com':('Google Safe Browsing','Security Services'),
+      'weatherkit.apple.com':('Apple WeatherKit','Weather Services'),
+      'checkonline.home-assistant.io':('Home Assistant Connectivity','Network Infrastructure'),
+      'firebaseremoteconfig.googleapis.com':('Firebase Remote Config','Cloud Infrastructure'),
+      'sis.n-able.com':('N-able Software Distribution','Software Updates'),
+      'cptgw-mct8.mspa.n-able.com':('N-able Take Control','Remote Access'),
+      'comserver-hb-us1-iad2-2.n-able.com':('N-able Take Control','Remote Access'),
+    }
+    application_signature_service._SIGNATURE_CACHE['expires_at']=0
+    for host,label in expected.items():assert classify_domain(host)==label,host
+    for host in ('challenges.cloudflare.com','cdn.cloudflare.com','a.nel.cloudflare.com',
+      'www.googleapis.com','geller-pa.googleapis.com','android.googleapis.com',
+      'lh3.googleusercontent.com','storage.googleapis.com','arbitrary.n-able.com',
+      'ncodfake.n-able.com','ncod168.n-able.com','ncod1unrelated.n-able.com',
+      'ncod1.foo.n-able.com','weatherkit.apple.com.evil.invalid','weatherkit-apple.com',
+      'relay.net.anydesk.com.evil.invalid','sis.n-able.com.evil.invalid','x.safebrowsing.googleapis.com'):
+        assert classify_domain(host)[0] is None,host

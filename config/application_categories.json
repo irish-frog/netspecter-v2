@@ -130,7 +130,7 @@
       "icon": "headset",
       "display_order": 100,
       "color": "#38bdf8",
-      "applications": ["AnyDesk", "TeamViewer", "RustDesk", "Remote Desktop", "RDP", "Splashtop", "ConnectWise Control", "ScreenConnect", "VNC", "LogMeIn"],
+      "applications": ["AnyDesk", "TeamViewer", "RustDesk", "Remote Desktop", "RDP", "Splashtop", "ConnectWise Control", "ScreenConnect", "VNC", "LogMeIn", "N-able Take Control"],
       "domains": ["*.anydesk.com", "*.teamviewer.com", "*.rustdesk.com", "*.splashtop.com", "*.screenconnect.com", "*.connectwise.com", "*.logmein.com"]
     },
     {
@@ -150,7 +150,7 @@
       "icon": "cloud",
       "display_order": 120,
       "color": "#06b6d4",
-      "applications": ["Microsoft Azure", "Azure", "AWS", "Amazon Web Services", "Google Cloud", "GCP", "Firebase", "Oracle Cloud", "DigitalOcean", "Cloudflare", "Akamai", "Fastly"],
+      "applications": ["Microsoft Azure", "Azure", "AWS", "Amazon Web Services", "Google Cloud", "GCP", "Firebase", "Oracle Cloud", "DigitalOcean", "Cloudflare", "Akamai", "Fastly", "Firebase Remote Config"],
       "domains": ["*.azure.com", "*.azurewebsites.net", "*.azureedge.net", "*.blob.core.windows.net", "*.queue.core.windows.net", "*.table.core.windows.net", "*.file.core.windows.net", "*.amazonaws.com", "*.aws.amazon.com", "cloud.google.com", "*.cloud.google.com", "*.googleapis.com", "*.gstatic.com", "*.googleusercontent.com", "clients3.google.com", "clients4.google.com", "connectivitycheck.gstatic.com", "app-measurement.com", "*.app-measurement.com", "firebaselogging-pa.googleapis.com", "*.firebaseio.com", "*.firebaseapp.com", "*.oraclecloud.com", "*.digitalocean.com", "*.cloudflare.com", "*.cloudflare.net", "*.akamai.net", "*.fastly.net"]
     },
     {
@@ -190,7 +190,7 @@
       "icon": "rotate",
       "display_order": 130,
       "color": "#64748b",
-      "applications": ["Windows Update", "Apple Update", "Android Update", "Linux Repositories", "Browser Updates", "Driver Downloads", "Firmware Updates", "Software Updates"],
+      "applications": ["Windows Update", "Apple Update", "Android Update", "Linux Repositories", "Browser Updates", "Driver Downloads", "Firmware Updates", "Software Updates", "N-able Software Distribution"],
       "domains": ["*.windowsupdate.com", "*.windowsupdate.microsoft.com", "*.update.microsoft.com", "*.download.windowsupdate.com", "*.delivery.mp.microsoft.com", "*.dl.delivery.mp.microsoft.com", "*.emdl.ws.microsoft.com", "*.do.dsp.mp.microsoft.com", "*.tsfe.trafficshaping.dsp.mp.microsoft.com", "*.download.microsoft.com", "*.officecdn.microsoft.com", "*.apple.com", "*.icloud.com", "*.icloud-content.com", "*.cdn-apple.com", "*.mzstatic.com", "*.itunes.apple.com", "*.android.com", "*.gvt1.com", "*.gvt2.com", "*.ubuntu.com", "*.debian.org", "*.centos.org", "*.redhat.com", "*.mozilla.org", "*.googlechromelabs.github.io"]
     },
     {
@@ -230,7 +230,7 @@
       "icon": "network-wired",
       "display_order": 170,
       "color": "#94a3b8",
-      "applications": ["DNS", "DHCP", "NTP", "Certificate Validation", "OCSP", "Active Directory", "LDAP", "Kerberos", "SNMP", "Monitoring", "Time Services"],
+      "applications": ["DNS", "DHCP", "NTP", "Certificate Validation", "OCSP", "Active Directory", "LDAP", "Kerberos", "SNMP", "Monitoring", "Time Services", "Home Assistant Connectivity"],
       "domains": ["*.pool.ntp.org", "*.ntp.org", "*.digicert.com", "*.sectigo.com", "*.globalsign.com", "*.letsencrypt.org", "*.ocsp.*"]
     },
     {
@@ -242,6 +242,16 @@
       "color": "#8b5cf6",
       "applications": ["Veeam", "Acronis", "Synology Backup", "Windows Backup", "Nextcloud Sync", "OneDrive Sync", "Google Drive Sync"],
       "domains": ["*.veeam.com", "*.acronis.com", "*.synology.com"]
+    },
+    {
+      "name": "Weather Services",
+      "usage_group": "Business or Personal",
+      "description": "Dedicated weather data APIs; identifies the service, not the calling application.",
+      "icon": "cloud-sun",
+      "display_order": 215,
+      "color": "#4cc9f0",
+      "applications": ["Apple WeatherKit"],
+      "domains": ["weatherkit.apple.com"]
     },
     {
       "name": "Unknown",
