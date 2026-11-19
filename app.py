@@ -748,7 +748,7 @@ def require_login():
                     return jsonify({"error": "session_expired"}), 401
                 return redirect("/login?next=" + quote(request.full_path.rstrip("?") or "/"))
             mark_session_active()
-        if request.endpoint not in ["settings", "logout"] and setup_missing_items():
+        if request.endpoint not in ["settings", "logout", "maintenance_settings", "maintenance_status"] and setup_missing_items():
             if request.path.startswith("/api/"):
                 return jsonify({"error": "setup_required"}), 409
             return redirect("/settings?setup=1")
@@ -11460,9 +11460,14 @@ def maintenance_settings():
     import uuid
     hostname=socket.gethostname()
     result_id=request.args.get('result','')
-    state=maintenance_service.read_state(job_id=result_id) if request.method=='GET' and re.fullmatch('[0-9a-f]{32}',result_id) else maintenance_service.read_state()
+    pending=request.args.get('pending','')
+    if not re.fullmatch('[0-9a-f]{32}',result_id):result_id=''
+    if not re.fullmatch('[0-9a-f]{32}',pending):pending=''
+    target_id=pending or result_id
+    current_state=maintenance_service.read_state()
+    state=maintenance_service.read_state(job_id=target_id) if request.method=='GET' and target_id else current_state
     available=maintenance_worker_available()
-    error="";code=200;pending=request.args.get('pending','')
+    error="";code=200
     if request.method=='POST':
         try:
             if not available:raise RuntimeError('Maintenance worker is unavailable; finish updating this appliance first')
@@ -11492,13 +11497,16 @@ def maintenance_settings():
         except OSError:
             error='Could not queue maintenance; check the installed worker and data permissions';code=503
     if not re.fullmatch('[0-9a-f]{32}',pending):pending=''
-    waiting=bool(pending and state.get('id')!=pending) or state.get('status')=='running'
+    waiting=bool(target_id and state.get('id')!=target_id) or state.get('status')=='running'
+    if state.get('id')==current_state.get('id') and current_state.get('status')=='running':waiting=True
     notice=f'<p class="red">{h(error)}</p>' if error else ''
     if not available and not waiting:notice+='<p class="yellow">Maintenance worker unavailable. Update this appliance before requesting cleanup.</p>'
     if state.get('status')=='failed':notice+=f'<p class="red">Maintenance failed: {h(state.get("error") or "Check the maintenance service journal before retrying.")}</p>'
     if state.get('status')=='complete':notice+='<p class="green">Maintenance completed. DNS continuity and the passive collector were checked. Collection is running.</p>'
     preview=''
-    if state.get('status')=='ready' and not waiting:
+    preview_ready=state.get('status')=='ready' and state.get('id')==current_state.get('id') and current_state.get('status')=='ready' and 0<=time.time()-float(state.get('created_at',0))<=maintenance_service.PREVIEW_SECONDS
+    if state.get('status')=='ready' and not preview_ready and not waiting:notice+='<p class="yellow">This preview expired or was replaced. Select your cleanup and create a new preview.</p>'
+    if preview_ready and not waiting:
         plan=state.get('plan',{});history=plan.get('history') or {};rows='';clear_count=0
         for database,tables in history.get('databases',{}).items():
             for table,details in tables.items():
@@ -11507,10 +11515,11 @@ def maintenance_settings():
         labels={'none':'Keep collected history','traffic':'Reset traffic counters and attribution history','all':'Reset all collected history, including NetSpecter DNS, quality and speed-test history'}
         packages=', '.join(plan.get('packages') or [])
         package_text=('Remove retired IDS packages: '+packages) if packages else ('No retired IDS packages or residual configuration were found' if plan.get('purge_ids') else 'Keep installed packages')
-        button='Reset history and purge retired IDS' if plan.get('scope')!='none' and plan.get('purge_ids') else 'Purge retired IDS' if plan.get('purge_ids') else 'Reset history'
+        button=('Clear all collected history' if plan.get('scope')=='all' else 'Clear traffic history') if plan.get('scope')!='none' else 'Purge retired IDS'
+        if plan.get('scope')!='none' and plan.get('purge_ids'):button+=' and purge retired IDS'
         acknowledgement='I understand the selected collected history is permanently deleted.' if plan.get('scope')!='none' else 'I understand the retired IDS packages and their configuration will be removed.'
         if plan.get('scope')!='none' and plan.get('purge_ids'):acknowledgement+=' The selected retired IDS packages will also be removed.'
-        preview=f"""<div class="panel"><h2>Preview</h2>
+        preview=f"""<div class="panel"><h2>2. Confirm and run cleanup</h2><p class="yellow"><strong>Preview complete. Nothing has been cleared yet.</strong> Enter your confirmation below to run this cleanup.</p>
 <p><strong>{h(labels.get(plan.get('scope'),'Invalid preview'))}</strong></p><p>{h(package_text)}</p>
 <p>{clear_count:,} collected history rows selected for deletion. Settings, logins, licence, edited names and custom rules are retained.</p>
 <details><summary>Review history tables</summary><div class="table-wrap"><table><thead><tr><th>Table</th><th>Rows</th><th>Action</th></tr></thead><tbody>{rows}</tbody></table></div></details>
@@ -11524,19 +11533,28 @@ def maintenance_settings():
     progress='<p id="maintenance-progress" class="yellow">Maintenance is queued or running. The web page may briefly disconnect during a reset; it will reconnect automatically.</p>' if waiting else ''
     poll=''
     if waiting:
-        target=pending or str(state.get('id') or '')
+        target=target_id or str(state.get('id') or '')
         poll="""<script>(function(){let attempts=0;const target="""+json.dumps(target)+""";async function check(){try{const r=await fetch('/api/maintenance/status?id='+encodeURIComponent(target),{cache:'no-store'});if(r.ok){const s=await r.json();if(s.id===target&&s.status!=='running'){location.replace('/settings?section=maintenance&result='+encodeURIComponent(target));return;}}}catch(e){}if(++attempts<900)setTimeout(check,3000);else document.getElementById('maintenance-progress').textContent='Still waiting. Refresh this page or check the maintenance service journal.';}setTimeout(check,2000);})();</script>"""
+    selected_scope=(state.get('plan') or {}).get('scope','none')
+    selected_purge=bool((state.get('plan') or {}).get('purge_ids'))
+    options=''.join(f'<option value="{value}"'+(' selected' if value==selected_scope else '')+f'>{label}</option>' for value,label in [('none','Keep collected history'),('traffic','Reset traffic counters and attribution history only'),('all','Reset all collected history')])
+    change_open='<details><summary>Change selection / create a new preview</summary>' if preview_ready else ''
+    change_close='</details>' if preview_ready else ''
+    if waiting:
+        check_id=target_id or str(state.get('id') or '')
+        progress+=f'<p><a class="btn" href="/settings?section=maintenance&amp;result={h(check_id)}">Check preview or result</a></p>'
     body=f"""{topbar('Settings')}{settings_menu('Settings')}
 <div class="settings-category-menu"><a href="/settings">Back to settings</a><a class="active" href="/settings?section=maintenance">Maintenance</a></div>
 <style>.maintenance-form{{max-width:680px;display:grid;gap:16px}}.maintenance-form label{{display:grid;gap:8px}}.maintenance-form .maintenance-check{{display:flex;align-items:center;gap:10px}}.maintenance-check input{{width:auto}}.maintenance-form button{{justify-self:start}}</style>
 <div class="panel"><h1>Reset history and purge retired IDS</h1>
 <p>Maintenance applies only to <strong>{h(hostname)}</strong>. DNS filtering, AdGuard settings, saved settings, logins, licence and edited device names are retained. Resetting history briefly pauses NetSpecter collection and the web UI; bridge forwarding stays running.</p>
-{notice}{progress}<form method="post" class="maintenance-form">{csrf_input()}<input type="hidden" name="action" value="preview">
-<label>History cleanup<select name="scope"><option value="none">Keep collected history</option><option value="traffic">Reset traffic counters and attribution history only</option><option value="all">Reset all collected history</option></select></label>
-<label class="maintenance-check"><input type="checkbox" name="purge_ids" value="yes"> Purge retired Suricata IDS packages</label>
+{notice}{progress}</div>{preview}<div class="panel">{change_open}<h2>1. Select maintenance</h2><form method="post" class="maintenance-form">{csrf_input()}<input type="hidden" name="action" value="preview">
+<label>History cleanup<select name="scope">{options}</select></label>
+<label class="maintenance-check"><input type="checkbox" name="purge_ids" value="yes" {"checked" if selected_purge else ""}> Purge retired Suricata IDS packages</label>
 <p class="sub">Purge removes only Suricata and suricata-update, without autoremove. All-history cleanup also clears NetSpecter DNS, quality, speed-test and activity history. Traffic-only cleanup keeps those histories. Native AdGuard query logs and existing backups are retained.</p>
-<button type="submit" {disabled}>Preview selected maintenance</button></form></div>{preview}{poll}"""
+<button type="submit" {disabled}>Preview selected maintenance</button></form>{change_close}</div>{poll}"""
     response=Response(shell('Maintenance',body,'Settings'),status=code,mimetype='text/html');response.headers['Cache-Control']='no-store'
+    if waiting:response.headers['Refresh']='3; url=/settings?section=maintenance&result='+(target_id or str(state.get('id') or ''))
     return response
 
 

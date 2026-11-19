@@ -255,3 +255,36 @@ def test_older_active_updater_blocks_maintenance_even_before_shared_lock_rollout
 def test_absent_or_idle_update_unit_allows_maintenance():
     for output in ['LoadState=not-found\nActiveState=inactive','LoadState=loaded\nActiveState=inactive','LoadState=loaded\nActiveState=failed']:
         service.ensure_updater_idle(lambda args:subprocess.CompletedProcess(args,0,stdout=output))
+
+
+
+def test_settings_progress_remains_available_when_setup_fields_are_incomplete(web_client,monkeypatch):
+    import app as web
+    client,config,state,queued=web_client
+    monkeypatch.setattr(web,'auth_required',lambda:True)
+    monkeypatch.setattr(web,'admin_password_set',lambda:True)
+    monkeypatch.setattr(web,'setup_missing_items',lambda:['Confirm AdGuard URL'])
+    assert client.get('/settings?section=maintenance').status_code==200
+    assert client.get('/settings/maintenance').status_code==200
+    assert client.get('/api/maintenance/status?id='+'b'*32).status_code==200
+
+
+def test_ready_preview_puts_explicit_confirmation_before_selection_and_keeps_scope(web_client):
+    client,config,state,queued=web_client
+    state['plan'].update(scope='all',purge_ids=True)
+    text=client.get('/settings?section=maintenance').get_data(as_text=True)
+    assert text.index('2. Confirm and run cleanup')<text.index('1. Select maintenance')
+    assert 'Nothing has been cleared yet' in text
+    assert '<option value="all" selected>' in text
+    assert 'Clear all collected history and purge retired IDS' in text
+
+
+def test_queued_page_has_manual_and_non_javascript_progress_fallback(web_client,monkeypatch):
+    import app as web
+    client,config,state,queued=web_client
+    monkeypatch.setattr(web.maintenance_service,'read_state',lambda **kwargs:{})
+    response=client.get('/settings?section=maintenance&pending='+'c'*32)
+    assert response.status_code==200
+    assert 'Refresh' in response.headers
+    assert 'Check preview or result' in response.get_data(as_text=True)
+    assert 'c'*32 in response.headers['Refresh']
