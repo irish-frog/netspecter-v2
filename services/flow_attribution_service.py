@@ -149,8 +149,8 @@ class Attributor:
                 return Attribution(application,category,domain,"tls_sni","high" if application else "none","" if application else "unrecognized_hostname")
         timestamp=datetime.fromtimestamp(first/1000).strftime("%Y-%m-%d %H:%M:%S")
         try:
-            dns=self.con.execute(f"""SELECT DISTINCT domain FROM {self.dns_prefix}dns_resolution_events
-                WHERE client_ip=? AND resolved_ip=? AND ts<=? AND expires_at>=? LIMIT 33""",(local,remote,timestamp,timestamp)).fetchall()
+            dns=self.con.execute(f"""SELECT DISTINCT lower(rtrim(domain,'.')) FROM {self.dns_prefix}dns_resolution_events
+                WHERE client_ip=? AND resolved_ip=? AND ts<=? AND expires_at>? AND expires_at>ts LIMIT 33""",(local,remote,timestamp,timestamp)).fetchall()
         except sqlite3.OperationalError as error:
             if "no such table" not in str(error): raise
             dns=[]
@@ -265,25 +265,35 @@ def identity_at_time(con,local,first_ms,last_ms):
     return {}
 
 
-def reclassify_unrecognized_batch(con,config,*,after_id='',limit=200,apply=False,domain_classifier=None):
-    """Re-label only already exact-SNI unknowns; preserve all measurements and identities."""
+def reclassify_unrecognized_batch(con,config,*,after_id='',limit=200,apply=False,domain_classifier=None,include_client_dns=False):
+    """Refresh stored SNI labels and optionally revalidate client/time/TTL-scoped DNS."""
     if not 1<=limit<=200:raise ValueError('reclassification batch limit must be 1..200')
     table=flow_table(con);classifier=domain_classifier or classify_domain
-    cursor=con.execute(f"""SELECT measurement_id,source_ip AS src_ip,destination_ip AS dst_ip,hostname,bytes
+    evidence_filter="evidence IN ('tls_sni','client_dns')" if include_client_dns else "evidence='tls_sni'"
+    cursor=con.execute(f"""SELECT measurement_id,source_ip AS src_ip,destination_ip AS dst_ip,
+        source_port AS src_port,destination_port AS dst_port,protocol,first_ms,last_ms,local_ip,remote_ip,hostname,bytes,evidence
         FROM {table} WHERE measurement_id>? AND application IS NULL AND reason='unrecognized_hostname'
-        AND evidence='tls_sni' AND hostname IS NOT NULL ORDER BY measurement_id LIMIT ?""",(after_id,limit))
+        AND {evidence_filter} AND hostname IS NOT NULL ORDER BY measurement_id LIMIT ?""",(after_id,limit))
     names=[column[0] for column in cursor.description];rows=[dict(zip(names,row)) for row in cursor]
-    result={'scanned':len(rows),'candidates':0,'updated':0,'bytes':0,'applications':{},'next_id':rows[-1]['measurement_id'] if rows else after_id}
+    result={'scanned':len(rows),'candidates':0,'updated':0,'bytes':0,'applications':{},'by_evidence':{},'next_id':rows[-1]['measurement_id'] if rows else after_id}
+    resolver=Attributor(con,classifier,config) if include_client_dns else None
     for row in rows:
         if not internet_endpoints(row,config):continue
         application,category=classifier(row['hostname'])
         if not application:continue
+        confidence='high'
+        if row['evidence']=='client_dns':
+            verified=resolver.classify(row,row['local_ip'],row['remote_ip'])
+            if verified.evidence!='client_dns' or verified.application!=application:continue
+            category=verified.category;confidence='medium'
         result['candidates']+=1;result['bytes']+=row['bytes']
         result['applications'][application]=result['applications'].get(application,0)+row['bytes']
+        totals=result['by_evidence'].setdefault(row['evidence'],{'flows':0,'bytes':0})
+        totals['flows']+=1;totals['bytes']+=row['bytes']
         if apply:
-            changed=con.execute(f"""UPDATE {table} SET application=?,category=?,confidence='high',reason='',checked_ms=?
+            changed=con.execute(f"""UPDATE {table} SET application=?,category=?,confidence=?,reason='',checked_ms=?
                 WHERE measurement_id=? AND application IS NULL AND reason='unrecognized_hostname'
-                AND evidence='tls_sni' AND hostname=?""",(application,category,int(time.time()*1000),row['measurement_id'],row['hostname']))
+                AND evidence=? AND hostname=?""",(application,category,confidence,int(time.time()*1000),row['measurement_id'],row['evidence'],row['hostname']))
             result['updated']+=changed.rowcount
     return result
 

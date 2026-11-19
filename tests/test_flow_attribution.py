@@ -9,7 +9,7 @@ CONFIG={"lan_prefix":"192.168.1.","internal_networks":["10.20.30.0/24"]}
 
 
 def database():
-    con=sqlite3.connect(":memory:")
+    con=sqlite3.connect(":memory:",uri=True)
     ensure_metadata_schema(con);ensure_flow_schema(con)
     con.execute("CREATE TABLE dns_resolution_events (client_ip TEXT,resolved_ip TEXT,domain TEXT,ts TEXT,expires_at TEXT)")
     return con
@@ -191,6 +191,61 @@ def test_catalogue_backfill_refuses_internal_or_non_sni_evidence():
     con.execute("UPDATE measured_internet_flows SET destination_ip='192.168.1.10' WHERE measurement_id='one'")
     con.execute("UPDATE measured_internet_flows SET evidence='client_dns' WHERE measurement_id='two'")
     assert reclassify_unrecognized_batch(con,CONFIG,apply=True,domain_classifier=lambda _:('Unsafe','Business'))['updated']==0
+
+
+def test_dns_history_refresh_revalidates_evidence_and_preserves_bytes_and_confidence():
+    from services.flow_attribution_service import reclassify_unrecognized_batch
+    con=database();dns(con,'youtube.com')
+    persist_measurements(con,[flow()],CONFIG,lambda _: (None,'Unknown'))
+    before=con.execute('SELECT measurement_id,bytes,packets,first_ms,last_ms,hostname,evidence FROM measured_internet_flows').fetchall()
+    preview=reclassify_unrecognized_batch(con,CONFIG,include_client_dns=True,domain_classifier=classify)
+    assert preview['candidates']==1 and preview['updated']==0
+    assert preview['by_evidence']=={'client_dns':{'flows':1,'bytes':1000}}
+    applied=reclassify_unrecognized_batch(con,CONFIG,include_client_dns=True,apply=True,domain_classifier=classify)
+    assert applied['updated']==1
+    assert con.execute('SELECT application,confidence FROM measured_internet_flows').fetchone()==('YouTube','medium')
+    assert con.execute('SELECT measurement_id,bytes,packets,first_ms,last_ms,hostname,evidence FROM measured_internet_flows').fetchall()==before
+    assert reclassify_unrecognized_batch(con,CONFIG,include_client_dns=True,apply=True,domain_classifier=classify)['updated']==0
+
+
+@pytest.mark.parametrize('change',[
+    "INSERT INTO dns_resolution_events (ts,client_ip,resolved_ip,domain,expires_at) VALUES ('2027-01-01','192.168.1.5','8.8.8.8','netflix.com','2030-01-01')",
+    "UPDATE dns_resolution_events SET expires_at='2000-01-01'",
+    "UPDATE dns_resolution_events SET client_ip='192.168.1.6'",
+    "DELETE FROM dns_resolution_events",
+])
+def test_dns_history_refresh_does_not_trust_hostname_without_valid_unambiguous_dns(change):
+    from services.flow_attribution_service import reclassify_unrecognized_batch
+    con=database();dns(con,'youtube.com')
+    persist_measurements(con,[flow()],CONFIG,lambda _: (None,'Unknown'))
+    con.execute(change)
+    result=reclassify_unrecognized_batch(con,CONFIG,include_client_dns=True,apply=True,domain_classifier=classify)
+    assert result['updated']==0
+    assert con.execute('SELECT application,bytes FROM measured_internet_flows').fetchone()==(None,1000)
+
+
+def test_dns_expiry_is_exclusive_and_duplicate_case_does_not_create_ambiguity():
+    from datetime import datetime
+    con=database();dns(con,'youtube.com');dns(con,'YOUTUBE.COM.')
+    assert Attributor(con,classify).classify(flow(),'192.168.1.5','8.8.8.8').application=='YouTube'
+    timestamp=datetime.fromtimestamp((NOW-1000)/1000).strftime('%Y-%m-%d %H:%M:%S')
+    con.execute('UPDATE dns_resolution_events SET expires_at=?',(timestamp,))
+    assert Attributor(con,classify).classify(flow(),'192.168.1.5','8.8.8.8').application is None
+
+
+def test_history_dns_attachment_is_read_only_and_used_instead_of_empty_main_table(tmp_path):
+    from services.flow_attribution_service import reclassify_unrecognized_batch
+    path=tmp_path/'dns.db'
+    with sqlite3.connect(path) as disk:
+        disk.execute('CREATE TABLE dns_resolution_events (client_ip TEXT,resolved_ip TEXT,domain TEXT,ts TEXT,expires_at TEXT)')
+        dns(disk,'youtube.com')
+    original=path.read_bytes()
+    con=database();con.execute('ATTACH DATABASE ? AS dnsdb',(path.as_uri()+'?mode=ro',))
+    persist_measurements(con,[flow()],CONFIG,lambda _: (None,'Unknown'))
+    result=reclassify_unrecognized_batch(con,CONFIG,include_client_dns=True,apply=True,domain_classifier=classify)
+    assert result['updated']==1 and path.read_bytes()==original
+    with pytest.raises(sqlite3.OperationalError,match='readonly'):
+        con.execute('DELETE FROM dnsdb.dns_resolution_events')
 
 
 def test_review_groups_only_current_measured_unknowns():

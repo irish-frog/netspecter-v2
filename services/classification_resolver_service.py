@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import ipaddress
 import time
 
 from services.application_classification_service import classify_application, site_application_mappings
@@ -33,20 +34,42 @@ class Classification:
 
 
 def dns_answer_rows(client_ip, domain, answers, observed_at, default_ttl=DEFAULT_DNS_TTL_SECONDS):
+    # A DNS name must not outlive any CNAME on the path to its address.
+    # In particular, TTL=0 means no reusable evidence, not the default TTL.
+    try:
+        datetime.strptime(str(observed_at), "%Y-%m-%d %H:%M:%S")
+        client_ip = str(ipaddress.ip_address(str(client_ip or "").strip()))
+    except (ValueError, TypeError):
+        return []
+    domain = str(domain or "").strip().strip(".").lower()
+    if not domain or len(domain)>253:
+        return []
+    answers = [item for item in answers if isinstance(item, dict)] if isinstance(answers, list) else []
+    def ttl_for(answer):
+        value = answer.get("ttl", default_ttl)
+        try:
+            if isinstance(value, bool):return 0
+            return max(0, min(2**31-1, int(value)))
+        except (ValueError, TypeError, OverflowError):
+            return 0
+    alias_ttls = [ttl_for(answer) for answer in answers if str(answer.get("type") or "").upper()=="CNAME"]
+    addresses = {}
+    for answer in answers:
+        kind = str(answer.get("type") or "").upper()
+        if kind not in {"A", "AAAA"}:continue
+        try:address=ipaddress.ip_address(str(answer.get("value") or "").strip())
+        except ValueError:continue
+        if address.version != (4 if kind=="A" else 6):continue
+        ttl=min([ttl_for(answer),*alias_ttls])
+        address=str(address)
+        addresses[address]=min(ttl,addresses.get(address,ttl))
     rows = []
-    for answer in answers if isinstance(answers, list) else []:
-        if not isinstance(answer, dict):
-            continue
-        if str(answer.get("type") or "").upper() not in {"A", "AAAA"}:
-            continue
-        resolved_ip = str(answer.get("value") or "").strip()
-        if not resolved_ip:
-            continue
-        ttl = _positive_int(answer.get("ttl"), default_ttl)
+    for resolved_ip,ttl in addresses.items():
+        if ttl<=0:continue
         rows.append((
             observed_at,
-            str(client_ip or "").strip(),
-            str(domain or "").strip(".").lower(),
+            client_ip,
+            domain,
             resolved_ip,
             ttl,
             _expires_at(observed_at, ttl),

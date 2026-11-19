@@ -694,3 +694,22 @@ def test_explicit_operator_domain_mapping_retains_application_and_precedence(mon
         {'domain':'*.instagram.com','application':'Operator label','category':'Business Systems','operator':True}])
     result=classify_application(domain='graph.instagram.com',persistent_cache=False)
     assert result['primary_app']=='Operator label' and result['source']=='Site domain mapping'
+
+
+def test_dedicated_service_domains_from_hostname_review():
+    from services.flow_attribution_service import classify_domain
+    expected={
+        'sb.teams.static.microsoft':'Microsoft Teams',
+        'video.twimg.com':'X','abs.twimg.com':'X',
+        'api.pinterest.com':'Pinterest','image.gslb.pinterest.net':'Pinterest','i.pinimg.com':'Pinterest',
+        'setup.rbxcdn.com':'Roblox',
+        'updates.cdn-apple.com':'Apple Update',
+        'cr.m365copilotapp.svc.cloud.microsoft':'Microsoft 365 Copilot',
+        'example.oaiusercontent.com':'OpenAI Uploaded Content',
+    }
+    for domain,app in expected.items():assert classify_domain(domain)[0]==app,domain
+    for domain in ['sb.teams.static.microsoft.evil.example','rbxcdn.com.evil.example',
+                   'shared.map.fastly.net','challenges.cloudflare.com','s3.amazonaws.com',
+                   'res.public.onecdn.static.microsoft','gateway.icloud.com','odr.itunes.apple.com',
+                   'p16-ttam-va.ibyteimg.com','www.gstatic.com']:
+        assert classify_domain(domain)[0] is None,domain

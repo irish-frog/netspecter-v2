@@ -17,10 +17,13 @@ Primary supporting sources reviewed:
 
 `scripts/reclassify-unrecognized.py --expected-hostname HOSTNAME` previews bounded relabeling. Add `--apply` only to update labels. Run with the installed venv Python as root; the command drops to the existing netspecter service identity before opening SQLite, avoiding root-owned database companions.
 
-Only records already carrying exact TLS SNI evidence and `unrecognized_hostname` qualify. Current internet/internal scope is checked again. Byte counts, flow timestamps, identities, hostnames and measured evidence are preserved. Already attributed records, DNS-only evidence and ambiguous/shared hostnames are left alone. Each transaction covers at most 200 candidate rows, with a short pause between write batches. There is no history reset or DNS change.
+Records carrying `unrecognized_hostname` and stored TLS SNI can be refreshed directly. DNS-backed records additionally require revalidation against the read-only attached DNS database: same client IP, destination, connection-start time, valid TTL and agreement of every candidate application. DNS stays medium confidence; contradictory SNI/DNS, missing or expired evidence, already attributed records and shared/unknown hostnames are left alone. Current internet/internal scope is checked again. Byte counts, flow timestamps, identities, hostnames and measured evidence are preserved. Each transaction covers at most 200 candidate rows, with a short pause between write batches. There is no history reset or DNS change. `--tls-only` retains the previous narrow mode. If `limit_reached` is true, resume with `--after-id` using the reported `next_id`; a bounded scan is not proof that the entire history was checked.
 
 ## CI fixture correction
 
 The shared web-config regression test exposed incorrect fixture permissions: root-created config ownership did not match the installer. The fixture now uses root:netspecter ownership, directory 0750 and config 0660 before web normalization. Runtime code is not weakened to accommodate the test. This addresses the failed bridge run 44452978588; the earlier installed owner appliance was independently confirmed collecting and attributing.
 
 The full installer also stops old web/proxy workers before activating new configuration keys. Older workers keep their old supported-key list in memory and could otherwise remove newly introduced flags before their restart. The failure trap resumes whichever core services were previously active. AdGuard is not stopped.
+
+
+See DNS-ATTRIBUTION-REFRESH.md for TTL fixes, new product domains, validation and remaining limits.

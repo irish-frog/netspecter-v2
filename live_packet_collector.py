@@ -4835,9 +4835,10 @@ def import_adguard_querylog():
             device_updates[ip] = (name, first_seen, last_seen, mac, vendor, dtype)
         if not is_reverse_dns_lookup_domain(domain):
             remember_estimated_app_targets(c, client, domain, item.get("answer") or [], ts, blocked)
-        dns_resolution_rows.extend(
-            dns_answer_rows(ip or client, domain, item.get("answer") or [], ts)
-        )
+        if not blocked:
+            dns_resolution_rows.extend(
+                dns_answer_rows(ip or client, domain, item.get("answer") or [], ts)
+            )
 
 
         # Fast duplicate protection for this running process.

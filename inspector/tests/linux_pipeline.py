@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Disposable hosted-CI test of actual systemd services on an isolated Linux bridge."""
 from contextlib import closing
+from datetime import datetime,timedelta
 import json,os
 from pathlib import Path
 import selectors,shutil,socket,sqlite3,struct,subprocess,sys,threading,time
@@ -146,6 +147,25 @@ with socket.create_connection((sys.argv[1],443),timeout=10) as s:
         restored=query("SELECT application,bytes,hostname,evidence FROM measured_internet_flows WHERE measurement_id='"+target[0]+"'")[0]
         assert restored==('YouTube',target[1],target[2],target[3]),restored
         print('PASS: root catalogue CLI preview/apply under the service identity, with immutable measured bytes and SNI evidence.')
+        # Exercise the actual root CLI against client/time/TTL-scoped DNS in its
+        # read-only attached database, including medium confidence preservation.
+        stamp=datetime.now()-timedelta(seconds=60)
+        with closing(sqlite3.connect(DATA/'netspecter_dns.db')) as con,con:
+            con.execute("INSERT INTO dns_resolution_events (ts,client_ip,domain,resolved_ip,ttl,expires_at,source) VALUES (?,?,?,?,?,?,?)",
+                (stamp.strftime('%Y-%m-%d %H:%M:%S'),'192.168.77.5','www.youtube.com','8.8.4.4',600,(stamp+timedelta(seconds=600)).strftime('%Y-%m-%d %H:%M:%S'),'adguard'))
+        with closing(sqlite3.connect(DATA/'netspecter_traffic.db')) as con,con:
+            cursor=con.execute('SELECT * FROM measured_internet_flows WHERE measurement_id=?',(target[0],))
+            sample=dict(zip([col[0] for col in cursor.description],cursor.fetchone()))
+            sample.update(measurement_id='ci-dns-catalogue',source_ip='192.168.77.5',destination_ip='8.8.4.4',source_port=50001,destination_port=443,
+                protocol=17,local_ip='192.168.77.5',remote_ip='8.8.4.4',direction='upload',first_ms=int(stamp.timestamp()*1000)+1000,
+                last_ms=int(stamp.timestamp()*1000)+2000,bytes=1234567,application=None,hostname='www.youtube.com',evidence='client_dns',confidence='none',reason='unrecognized_hostname')
+            con.execute('INSERT INTO measured_internet_flows ('+','.join(sample)+') VALUES ('+','.join('?' for _ in sample)+')',tuple(sample.values()))
+        preview=run(str(DEST/'venv/bin/python'),str(DEST/'scripts/reclassify-unrecognized.py'),'--expected-hostname',socket.gethostname(),capture_output=True)
+        assert json.loads(preview.stdout)['by_evidence']['client_dns']['flows']>=1
+        assert query("SELECT application FROM measured_internet_flows WHERE measurement_id='ci-dns-catalogue'")[0][0] is None
+        run(str(DEST/'venv/bin/python'),str(DEST/'scripts/reclassify-unrecognized.py'),'--apply','--expected-hostname',socket.gethostname(),capture_output=True)
+        assert query("SELECT application,bytes,hostname,evidence,confidence FROM measured_internet_flows WHERE measurement_id='ci-dns-catalogue'")[0]==('YouTube',1234567,'www.youtube.com','client_dns','medium')
+        print('PASS: root DNS catalogue preview/apply with read-only DNS attachment, exact client/time matching and immutable bytes.')
         measured_before=query('SELECT sum(bytes) FROM measured_internet_flows')[0][0]
         bridge_before=counters()
         run('ip','netns','exec',CLIENT,sys.executable,'-c',client_code,'192.168.77.10','www.youtube.com',capture_output=True)
