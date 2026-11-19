@@ -134,6 +134,18 @@ with socket.create_connection((sys.argv[1],443),timeout=10) as s:
         for port,name in zip(ports,['YouTube','Netflix']):
             matching=[row for row in rows if port in row[:2]]
             assert matching and all(row[2]==name and row[3]>0 for row in matching),(port,name,rows)
+        # Exercise root CLI privilege drop and an actual stored-SNI relabel, not only empty preview.
+        target=query("SELECT measurement_id,bytes,hostname,evidence FROM measured_internet_flows WHERE application='YouTube' LIMIT 1")[0]
+        with closing(sqlite3.connect(DATA/'netspecter_traffic.db')) as con,con:
+            con.execute("UPDATE measured_internet_flows SET application=NULL,reason='unrecognized_hostname' WHERE measurement_id=?",(target[0],))
+        preview=run(str(DEST/'venv/bin/python'),str(DEST/'scripts/reclassify-unrecognized.py'),'--expected-hostname',socket.gethostname(),capture_output=True)
+        assert json.loads(preview.stdout)['candidates']>=1
+        assert query("SELECT application FROM measured_internet_flows WHERE measurement_id='"+target[0]+"'")[0][0] is None
+        applied=run(str(DEST/'venv/bin/python'),str(DEST/'scripts/reclassify-unrecognized.py'),'--apply','--expected-hostname',socket.gethostname(),capture_output=True)
+        assert json.loads(applied.stdout)['updated']>=1
+        restored=query("SELECT application,bytes,hostname,evidence FROM measured_internet_flows WHERE measurement_id='"+target[0]+"'")[0]
+        assert restored==('YouTube',target[1],target[2],target[3]),restored
+        print('PASS: root catalogue CLI preview/apply under the service identity, with immutable measured bytes and SNI evidence.')
         measured_before=query('SELECT sum(bytes) FROM measured_internet_flows')[0][0]
         bridge_before=counters()
         run('ip','netns','exec',CLIENT,sys.executable,'-c',client_code,'192.168.77.10','www.youtube.com',capture_output=True)
