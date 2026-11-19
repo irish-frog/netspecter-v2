@@ -1,0 +1,9 @@
+# DNS continuity on LAN-only AdGuard bindings
+
+The earlier deployment guard assumed 127.0.0.1:53. A unit with AdGuard bound only to its LAN address passed client DNS but failed that safety check before installation or cleanup. Do not rebind DNS or disable the guard to work around it.
+
+The guard reads the native AdGuardHome systemd MainPID and numeric IPv4/IPv6 ss port53 sockets. It selects an address served by that exact PID on both UDP and TCP, including family-correct wildcard/specific intersections. Socket records without process ownership do not count. Snapshot records the actual selected address. Verify requires the saved address still be owned by the current native AdGuard process and probes that same address on both transports. It does not switch resolvers to hide a broken listener. UDP dig uses +ignore to avoid an implicit TCP retry. Configuration hashes and active-service checks remain mandatory; DNS settings/services are never modified by this guard.
+
+Tests cover LAN-only binding, concrete/wildcard IPv4 and IPv6, different wildcard/specific transport bindings, mismatched transport/family, PID-prefix collisions/invalid PID, saved-listener disappearance, actual query errors, strict UDP and configuration change refusal. Disposable hosted-root Linux CI adds real port53 UDP/TCP sockets bound to a non-default loopback address, real ss PID ownership, real dig queries and snapshot/verify; only the systemd identity lookup is substituted. The test refuses existing AdGuard configuration/active service and never runs against appliances.
+
+Update-and-clean script must be repinned to a tested release containing this correction before retrying the failed unit. Its prior run fast-forwarded source but stopped before installer, IDS purge or history deletion; local DNS stayed healthy at the LAN address. Existing settings, licence, names, rules and DNS bind configuration remain retained.

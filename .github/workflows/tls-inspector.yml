@@ -65,9 +65,11 @@ jobs:
       - name: Verify shipped binaries when present
         run: if [ -f inspector/prebuilt/linux-x86_64/build.json ]; then python3 inspector/build_manifest.py verify inspector/prebuilt/linux-x86_64; fi
       - name: Integration harness syntax
-        run: python3 -m py_compile inspector/tests/linux_pipeline.py inspector/tests/linux_bundle.py
+        run: python3 -m py_compile inspector/tests/linux_pipeline.py inspector/tests/linux_bundle.py inspector/tests/linux_dns_continuity.py
       - name: Python regression and local socket tests
         run: .ci-venv/bin/python -m pytest -q -p no:cacheprovider
+      - name: Native DNS listener continuity guard
+        run: sudo env GITHUB_ACTIONS=true python3 inspector/tests/linux_dns_continuity.py
       - name: Offline third-appliance deployment bootstrap
         run: sudo env GITHUB_ACTIONS=true python3 inspector/tests/linux_bundle.py
       - name: Real bridge, systemd, TLS and measured-flow integration
