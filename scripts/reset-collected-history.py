@@ -94,8 +94,11 @@ def main():
         try:
             result=coordinated_reset(DATA_ROOT,recovery,scope=scope)
         except BaseException:
-            print(f"Reset did not complete. Recovery journal (if created): {recovery}/reset-journal.json",file=sys.stderr)
-            print(f"Recovery command: python3 {Path(__file__).resolve()} --recover {recovery} --expected-hostname {socket.gethostname()}",file=sys.stderr)
+            if (recovery/"reset-journal.json").exists():
+                print(f"Reset did not complete. Recovery journal: {recovery}/reset-journal.json",file=sys.stderr)
+                print(f"Recovery command: python3 {Path(__file__).resolve()} --recover {recovery} --expected-hostname {socket.gethostname()}",file=sys.stderr)
+            else:
+                print("Reset stopped during preflight, before services or data were changed. No recovery command is needed.",file=sys.stderr)
             raise
         discard_recovery(recovery)
         result["recovery"]="Temporary rollback copy removed after successful service verification."

@@ -20,7 +20,8 @@
     "vendor",
     "device_type",
     "status",
-    "updated_at"
+    "updated_at",
+    "ignored"
   ],
   "device_override_unlocks": [
     "ip",

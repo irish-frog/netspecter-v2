@@ -237,3 +237,19 @@ def test_unknown_reset_scope_is_rejected_before_staging(tmp_path):
     data,recovery,_=fixture(tmp_path)
     with pytest.raises(ValueError,match='scope'):prepare_reset(data,recovery,writers_stopped=True,scope='typo')
     assert not list(recovery.iterdir())
+
+
+@pytest.mark.parametrize('scope',['all','traffic'])
+def test_real_web_device_override_migration_remains_resettable_and_preserves_ignore_flag(tmp_path,monkeypatch,scope):
+    import app as web
+    data,recovery,_=fixture(tmp_path)
+    monkeypatch.setattr(web,'DB_PATH',data/'netspecter.db')
+    monkeypatch.setattr(web,'connect_db',lambda:sqlite3.connect(data/'netspecter.db'))
+    web.ensure_device_overrides_table()
+    with closing(sqlite3.connect(data/'netspecter.db')) as con,con:
+        con.execute('UPDATE device_overrides SET ignored=1')
+    preview_reset(data,scope=scope)
+    prepare_reset(data,recovery,writers_stopped=True,scope=scope)
+    apply_prepared_reset(recovery,writers_stopped=True)
+    assert scalar(data/'netspecter.db','SELECT ignored FROM device_overrides')==1
+    assert scalar(data/'netspecter.db','SELECT name FROM device_overrides')=='Edited device'
