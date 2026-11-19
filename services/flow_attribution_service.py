@@ -263,3 +263,26 @@ def identity_at_time(con,local,first_ms,last_ms):
     except sqlite3.OperationalError as error:
         if "no such table" not in str(error):raise
     return {}
+
+
+def reclassify_unrecognized_batch(con,config,*,after_id='',limit=200,apply=False,domain_classifier=None):
+    """Re-label only already exact-SNI unknowns; preserve all measurements and identities."""
+    if not 1<=limit<=200:raise ValueError('reclassification batch limit must be 1..200')
+    table=flow_table(con);classifier=domain_classifier or classify_domain
+    cursor=con.execute(f"""SELECT measurement_id,source_ip AS src_ip,destination_ip AS dst_ip,hostname,bytes
+        FROM {table} WHERE measurement_id>? AND application IS NULL AND reason='unrecognized_hostname'
+        AND evidence='tls_sni' AND hostname IS NOT NULL ORDER BY measurement_id LIMIT ?""",(after_id,limit))
+    names=[column[0] for column in cursor.description];rows=[dict(zip(names,row)) for row in cursor]
+    result={'scanned':len(rows),'candidates':0,'updated':0,'bytes':0,'applications':{},'next_id':rows[-1]['measurement_id'] if rows else after_id}
+    for row in rows:
+        if not internet_endpoints(row,config):continue
+        application,category=classifier(row['hostname'])
+        if not application:continue
+        result['candidates']+=1;result['bytes']+=row['bytes']
+        result['applications'][application]=result['applications'].get(application,0)+row['bytes']
+        if apply:
+            changed=con.execute(f"""UPDATE {table} SET application=?,category=?,confidence='high',reason='',checked_ms=?
+                WHERE measurement_id=? AND application IS NULL AND reason='unrecognized_hostname'
+                AND evidence='tls_sni' AND hostname=?""",(application,category,int(time.time()*1000),row['measurement_id'],row['hostname']))
+            result['updated']+=changed.rowcount
+    return result

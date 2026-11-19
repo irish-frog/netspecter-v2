@@ -159,7 +159,8 @@ def test_site_domain_mapping_classifies_wildcard_domain(monkeypatch):
     )
     result = classify_application(domain="edge.hvcdn.to")
     assert result["category"] == "Video Streaming"
-    assert result["source"] == "Site category mapping"
+    assert result["source"] == "Site domain mapping"
+    assert result["primary_app"] == "Plex CDN"
 
 
 def test_applications_have_single_primary_category():
@@ -658,3 +659,38 @@ def test_ai_summary_keeps_dns_correlation_separate_from_attributed_bytes(monkeyp
     assert service["dns_correlated_mb"] == 6.0
     assert service["traffic_attribution_status"] == "Partial"
     assert "DNS time-window correlation" in service["classification_sources"]
+
+
+
+def test_product_domain_catalogue_does_not_treat_shared_cdn_as_application(monkeypatch):
+    from services.flow_attribution_service import classify_domain
+    monkeypatch.setattr(application_classification_service,'site_domain_mappings',lambda:[])
+    cases={'scontent-region-1.cdninstagram.com':'Instagram','graph.instagram.com':'Instagram',
+        'graph.facebook.com':'Facebook','aggr-normal.tiktokv.com':'TikTok',
+        'example-my.sharepoint.com':'OneDrive','example.sharepoint.com':'SharePoint',
+        'config.teams.microsoft.com':'Microsoft Teams','roaming.officeapps.live.com':'Microsoft 365',
+        'outlook.office.com':'Outlook','login.microsoftonline.com':'Microsoft Authentication',
+        'persistent.oaistatic.com':'OpenAI Static Assets','js.prd.fusionapi.autodesk.com':'Autodesk Fusion',
+        'location.life360.com':'Life360'}
+    for hostname,application in cases.items():assert classify_domain(hostname)[0]==application,hostname
+    for hostname in ['scontent-region.xx.fbcdn.net','opaque.cloudfront.net','www.googleapis.com',
+        'lh3.googleusercontent.com','shared.execute-api.eu-west-2.amazonaws.com',
+        'cdninstagram.com.evil.example','gateway.icloud.com','api.aps.usa.autodesk.com']:
+        assert classify_domain(hostname)[0] is None,hostname
+
+
+def test_imported_allowlist_category_cannot_hide_more_specific_application(monkeypatch):
+    from services.flow_attribution_service import classify_domain
+    monkeypatch.setattr(application_classification_service,'site_domain_mappings',lambda:[
+        {'domain':'*.sharepoint.com','application':'SharePoint Documents','category':'File Sharing & Storage','operator':False},
+        {'domain':'*.microsoft.com','application':'Microsoft 365','category':'Office & Productivity','operator':False}])
+    assert classify_domain('example-my.sharepoint.com')[0]=='OneDrive'
+    assert classify_domain('config.teams.microsoft.com')[0]=='Microsoft Teams'
+    assert classify_domain('unidentified.microsoft.com')[0] is None
+
+
+def test_explicit_operator_domain_mapping_retains_application_and_precedence(monkeypatch):
+    monkeypatch.setattr(application_classification_service,'site_domain_mappings',lambda:[
+        {'domain':'*.instagram.com','application':'Operator label','category':'Business Systems','operator':True}])
+    result=classify_application(domain='graph.instagram.com',persistent_cache=False)
+    assert result['primary_app']=='Operator label' and result['source']=='Site domain mapping'

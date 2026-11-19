@@ -166,3 +166,28 @@ def test_measured_report_source_never_sums_legacy_estimates(monkeypatch):
     monkeypatch.setattr(reporting,'cfg',lambda:{'passive_attribution_enabled':True})
     source=reporting.estimated_app_source_sql()
     assert 'measured_internet_flows' in source and 'estimated_app_traffic' not in source
+
+
+def test_catalogue_backfill_uses_stored_exact_sni_without_rewriting_measurements():
+    from services.flow_attribution_service import reclassify_unrecognized_batch
+    con=database();metadata(con,'newapp.example.com');metadata(con,'shared.example.net',sport=12346)
+    persist_measurements(con,[flow(),flow('two',sport=12346)],CONFIG,lambda _: (None,'Unknown'))
+    before=con.execute('SELECT measurement_id,source_ip,destination_ip,bytes,packets,first_ms,last_ms,hostname,evidence FROM measured_internet_flows ORDER BY measurement_id').fetchall()
+    classifier=lambda name: ('New App','Business') if name=='newapp.example.com' else (None,'Unknown')
+    preview=reclassify_unrecognized_batch(con,CONFIG,domain_classifier=classifier)
+    assert preview['candidates']==1 and preview['bytes']==1000 and preview['updated']==0
+    assert con.execute('SELECT COUNT(*) FROM measured_internet_flows WHERE application IS NOT NULL').fetchone()[0]==0
+    applied=reclassify_unrecognized_batch(con,CONFIG,apply=True,domain_classifier=classifier)
+    assert applied['updated']==1
+    assert con.execute('SELECT measurement_id,source_ip,destination_ip,bytes,packets,first_ms,last_ms,hostname,evidence FROM measured_internet_flows ORDER BY measurement_id').fetchall()==before
+    assert con.execute("SELECT application FROM measured_internet_flows WHERE measurement_id='two'").fetchone()[0] is None
+    assert reclassify_unrecognized_batch(con,CONFIG,apply=True,domain_classifier=classifier)['updated']==0
+
+
+def test_catalogue_backfill_refuses_internal_or_non_sni_evidence():
+    from services.flow_attribution_service import reclassify_unrecognized_batch
+    con=database();metadata(con,'newapp.example.com');metadata(con,'other.example.com',sport=12346)
+    persist_measurements(con,[flow(),flow('two',sport=12346)],CONFIG,lambda _: (None,'Unknown'))
+    con.execute("UPDATE measured_internet_flows SET destination_ip='192.168.1.10' WHERE measurement_id='one'")
+    con.execute("UPDATE measured_internet_flows SET evidence='client_dns' WHERE measurement_id='two'")
+    assert reclassify_unrecognized_batch(con,CONFIG,apply=True,domain_classifier=lambda _:('Unsafe','Business'))['updated']==0

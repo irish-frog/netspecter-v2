@@ -45,3 +45,8 @@ Root via `su -` is required to install services/reset history. An existing opera
 Runtime implementation and Linux validation are complete. The published release includes checked binaries and explicit deployment/history-cleanup tooling. The portable deployment archive and site-specific operator handover are generated outside the public repo. Remaining live work requires an operator root shell: install/verify/reset the owner appliance, leave the held client unchanged, and deploy the third only when access returns. IPv4 is the primary headline accounting scope; encrypted QUIC/ECH and unseen VPN inner traffic can remain unknown. Never inflate coverage to hide this.
 
 Keep the client on hold and the third appliance untouched. Record installed revision, test evidence and remaining root actions explicitly when finishing. Settings are outside Git at `/etc/netspecter/config.json`; split SQLite data is under `/var/lib/netspecter`. Never use broad `rm` globs against those databases to clear history.
+
+
+## Attribution catalogue follow-up
+
+Owner review identified 99 distinct unrecognized hostnames. Product-specific rules and imported-allowlist precedence fixes resolve most of the reviewed unknown-hostname bytes offline, without guessing shared providers. A bounded preview/apply command relabels only existing exact-SNI unknowns and preserves measurements. See `docs/engineering/DOMAIN-CATALOGUE-UPDATE.md`. Full local suite: 383 passed, five Linux-only skipped. Linux CI remains the publication gate; the test fixture now matches production config ownership. No client or third-appliance action is authorized.

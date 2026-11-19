@@ -175,7 +175,7 @@ def classify_application(application_name="", domain="", destination_ip="", sni=
 
     if domain_text:
         site_match = classify_site_domain(domain_text)
-        if site_match:
+        if site_match and site_match.get("primary_app"):
             return site_match
 
     signature_match = classify_metadata_cached(
@@ -846,11 +846,12 @@ def normalised_site_domain_mappings(config):
     mappings = config.get("site_domain_mappings")
     if not isinstance(mappings, list):
         mappings = []
+    manual_count = len(mappings)
     if config.get("microsoft365_endpoint_import_enabled"):
         mappings = list(mappings) + cached_microsoft365_domain_mappings(config.get("microsoft365_endpoint_cache_hours", 168))
     output = []
     seen = set()
-    for row in mappings:
+    for index,row in enumerate(mappings):
         if not isinstance(row, dict):
             continue
         app_name = str(row.get("application") or "").strip()
@@ -862,7 +863,7 @@ def normalised_site_domain_mappings(config):
         if key in seen:
             continue
         seen.add(key)
-        output.append({"application": app_name, "category": category, "domain": pattern})
+        output.append({"application": app_name, "category": category, "domain": pattern, "operator": index < manual_count})
     return output
 
 
@@ -900,10 +901,16 @@ def _path_mtime(path):
 def classify_site_domain(domain):
     for mapping in site_domain_mappings():
         if domain_matches({"domains": [mapping["domain"]]}, domain):
-            return classify_category_name(mapping.get("category")) or classification(
+            result = classify_category_name(mapping.get("category")) or classification(
                 {"name": mapping["category"], "usage_group": "Site Mapping", "color": "#5ba8ff"},
                 "Site domain mapping",
             )
+            if mapping.get("operator", True):
+                result.update(primary_app=mapping["application"],primary_category=mapping["category"],confidence=100,source="Site domain mapping")
+            else:
+                # A network allowlist identifies a service area, not necessarily an app.
+                result["source"]="Microsoft 365 endpoint category"
+            return result
     return None
 
 

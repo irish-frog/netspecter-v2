@@ -78,7 +78,10 @@ def main():
         config=dict(packet_iface=BRIDGE,lan_prefix='192.168.77.',gateway_ip='192.168.77.1',adguard_url='',unifi_url='',adguard_client_import_enabled=False,
                     netbios_discovery_enabled=False,internet_quality_targets=['127.0.0.1'],internet_quality_dns_server='127.0.0.1',internet_quality_external_dns_enabled=False,
                     internet_quality_interval_seconds=3600,config_change_monitor_interval_seconds=3600,flow_visibility_enabled=True)
-        (CONFIG/'config.json').write_text(json.dumps(config));run('chmod','644',str(CONFIG/'config.json'))
+        (CONFIG/'config.json').write_text(json.dumps(config))
+        # Match production installer permissions before exercising the web normalizer.
+        run('chown','root:netspecter',str(CONFIG),str(CONFIG/'config.json'))
+        run('chmod','750',str(CONFIG));run('chmod','660',str(CONFIG/'config.json'))
         run('install','-m','644',str(DEST/'systemd/netspecter-collector.service'),'/etc/systemd/system/netspecter-collector.service')
         run('bash',str(DEST/'scripts/install-tls-inspector.sh'))
         # Exercise the actual web loader before collection; it must retain activation.
@@ -88,6 +91,7 @@ def main():
         wait_for(lambda: query('SELECT count(*) FROM collector_heartbeat WHERE id=1')[0][0],30)
         time.sleep(3)
         run(sys.executable,str(DEST/'scripts/verify-passive-attribution.py'))
+        run(str(DEST/'venv/bin/python'),str(DEST/'scripts/reclassify-unrecognized.py'),'--expected-hostname',socket.gethostname())
         server_code='''import socket
 s=socket.socket();s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1);s.bind(('0.0.0.0',443));s.listen();s.settimeout(180)
 print('ready',flush=True)

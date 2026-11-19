@@ -38,7 +38,7 @@
       "icon": "briefcase",
       "display_order": 40,
       "color": "#20df9f",
-      "applications": ["Microsoft 365", "Office 365", "Microsoft Office", "Google Workspace", "Google Docs", "Google Sheets", "Google Slides", "LibreOffice Online", "Canva", "Notion", "Adobe Creative Cloud", "Adobe"],
+      "applications": ["Microsoft 365", "Office 365", "Microsoft Office", "Google Workspace", "Google Docs", "Google Sheets", "Google Slides", "LibreOffice Online", "Canva", "Notion", "Adobe Creative Cloud", "Adobe", "Autodesk Fusion"],
       "domains": ["*.microsoft365.com", "*.office.com", "*.office365.com", "*.office.net", "*.officeapps.live.com", "*.googleworkspace.com", "docs.google.com", "sheets.google.com", "slides.google.com", "*.canva.com", "*.notion.so", "*.adobe.com", "*.adobe.io"]
     },
     {
