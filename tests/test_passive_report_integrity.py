@@ -40,6 +40,8 @@ def test_retired_security_option_is_absent_and_excel_keeps_real_category(monkeyp
     monkeypatch.setattr(web,'build_xlsx',lambda sheets:sheets)
     context={'overview':{'total_mb':1},'start_time':'2026-11-18','end_time':'2026-11-19','category_report':{},'category_rows':[],
       'app_rows':[{'application':'TikTok','category':'TikTok','primary_category':'Social Media','total_mb':1,'devices':1}]}
+    con=sqlite3.connect(':memory:');con.row_factory=sqlite3.Row
+    context['app_rows']=con.execute("SELECT 'TikTok' AS application,'TikTok' AS category,'Social Media' AS primary_category,1 AS total_mb,1 AS devices").fetchall()
     sheets=dict(web.reporting_xlsx_response(context,{'applications','security'}))
     assert sheets['Top Apps'][1][:2]==['TikTok','Social Media']
     assert 'Security Events' not in sheets

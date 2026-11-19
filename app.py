@@ -9027,6 +9027,7 @@ def reporting_page():
     def top_application_report_rows():
         rows_html = ""
         for row in (app_rows or [])[:5]:
+            row = dict(row)
             traffic = float(row["total_mb"] or 0)
             app_name = str(row.get("application") or row["category"] or "Other")
             app_category = str(row.get("primary_category") or row["category"] or "Other")
@@ -9898,6 +9899,7 @@ def reporting_xlsx_response(context, sections=None):
         sheets.append(("Applications", rows))
         app_rows = [["Application", "Category", "Data Used", "Devices"]]
         for row in (context.get("app_rows") or [])[:5]:
+            row = dict(row)
             name = row["category"] or "Other"
             app_rows.append([row.get("application") or name, row.get("primary_category") or name, fmt_mb(row["total_mb"] or 0), int(row["devices"] or 0)])
         sheets.append(("Top Apps", app_rows))
