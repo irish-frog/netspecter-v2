@@ -22,3 +22,5 @@ Only records already carrying exact TLS SNI evidence and `unrecognized_hostname`
 ## CI fixture correction
 
 The shared web-config regression test exposed incorrect fixture permissions: root-created config ownership did not match the installer. The fixture now uses root:netspecter ownership, directory 0750 and config 0660 before web normalization. Runtime code is not weakened to accommodate the test. This addresses the failed bridge run 44452978588; the earlier installed owner appliance was independently confirmed collecting and attributing.
+
+The full installer also stops old web/proxy workers before activating new configuration keys. Older workers keep their old supported-key list in memory and could otherwise remove newly introduced flags before their restart. The failure trap resumes whichever core services were previously active. AdGuard is not stopped.

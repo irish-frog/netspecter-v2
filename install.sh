@@ -32,15 +32,17 @@ fi
 if command -v python3 >/dev/null 2>&1 && [ -f "$CONFIG_DIR/config.json" ]; then
   bash "$SOURCE_DIR/scripts/install-tls-inspector.sh" --verify-only
 fi
-collector_was_active=0
-if systemctl is-active --quiet netspecter-collector; then collector_was_active=1; fi
-resume_collector_on_failure() {
+previous_active_services=()
+for unit in netspecter-collector netspecter-web netspecter-https; do
+  if systemctl is-active --quiet "$unit"; then previous_active_services+=("$unit"); fi
+done
+resume_services_on_failure() {
   local status=$?
-  if ((status != 0 && collector_was_active)) && [ ! -e "$DATA_DIR/history-reset.in-progress" ]; then
-    systemctl start netspecter-collector || true
+  if ((status != 0 && ${#previous_active_services[@]})) && [ ! -e "$DATA_DIR/history-reset.in-progress" ]; then
+    systemctl start "${previous_active_services[@]}" || true
   fi
 }
-trap resume_collector_on_failure EXIT
+trap resume_services_on_failure EXIT
 
 detect_os() {
   if [ ! -r /etc/os-release ]; then
@@ -469,7 +471,9 @@ mkdir -p "$INSTALL_DIR/static" "$INSTALL_DIR/scripts" "$INSTALL_DIR/adguard" "$C
 echo "[5/10] Copying NetSpecter files..."
 # A collector started outside systemd, or from an older build without locking,
 # can otherwise keep writing stale totals after an upgrade.
-systemctl stop netspecter-collector netspecter-live >/dev/null 2>&1 || true
+# Old web workers can rewrite config using their pre-upgrade supported-key list.
+# Stop them before activating new flags; restore previous services on failure.
+systemctl stop netspecter-https netspecter-web netspecter-collector netspecter-live >/dev/null 2>&1 || true
 systemctl disable netspecter-live >/dev/null 2>&1 || true
 rm -f "$SERVICE_DIR/netspecter-live.service"
 systemctl daemon-reload
