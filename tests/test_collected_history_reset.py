@@ -191,3 +191,49 @@ def test_completed_recovery_discards_only_exact_known_sidecars(tmp_path):
     with pytest.raises(ValueError,match='Unexpected recovery file'):discard_recovery(recovery)
     unexpected.unlink();discard_recovery(recovery)
     assert not recovery.exists()
+
+
+
+def test_traffic_only_reset_clears_all_measurement_generations_and_preserves_other_rows(tmp_path):
+    from services.history_reset_service import TRAFFIC_TABLES
+    data,recovery,config=fixture(tmp_path)
+    with closing(sqlite3.connect(data/"netspecter_traffic.db")) as con,con:
+        for table in TRAFFIC_TABLES-{"traffic_intervals"}:
+            con.execute(f'CREATE TABLE "{table}"(id INTEGER PRIMARY KEY,value TEXT)')
+            con.execute(f'INSERT INTO "{table}" VALUES(1,?)',('old',))
+    with closing(sqlite3.connect(data/"netspecter_dns.db")) as con,con:
+        con.execute("INSERT INTO dns_import_state VALUES(1,'2026-01-01')")
+    (data/"ids_email_state.json").write_text('{"keep":true}')
+    expected={}
+    for name in ('netspecter.db','netspecter_dns.db','netspecter_traffic.db'):
+        with closing(sqlite3.connect(data/name)) as con:
+            expected[name]={table:con.execute(f'SELECT * FROM "{table}"').fetchall()
+              for (table,) in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'") if table not in TRAFFIC_TABLES}
+    preview=preview_reset(data,scope="traffic")
+    assert preview['databases']['netspecter_dns.db']['dns_querylog']['action']=='preserve unchanged'
+    assert preview['databases']['netspecter_traffic.db']['traffic_intervals']['action']=='clear collected history'
+    prepare_reset(data,recovery,writers_stopped=True,scope="traffic")
+    apply_prepared_reset(recovery,writers_stopped=True)
+    for name,tables in expected.items():
+        with closing(sqlite3.connect(data/name)) as con:
+            for table,rows in tables.items():assert con.execute(f'SELECT * FROM "{table}"').fetchall()==rows
+    for table in TRAFFIC_TABLES:assert scalar(data/'netspecter_traffic.db',f'SELECT COUNT(*) FROM "{table}"')==0
+    assert (data/'ids_email_state.json').read_text()=='{"keep":true}'
+    assert json.loads((data/'cache.json').read_text())=={}
+    assert (config/'secret.key').read_text()=='private-key'
+
+
+def test_traffic_only_partial_swap_is_recoverable(tmp_path):
+    data,recovery,_=fixture(tmp_path)
+    prepare_reset(data,recovery,writers_stopped=True,scope="traffic")
+    def fail(_name):raise InterruptedError('interrupted traffic reset')
+    with pytest.raises(InterruptedError):apply_prepared_reset(recovery,writers_stopped=True,fault_hook=fail)
+    recover_reset(recovery,writers_stopped=True)
+    assert scalar(data/'netspecter_traffic.db','SELECT total_mb FROM traffic_intervals')==123
+    assert scalar(data/'netspecter_dns.db','SELECT domain FROM dns_querylog')=='old.example.com'
+
+
+def test_unknown_reset_scope_is_rejected_before_staging(tmp_path):
+    data,recovery,_=fixture(tmp_path)
+    with pytest.raises(ValueError,match='scope'):prepare_reset(data,recovery,writers_stopped=True,scope='typo')
+    assert not list(recovery.iterdir())

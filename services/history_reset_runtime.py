@@ -116,11 +116,11 @@ def _marker_create(path):
     with os.fdopen(descriptor,"w") as handle:handle.write("History reset in progress; use the recorded recovery journal if interrupted.\n")
 
 
-def coordinated_reset(data_root,recovery,controller=None,protection=None,lock_factory=None):
+def coordinated_reset(data_root,recovery,controller=None,protection=None,lock_factory=None,*,scope="all"):
     root=Path(data_root).resolve(strict=True);recovery=Path(recovery).resolve(strict=True)
     controller=controller or SystemdController();protection=protection or DataDirectoryProtection(root)
     lock_factory=lock_factory or collector_lock
-    preview_reset(root)
+    preview_reset(root,scope=scope)
     marker=root/MARKER
     if marker.exists() or marker.is_symlink():raise ValueError("An interrupted reset needs recovery before another reset")
     states=controller.capture()
@@ -132,7 +132,7 @@ def coordinated_reset(data_root,recovery,controller=None,protection=None,lock_fa
         print("Pausing NetSpecter data writers; DNS filtering and bridge forwarding remain running.",file=sys.stderr,flush=True)
         stopped=True;controller.stop(states)
         with lock_factory(root):
-            plan=prepare_reset(root,recovery,writers_stopped=True,progress=lambda message:print(message,file=sys.stderr,flush=True))
+            plan=prepare_reset(root,recovery,writers_stopped=True,progress=lambda message:print(message,file=sys.stderr,flush=True),scope=scope)
             prepared=True
             apply_prepared_reset(recovery,writers_stopped=True)
         marker.unlink();marker_owned=False;protection.restore()

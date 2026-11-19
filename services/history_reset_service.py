@@ -21,6 +21,20 @@ KEEP=frozenset({"devices","device_overrides","device_override_unlocks","device_i
     "application_aliases","application_domain_patterns","application_tags","site_category_overrides","application_signatures",
     "monitor_alert_state"})
 MANIFEST_PATH=Path(__file__).resolve().parents[1]/"config"/"history-reset-schema-v1.json"
+# Traffic measurement, aggregation and attribution state only. DNS, identity,
+# settings, monitoring, speed tests and internet-quality history are retained.
+TRAFFIC_TABLES=frozenset({"traffic_samples","traffic_intervals","traffic_hourly_rollups",
+    "estimated_app_traffic","estimated_app_hourly_rollups","remote_traffic_intervals",
+    "remote_traffic_hourly_rollups","raw_flow_events","destination_identity",
+    "hourly_device_usage","daily_device_usage","hourly_app_usage","daily_app_usage",
+    "classification_cache","classified_flow_rollups","classified_flow_facts",
+    "unknown_traffic_review","unknown_traffic_queue","live_device_speed",
+    "tls_connection_metadata","measured_internet_flows","collector_heartbeat"})
+
+
+def validate_scope(scope):
+    if scope not in {"all","traffic"}:raise ValueError("Unsupported history reset scope")
+
 
 
 def load_manifest():
@@ -80,7 +94,8 @@ def inspect_database(path,manifest=None):
     finally:con.close()
 
 
-def preview_reset(data_root,manifest=None):
+def preview_reset(data_root,manifest=None,*,scope="all"):
+    validate_scope(scope)
     root=Path(data_root).resolve(strict=True)
     if not root.is_dir():raise ValueError("Data root is not a directory")
     result={"databases":{},"cache_files":[],"preserves":"Settings, credentials, licences, existing backups, edited names, stable identity inventory, custom classifications and user assignments. Monitor notification deduplication state is retained.",
@@ -92,10 +107,14 @@ def preview_reset(data_root,manifest=None):
             continue
         _regular(path)
         result["databases"][name]=inspect_database(path,manifest)
-    for name in CACHE_FILES:
+        if scope=="traffic":
+            for table,details in result["databases"][name].items():
+                details["action"]="clear collected history" if table in TRAFFIC_TABLES else "preserve unchanged"
+    for name in (CACHE_FILES if scope=="all" else ("cache.json","live_snapshot.json")):
         path=root/name
         if path.exists() or path.is_symlink():
             _regular(path);result["cache_files"].append(name)
+    if scope=="traffic":result["scope"]="Traffic counters/history and attribution metadata only; all other database rows including DNS history are preserved unchanged."
     return result
 
 
@@ -171,11 +190,29 @@ def _copy_retained(source,target,table,cutoff):
     return {"rows":count,"digest":actual.hexdigest()}
 
 
-def _stage_database(snapshot,destination,inventory,cutoff):
+def _stage_database(snapshot,destination,inventory,cutoff,*,scope="all"):
     source=_read_database(snapshot);target=sqlite3.connect(destination)
     os.chmod(destination,0o600)
     try:
         target.execute("PRAGMA trusted_schema=OFF")
+        if scope=="traffic":
+            # Copy the complete schema/data first; delete only the reviewed table set.
+            # This retains even non-keyed history tables without rewriting identity fields.
+            source.backup(target)
+            target.execute("PRAGMA journal_mode=DELETE")
+            target.execute("PRAGMA synchronous=FULL")
+            preserved={}
+            for table,details in inventory.items():
+                if table in TRAFFIC_TABLES:target.execute(f"DELETE FROM {_quote(table)}")
+                else:preserved[table]={"rows":details["rows"]}
+            target.commit()
+            if target.execute("PRAGMA quick_check(1)").fetchone()[0]!="ok" or target.execute("PRAGMA foreign_key_check").fetchone():
+                raise ValueError("Traffic reset integrity verification failed")
+            for table,details in inventory.items():
+                expected=0 if table in TRAFFIC_TABLES else details["rows"]
+                if target.execute(f"SELECT COUNT(*) FROM {_quote(table)}").fetchone()[0]!=expected:
+                    raise ValueError("Traffic reset row count verification failed")
+            return preserved
         target.execute("PRAGMA journal_mode=DELETE")
         target.execute("PRAGMA synchronous=FULL")
         objects=source.execute("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END,name").fetchall()
@@ -199,11 +236,11 @@ def _stage_database(snapshot,destination,inventory,cutoff):
     finally:source.close();target.close()
 
 
-def prepare_reset(data_root,recovery,*,writers_stopped=False,cutoff=None,manifest=None,progress=None):
+def prepare_reset(data_root,recovery,*,writers_stopped=False,cutoff=None,manifest=None,progress=None,scope="all"):
     if not writers_stopped:raise ValueError("Writers must be stopped before preparing reset")
     root=Path(data_root).resolve(strict=True);recovery=Path(recovery).resolve(strict=True)
     if recovery==root or recovery.is_relative_to(root):raise ValueError("Recovery snapshots must be outside the application data directory")
-    inventory=preview_reset(root,manifest)
+    inventory=preview_reset(root,manifest,scope=scope)
     cutoff=cutoff or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     size=sum((root/name).stat().st_size+(root/(name+"-wal")).stat().st_size if (root/(name+"-wal")).exists() else (root/name).stat().st_size for name in inventory["databases"])
     size+=sum((root/name).stat().st_size for name in inventory["cache_files"])
@@ -214,7 +251,7 @@ def prepare_reset(data_root,recovery,*,writers_stopped=False,cutoff=None,manifes
     stage=Path(tempfile.mkdtemp(prefix=".history-reset-stage-",dir=root));os.chmod(stage,0o700)
     snapshots=recovery/"databases";snapshots.mkdir(mode=0o700)
     cache_backup=recovery/"cache-files";cache_backup.mkdir(mode=0o700)
-    plan={"version":1,"data_root":str(root),"stage_root":str(stage),"cutoff":cutoff,"files":[],"applied":[],"replacing":None,"status":"preparing","inventory":inventory}
+    plan={"version":1,"data_root":str(root),"stage_root":str(stage),"cutoff":cutoff,"files":[],"applied":[],"replacing":None,"status":"preparing","inventory":inventory,"scope":scope}
     write_journal(recovery,plan)
     for name,tables in inventory["databases"].items():
         path=root/name;attributes=_attributes(_regular(path))
@@ -236,7 +273,7 @@ def prepare_reset(data_root,recovery,*,writers_stopped=False,cutoff=None,manifes
         finally:guard.rollback();guard.close()
         with closing(_read_database(snapshots/name)) as check:
             if check.execute("PRAGMA quick_check(1)").fetchone()[0]!="ok":raise ValueError("Recovery snapshot integrity failed")
-        retained=_stage_database(snapshots/name,stage/name,tables,cutoff)
+        retained=_stage_database(snapshots/name,stage/name,tables,cutoff,scope=scope)
         _restore_attributes(stage/name,attributes)
         plan["files"].append({"name":name,"kind":"database","attributes":attributes,"backup_sha256":_file_digest(snapshots/name),"retained":retained,"bytes_before":path.stat().st_size,"bytes_after":(stage/name).stat().st_size})
         write_journal(recovery,plan)

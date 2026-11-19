@@ -66,9 +66,11 @@ def main():
     action.add_argument("--recover",metavar="RECOVERY_DIRECTORY")
     action.add_argument("--discard-completed",metavar="RECOVERY_DIRECTORY")
     parser.add_argument("--expected-hostname",help="Required for any action; must match this appliance exactly")
+    parser.add_argument("--traffic-only",action="store_true",help="Clear traffic measurements/attribution only; retain DNS and other collected history")
     args=parser.parse_args()
+    scope="traffic" if args.traffic_only else "all"
     if not (args.apply or args.recover or args.discard_completed):
-        print(json.dumps(preview_reset(DATA_ROOT),indent=2));return
+        print(json.dumps(preview_reset(DATA_ROOT,scope=scope),indent=2));return
     if sys.platform!="linux" or os.geteuid()!=0:parser.error("Apply/recovery requires a root shell on the Linux appliance")
     if args.expected_hostname!=socket.gethostname():parser.error("Supply the exact authorized appliance hostname with --expected-hostname")
     if DATA_ROOT.is_symlink():parser.error("Refusing linked application data directory")
@@ -90,7 +92,7 @@ def main():
         recovery=RECOVERY_ROOT/("reset-"+uuid.uuid4().hex)
         recovery.mkdir(mode=0o700)
         try:
-            result=coordinated_reset(DATA_ROOT,recovery)
+            result=coordinated_reset(DATA_ROOT,recovery,scope=scope)
         except BaseException:
             print(f"Reset did not complete. Recovery journal (if created): {recovery}/reset-journal.json",file=sys.stderr)
             print(f"Recovery command: python3 {Path(__file__).resolve()} --recover {recovery} --expected-hostname {socket.gethostname()}",file=sys.stderr)
