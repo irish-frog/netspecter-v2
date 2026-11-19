@@ -63,6 +63,9 @@ APPLICATION_DOMAINS = {
     "Home Assistant Connectivity": ["checkonline.home-assistant.io"],
     "Firebase Remote Config": ["firebaseremoteconfig.googleapis.com"],
     "N-able Software Distribution": ["sis.n-able.com"],
+    "GitHub Packages": ["ghcr.io", "pkg-containers.githubusercontent.com"],
+    "GitHub Releases": ["release-assets.githubusercontent.com"],
+    "Adobe Acrobat Downloads": ["ardownload.adobe.com", "ardownload2.adobe.com", "ardownload3.adobe.com", "armdl.adobe.com"],
     "N-able Take Control": ["*.mspa.n-able.com", "comserver-hb-*.n-able.com"],
 }
 

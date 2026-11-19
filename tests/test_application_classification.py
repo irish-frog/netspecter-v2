@@ -738,3 +738,31 @@ def test_dedicated_service_endpoints_are_identified_without_guessing_calling_app
       'ncod1.foo.n-able.com','weatherkit.apple.com.evil.invalid','weatherkit-apple.com',
       'relay.net.anydesk.com.evil.invalid','sis.n-able.com.evil.invalid','x.safebrowsing.googleapis.com'):
         assert classify_domain(host)[0] is None,host
+
+
+def test_documented_package_and_download_endpoints_are_narrow(monkeypatch):
+    from services.flow_attribution_service import classify_domain
+    monkeypatch.setattr(application_signature_service, 'query', lambda *args: [])
+    monkeypatch.setattr(application_classification_service, 'site_domain_mappings', lambda: [])
+    application_signature_service._SIGNATURE_CACHE['expires_at'] = 0
+    expected = {
+        'pkg-containers.githubusercontent.com': 'GitHub Packages',
+        'ghcr.io': 'GitHub Packages',
+        'release-assets.githubusercontent.com': 'GitHub Releases',
+        'ardownload.adobe.com': 'Adobe Acrobat Downloads',
+        'ardownload2.adobe.com': 'Adobe Acrobat Downloads',
+        'ardownload3.adobe.com': 'Adobe Acrobat Downloads',
+        'armdl.adobe.com': 'Adobe Acrobat Downloads',
+    }
+    for hostname, app in expected.items():
+        assert classify_domain(hostname) == (app, 'Downloads'), hostname
+        for invalid in ('x.' + hostname, hostname + '.evil.invalid'):
+            assert classify_domain(invalid)[0] is None, invalid
+    for hostname in ('raw.githubusercontent.com', 'objects.githubusercontent.com',
+                     'unidentified.githubusercontent.com', 'github.com',
+                     'unidentified.adobe.com', 'photoshop.adobe.com', 'armmf.adobe.com',
+                     'pkg-containers.githubusercontent.com.evil.invalid',
+                     'x.pkg-containers.githubusercontent.com', 'x.ghcr.io',
+                     'ardownload3.adobe.com.evil.invalid', 'x.ardownload3.adobe.com',
+                     'challenges.cloudflare.com', 'shared.cloudfront.net'):
+        assert classify_domain(hostname)[0] is None, hostname

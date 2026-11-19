@@ -200,7 +200,7 @@
       "icon": "download",
       "display_order": 140,
       "color": "#f8c84e",
-      "applications": ["Software Downloads", "ISO Downloads", "Package Managers", "Downloads", "npm", "PyPI", "NuGet", "Docker Hub", "GitHub Releases"],
+      "applications": ["Software Downloads", "ISO Downloads", "Package Managers", "Downloads", "npm", "PyPI", "NuGet", "Docker Hub", "GitHub Releases", "GitHub Packages", "Adobe Acrobat Downloads"],
       "domains": ["*.download.com", "*.sourceforge.net", "*.npmjs.com", "*.pypi.org", "*.nuget.org", "*.docker.com", "*.github.com", "*.githubusercontent.com"]
     },
     {

@@ -258,3 +258,22 @@ def test_review_groups_only_current_measured_unknowns():
     assert rows[0]['hostname']=='newapp.example.com' and rows[0]['devices_seen']==1
     con.execute("UPDATE measured_internet_flows SET application='Verified' WHERE measurement_id='two'")
     assert unknown_measured_review(con,since_ms=NOW-2000)[0]['total_bytes']==1000
+
+
+def test_download_catalogue_requires_unanimous_dns_and_keeps_measurements(monkeypatch):
+    from services import application_signature_service, application_classification_service
+    monkeypatch.setattr(application_signature_service, 'query', lambda *args: [])
+    monkeypatch.setattr(application_classification_service, 'site_domain_mappings', lambda: [])
+    application_signature_service._SIGNATURE_CACHE['expires_at'] = 0
+    con = database()
+    dns(con, 'pkg-containers.githubusercontent.com')
+    dns(con, 'ghcr.io')
+    assert persist_measurements(con, [flow()], CONFIG) == 1
+    assert con.execute('SELECT application,evidence,bytes FROM measured_internet_flows').fetchone() == ('GitHub Packages', 'client_dns', 1000)
+    dns(con, 'unidentified.githubusercontent.com')
+    assert persist_measurements(con, [flow('ambiguous')], CONFIG) == 1
+    assert con.execute("SELECT application,reason,bytes FROM measured_internet_flows WHERE measurement_id='ambiguous'").fetchone() == (None, 'ambiguous_dns', 1000)
+    metadata(con, 'ardownload3.adobe.com', sport=12346)
+    assert persist_measurements(con, [flow('adobe', sport=12346)], CONFIG) == 1
+    assert con.execute("SELECT application,evidence,bytes FROM measured_internet_flows WHERE measurement_id='adobe'").fetchone() == ('Adobe Acrobat Downloads', 'tls_sni', 1000)
+    assert con.execute('SELECT SUM(bytes) FROM measured_internet_flows').fetchone()[0] == 3000

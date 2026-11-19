@@ -29,3 +29,17 @@ Owner runtime92accaa5 installed via normal updater; no reset. Local full suite43
 Live bounded preview scanned1464unknown-hostname rows, found81eligible labels/221,690bytes; apply scanned1474and updated exactly81/221,690bytes. Breakdown:24TLS-SNI flows/136,733bytes;57client-DNS flows/84,957bytes. Service labels cover Firebase Remote Config, WeatherKit, Home Assistant Connectivity, N-able software distribution/Take Control, Safe Browsing and AnyDesk. Repeat full bounded preview scanned1410rows with0candidates and no cap hit. No measurements deleted or settings changed; byte/time preservation is covered by actual SQL regressions. Do not claim a before/after coverage percentage from moving windows.
 
 All six services active, passive verifierready, fresh collector heartbeatOK, measured flows6297and TLS/flow collection continuing. Live generated reportHTTP200in0.384s with76.2%primary coverage at that instant. Updater check under actual service usercurrent=latest=92accaa, available=false before final docs-only recording. AdGuardPID830/NRestarts0unchanged; loopbackUDP/LANTCP DNS succeeded. Client and third unit untouched. Temporary fixed-action owner maintenance access retains its existing18:23SASTexpiry. Generic/shared hosts, missing evidence, encrypted/QUIC unknowns and ambiguous DNS remain unknown rather than guessed.
+
+
+## Package and download endpoints — 19 November 2026 evening
+
+New exact rules identify GitHub Packages (`ghcr.io`, `pkg-containers.githubusercontent.com`), GitHub Releases (`release-assets.githubusercontent.com`) and Adobe Acrobat Downloads (`ardownload.adobe.com`, `ardownload2.adobe.com`, `ardownload3.adobe.com`, `armdl.adobe.com`) under Downloads. These describe the serving service, not the package publisher, container contents, executing application or proof that an update installed. No wildcard GitHub/Adobe rule or generic CDN attribution is added.
+
+Vendor endpoint references:
+
+- https://docs.github.com/en/actions/reference/runners/self-hosted-runners documents package/container and release-asset endpoints separately.
+- https://www.adobe.com/devnet-docs/acrobatetk/tools/AdminGuide/endpoints.html documents these Acrobat updater endpoints.
+
+Tests use real catalogue classification and flow persistence: agreeing package DNS names can label a measured connection; an additional unrecognized shared address candidate still makes it ambiguous; exact Adobe SNI labels only the matching tuple. Byte totals stay unchanged. Exact rules reject nested names, suffix spoofing, unrelated GitHub/Adobe hosts and shared CDN names. DNS settings, matching windows, TTL handling and ambiguity rules are unchanged. No collected history is reset. Deployment and live relabel results must be recorded separately; catalogue potential is not an observed coverage gain.
+
+Review removed `armmf.adobe.com`: Adobe also uses that hostname for onboarding/SMS configuration, so its hostname alone does not establish download activity. It remains unknown rather than receiving the download label.
