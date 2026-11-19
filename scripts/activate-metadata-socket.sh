@@ -9,7 +9,9 @@ if ! systemctl is-active --quiet netspecter-tls-metadata.socket; then
       systemctl stop "$unit"
     fi
   done
-  systemctl reset-failed netspecter-tls-metadata.socket netspecter-collector.service
+  for unit in netspecter-tls-metadata.socket netspecter-collector.service; do
+    if systemctl is-failed --quiet "$unit"; then systemctl reset-failed "$unit"; fi
+  done
 fi
 systemctl enable --now netspecter-tls-metadata.socket
 systemctl is-active --quiet netspecter-tls-metadata.socket
