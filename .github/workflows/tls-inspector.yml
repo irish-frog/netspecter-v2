@@ -16,7 +16,14 @@ jobs:
         with:
           persist-credentials: false
       - name: Build dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpcap-dev softflowd nftables iproute2 autoconf automake build-essential pkg-config
+        run: |
+          # Hosted-runner mirror rotation can send every package to an unavailable
+          # HTTP mirror. Keep signed Ubuntu metadata, prefer HTTPS and bound retries.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            printf '%s\n' 'https://mirrors.edge.kernel.org/ubuntu/' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt /etc/apt/apt-mirrors-security.txt >/dev/null
+          fi
+          sudo apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=2 -o Acquire::https::Timeout=10 update
+          sudo apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=2 -o Acquire::https::Timeout=10 install -y --no-install-recommends libpcap-dev softflowd nftables iproute2 autoconf automake build-essential pkg-config
       - name: Pinned flow exporter source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
