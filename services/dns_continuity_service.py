@@ -19,7 +19,9 @@ def adguard_dns_servers():
         result=subprocess.run(['ss','-H','-'+str(version),'-lntup','( sport = :53 )'],capture_output=True,text=True,timeout=5,check=True)
         for line in result.stdout.splitlines():
             fields=line.split()
-            if len(fields)<6 or fields[0] not in listeners or not re.search(r'pid='+pid+r'(?:,|\))',line):continue
+            if len(fields)<6 or fields[0] not in listeners:continue
+            owners=re.findall(r'\("(?:[^"\\]|\\.)*",pid=(\d+),fd=\d+\)',line)
+            if pid not in owners:continue
             host,separator,port=fields[4].rpartition(':');host=host.strip('[]')
             if not separator or port!='53':continue
             if host in {'*','0.0.0.0','::'}:

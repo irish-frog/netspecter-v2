@@ -110,3 +110,11 @@ def test_udp_probe_cannot_silently_retry_over_tcp(monkeypatch):
     calls=install_listener_fixture(monkeypatch,'')
     dns.probe_dns('192.168.1.4')
     assert '+ignore' in calls[0] and '+tcp' not in calls[0] and '+tcp' in calls[1]
+
+
+
+def test_pid_text_inside_another_process_name_is_not_ownership(monkeypatch):
+    text=listener('udp','192.168.1.4',9999)+listener('tcp','192.168.1.4',9999)
+    text=text.replace('"AdGuardHome"','"pid=1014,"')
+    install_listener_fixture(monkeypatch,text)
+    with pytest.raises(RuntimeError,match='listener'):dns.adguard_dns_servers()
