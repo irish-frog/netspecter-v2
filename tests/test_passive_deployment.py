@@ -37,3 +37,19 @@ def test_bundle_source_and_binary_integrity(tmp_path):
     (tmp_path/'softflowd').write_bytes(binary)
     (tmp_path/'netspecter-tls-inspector').write_bytes(b'tampered')
     with pytest.raises(ValueError,match='checksum'):module.verify(tmp_path)
+
+
+def test_web_configuration_normalization_preserves_active_passive_pipeline(tmp_path,monkeypatch):
+    import netspecter_config as shared
+    root=tmp_path/'config';root.mkdir();path=root/'config.json'
+    path.write_text(json.dumps({'packet_iface':'br0','internal_networks':['10.20.30.0/24'],
+        'internal_ipv6_networks':['fd00::/64'],'admin_username':'operator'}))
+    activate(path)
+    for name,value in [('CONFIG_ROOT',root),('CONFIG_PATH',path),('DATA_ROOT',tmp_path/'data'),('INSTALL_ROOT',tmp_path/'install')]:
+        monkeypatch.setattr(shared,name,value)
+    for _ in range(2):
+        current=shared.cfg()
+        assert current['passive_attribution_enabled'] is True
+        assert current['internal_ipv6_networks']==['fd00::/64']
+        assert not current['security_features_enabled'] and not current['suricata_enabled']
+        assert json.loads(path.read_text())['passive_attribution_enabled'] is True

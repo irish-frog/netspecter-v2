@@ -81,6 +81,8 @@ def main():
         (CONFIG/'config.json').write_text(json.dumps(config));run('chmod','644',str(CONFIG/'config.json'))
         run('install','-m','644',str(DEST/'systemd/netspecter-collector.service'),'/etc/systemd/system/netspecter-collector.service')
         run('bash',str(DEST/'scripts/install-tls-inspector.sh'))
+        # Exercise the actual web loader before collection; it must retain activation.
+        run(str(DEST/'venv/bin/python'),'-c',"import netspecter_config; assert netspecter_config.cfg()['passive_attribution_enabled']",cwd=DEST)
         run('systemctl','start','netspecter-tls-metadata.socket','netspecter-collector')
         run('systemctl','start','netspecter-tls-inspector','netspecter-softflowd')
         wait_for(lambda: query('SELECT count(*) FROM collector_heartbeat WHERE id=1')[0][0],30)
