@@ -3,7 +3,7 @@
 # Preview is the default. Settings/login/licence/names/rules and existing backups are retained.
 set -euo pipefail
 umask 077
-release=a47cabe673535bf158d41679319cbb365535ee42
+release=b1fd411a40163ca2eb5918d56ba56bcf6feb0f13
 expected="${1:-}"
 mode="${2:---preview}"
 [[ $# -ge 1 && $# -le 2 && ( "$mode" == --preview || "$mode" == --apply ) ]] || {
